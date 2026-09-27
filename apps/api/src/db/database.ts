@@ -1,27 +1,9 @@
-import { Pool } from "pg";
-import { env } from "../config/env.js";
+import pg from 'pg';
 
-export const pool = env.DATABASE_URL
-  ? new Pool({ connectionString: env.DATABASE_URL })
-  : null;
+const { Pool } = pg;
 
-export async function query<T = unknown>(
-  text: string,
-  params?: unknown[]
-): Promise<T[]> {
-  if (!pool) {
-    throw new Error("DATABASE_URL is not set, database unavailable");
-  }
-  const result = await pool.query(text, params);
-  return result.rows as T[];
-}
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+});
 
-export async function checkDatabase(): Promise<boolean> {
-  if (!pool) return false;
-  try {
-    await pool.query("SELECT 1");
-    return true;
-  } catch {
-    return false;
-  }
-}
+export default pool;

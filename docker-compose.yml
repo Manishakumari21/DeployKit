@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: deploykit-postgres
+
+    environment:
+      POSTGRES_USER: deploykit
+      POSTGRES_PASSWORD: deploykit
+      POSTGRES_DB: deploykit
+
+    volumes:
+      - deploykit-db:/var/lib/postgresql
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+
+    container_name: deploykit-api
+
+    environment:
+      PORT: 3000
+      DATABASE_URL: postgresql://deploykit:deploykit@postgres:5432/deploykit
+
+    ports:
+      - "3001:3000"
+
+    depends_on:
+      - postgres
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+
+    container_name: deploykit-web
+
+    ports:
+      - "8081:80"
+
+    depends_on:
+      - api
+
+volumes:
+  deploykit-db:

@@ -1,5 +1,39 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+dist-ssr/
+*.tsbuildinfo
+coverage/
+
+# Env & secrets — NEVER commit real values.
+# Matches .env at any level, plus variants (.env.local, .env.production, …)
 .env
+.env.*
+*.env
+# …but always keep the documented template committable
+!.env.example
+
+# Keys, certs, credentials
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials.json
+service-account*.json
+id_rsa*
+*.pub
+
+# Local data & OS noise
+postgres-data/
+*.sqlite
+*.db
 *.log
+*.local
 .DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.sw?

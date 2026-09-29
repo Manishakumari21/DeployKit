@@ -4,12 +4,23 @@ services:
     container_name: deploykit-postgres
 
     environment:
-      POSTGRES_USER: deploykit
-      POSTGRES_PASSWORD: deploykit
-      POSTGRES_DB: deploykit
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
 
     volumes:
       - deploykit-db:/var/lib/postgresql
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
 
   api:
     build:
@@ -20,13 +31,27 @@ services:
 
     environment:
       PORT: 3000
-      DATABASE_URL: postgresql://deploykit:deploykit@postgres:5432/deploykit
+      DATABASE_URL: ${DATABASE_URL}
 
     ports:
       - "3001:3000"
 
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   web:
     build:
@@ -39,7 +64,8 @@ services:
       - "8081:80"
 
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
 volumes:
   deploykit-db:

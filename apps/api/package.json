@@ -7,7 +7,9 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "tsx --test \"src/**/*.unit.test.ts\"",
+    "worker": "node dist/workers/deploymentWorker.js",
+    "test:integration": "tsx --test \"src/**/*.integration.test.ts\""
   },
   "keywords": [],
   "type": "commonjs",
@@ -15,7 +17,8 @@
     "cors": "^2.8.6",
     "dotenv": "^18.0.4",
     "express": "^5.2.1",
-    "pg": "^8.23.0"
+    "pg": "^8.23.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

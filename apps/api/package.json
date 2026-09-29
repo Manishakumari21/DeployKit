@@ -9,7 +9,8 @@
     "start": "node dist/server.js",
     "test": "tsx --test \"src/**/*.unit.test.ts\"",
     "worker": "node dist/workers/deploymentWorker.js",
-    "test:integration": "tsx --test \"src/**/*.integration.test.ts\""
+    "test:integration": "tsx --test \"src/**/*.integration.test.ts\"",
+    "test:build": "tsx --test src/infrastructure/build/buildxBuildExecutor.integration.test.ts"
   },
   "keywords": [],
   "type": "commonjs",

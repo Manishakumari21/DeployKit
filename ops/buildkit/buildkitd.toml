@@ -1,0 +1,10 @@
+debug = false
+
+insecure-entitlements = []
+
+[log]
+  level = "info"
+  format = "json"
+
+[worker.oci]
+  max-parallelism = 2

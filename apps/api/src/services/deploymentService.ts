@@ -1,4 +1,9 @@
 import pool from "../db/database.js";
+import {
+  assertTransition,
+  type DeploymentStatus,
+} from "../deployments/deploymentStateMachine.js";
+import { recordDeploymentEvent } from "../deployments/deploymentEvents.js";
 
 export type DeploymentTrigger =
   | "manual"
@@ -9,6 +14,7 @@ export interface CreateDeploymentInput {
   projectId: string;
   trigger: DeploymentTrigger;
   idempotencyKey: string | null;
+  rollbackReleaseId?: string | null;
 }
 
 export async function createDeployment(
@@ -36,6 +42,40 @@ export async function createDeployment(
 
     const project = projectResult.rows[0];
 
+    // Rollback deployments must reference a valid, non-failed release.
+    if (input.trigger === "rollback") {
+      if (!input.rollbackReleaseId) {
+        await client.query("ROLLBACK");
+        throw new Error("rollback_release_id is required");
+      }
+      const rel = await client.query(
+        `
+        SELECT id, project_id, status
+        FROM releases
+        WHERE id = $1
+        `,
+        [input.rollbackReleaseId]
+      );
+      if (
+        rel.rowCount === 0 ||
+        rel.rows[0].project_id !== input.projectId
+      ) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      if (rel.rows[0].status === "failed") {
+        await client.query("ROLLBACK");
+        throw new Error(
+          "Cannot rollback to a failed release"
+        );
+      }
+    } else if (input.rollbackReleaseId) {
+      await client.query("ROLLBACK");
+      throw new Error(
+        "rollback_release_id is only valid for rollback trigger"
+      );
+    }
+
     let deployment;
 
     if (input.idempotencyKey) {
@@ -46,9 +86,10 @@ export async function createDeployment(
           status,
           trigger,
           branch,
-          idempotency_key
+          idempotency_key,
+          rollback_release_id
         )
-        VALUES ($1, 'queued', $2, $3, $4)
+        VALUES ($1, 'queued', $2, $3, $4, $5)
         ON CONFLICT (
           project_id,
           idempotency_key
@@ -62,6 +103,7 @@ export async function createDeployment(
           input.trigger,
           project.branch,
           input.idempotencyKey,
+          input.rollbackReleaseId ?? null,
         ]
       );
 
@@ -88,15 +130,17 @@ export async function createDeployment(
           project_id,
           status,
           trigger,
-          branch
+          branch,
+          rollback_release_id
         )
-        VALUES ($1, 'queued', $2, $3)
+        VALUES ($1, 'queued', $2, $3, $4)
         RETURNING *
         `,
         [
           input.projectId,
           input.trigger,
           project.branch,
+          input.rollbackReleaseId ?? null,
         ]
       );
 
@@ -124,39 +168,133 @@ export async function createDeployment(
     );
 
     if (jobResult.rows.length > 0) {
-      await client.query(
-        `
-        INSERT INTO deployment_events (
-          deployment_id,
-          event_type,
-          status_from,
-          status_to,
-          message,
-          metadata
-        )
-        VALUES (
-          $1,
-          'deployment.queued',
-          NULL,
-          'queued',
-          $2,
-          $3::jsonb
-        )
-        `,
-        [
-          deployment.id,
-          "Deployment queued",
-          JSON.stringify({
-            trigger: deployment.trigger,
-            branch: deployment.branch,
-          }),
-        ]
-      );
+      await recordDeploymentEvent(client, {
+        deploymentId: deployment.id,
+        eventType: "deployment.queued",
+        statusFrom: null,
+        statusTo: "queued",
+        message: "Deployment queued",
+        metadata: {
+          trigger: deployment.trigger,
+          branch: deployment.branch,
+        },
+      });
     }
 
     await client.query("COMMIT");
 
     return deployment;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function transitionDeployment(
+  deploymentId: string,
+  to: DeploymentStatus,
+  eventType: string,
+  message: string,
+  metadata: Record<string, unknown> = {}
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const current = await client.query(
+      `SELECT status FROM deployments WHERE id = $1 FOR UPDATE`,
+      [deploymentId]
+    );
+    if (current.rowCount === 0) {
+      throw new Error("Deployment not found");
+    }
+    const from = current.rows[0].status as DeploymentStatus;
+    assertTransition(from, to);
+    await client.query(
+      `
+      UPDATE deployments
+      SET status = $2, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      `,
+      [deploymentId, to]
+    );
+    await recordDeploymentEvent(client, {
+      deploymentId,
+      eventType,
+      statusFrom: from,
+      statusTo: to,
+      message,
+      metadata,
+    });
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function cancelDeployment(id: string) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const current = await client.query(
+      `SELECT id, status FROM deployments WHERE id = $1 FOR UPDATE`,
+      [id]
+    );
+    if (current.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    const from = current.rows[0].status as DeploymentStatus;
+    if (
+      from === "active" ||
+      from === "failed" ||
+      from === "cancelled"
+    ) {
+      await client.query("ROLLBACK");
+      throw new Error(
+        `Cannot cancel deployment in status ${from}`
+      );
+    }
+    assertTransition(from, "cancelled");
+    await client.query(
+      `
+      UPDATE deployments
+      SET status = 'cancelled',
+          finished_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      `,
+      [id]
+    );
+    // Force-cancel the job regardless of worker ownership.
+    await client.query(
+      `
+      UPDATE deployment_jobs
+      SET status = 'cancelled',
+          locked_at = NULL,
+          locked_by = NULL,
+          lease_expires_at = NULL,
+          last_error = 'Cancelled by API request',
+          updated_at = CURRENT_TIMESTAMP
+      WHERE deployment_id = $1
+        AND status IN ('queued', 'running')
+      `,
+      [id]
+    );
+    await recordDeploymentEvent(client, {
+      deploymentId: id,
+      eventType: "deployment.cancelled",
+      statusFrom: from,
+      statusTo: "cancelled",
+      message: "Deployment cancelled by API request",
+      metadata: {},
+    });
+    await client.query("COMMIT");
+    return { id, status: "cancelled" };
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -204,5 +342,19 @@ export async function getProjectDeployments(projectId: string) {
     [projectId]
   );
 
+  return result.rows;
+}
+
+export async function getDeploymentEvents(deploymentId: string) {
+  const result = await pool.query(
+    `
+    SELECT id, deployment_id, event_type, status_from, status_to,
+           message, metadata, created_at
+    FROM deployment_events
+    WHERE deployment_id = $1
+    ORDER BY created_at ASC, id ASC
+    `,
+    [deploymentId]
+  );
   return result.rows;
 }

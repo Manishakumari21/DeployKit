@@ -392,6 +392,23 @@ export class BuildxBuildExecutor
       request.imageTag
     );
 
+    if (!/^[0-9a-f]{40}$/i.test(request.commitSha)) {
+      throw new BuildExecutorError(
+        "INVALID_COMMIT_SHA",
+        "Build requires a valid 40-char commit SHA"
+      );
+    }
+
+    if (
+      !Number.isSafeInteger(request.policy.timeoutMs) ||
+      request.policy.timeoutMs <= 0
+    ) {
+      throw new BuildExecutorError(
+        "INVALID_BUILD_POLICY",
+        "Build timeout must be positive"
+      );
+    }
+
     await assertBuildContext(
       request.workspace,
       request.policy.maxBuildContextBytes
@@ -442,6 +459,17 @@ export class BuildxBuildExecutor
         request.policy.networkEnabled
           ? "default"
           : "none"
+      );
+
+      // Truly enforce BuildPolicy at the BuildKit layer.
+      // memory= accepts bytes (go-units); cpu-quota uses period 100000.
+      args.push(
+        "--resource",
+        `memory=${request.policy.memoryBytes}`
+      );
+      args.push(
+        "--resource",
+        `cpu-quota=${request.policy.cpuLimit * 100000}`
       );
 
       args.push(request.workspace);

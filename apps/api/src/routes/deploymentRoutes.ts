@@ -1,8 +1,13 @@
 import { Router } from "express";
 import {
+  cancelDeploymentController,
   createDeploymentController,
   getDeploymentController,
+  getDeploymentEventsController,
   getProjectDeploymentsController,
+  getProjectReleasesController,
+  getReleaseController,
+  rollbackDeploymentController,
 } from "../controllers/deploymentController.js";
 
 const router = Router();
@@ -17,9 +22,31 @@ router.get(
   getProjectDeploymentsController
 );
 
+router.post(
+  "/projects/:id/rollback",
+  rollbackDeploymentController
+);
+
+router.get(
+  "/projects/:id/releases",
+  getProjectReleasesController
+);
+
 router.get(
   "/deployments/:id",
   getDeploymentController
 );
+
+router.get(
+  "/deployments/:id/events",
+  getDeploymentEventsController
+);
+
+router.post(
+  "/deployments/:id/cancel",
+  cancelDeploymentController
+);
+
+router.get("/releases/:id", getReleaseController);
 
 export default router;

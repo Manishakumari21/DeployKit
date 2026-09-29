@@ -67,5 +67,50 @@ services:
       api:
         condition: service_healthy
 
+    networks:
+      - default
+
+  worker:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+
+    container_name: deploykit-worker
+
+    command: ["node", "dist/workers/deploymentWorker.js"]
+
+    environment:
+      PORT: 3000
+      DATABASE_URL: ${DATABASE_URL}
+      DEPLOYMENT_WORKER_ENABLED: "false"
+      WORKER_POLL_INTERVAL_MS: 2000
+      WORKER_LEASE_MS: 30000
+      DEPLOYKIT_RUNTIME_NETWORK: deploykit-runtime
+      DEPLOYKIT_BUILDER_NAME: deploykit-builder
+      DEPLOYKIT_ALLOWED_GIT_HOSTS: github.com
+
+    volumes:
+      # Worker only: Buildx and runtime need Docker access.
+      # Never mount the socket into api/web (public surface).
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+    networks:
+      - default
+      - runtime
+
+networks:
+  default:
+    name: deploykit-default
+    driver: bridge
+  runtime:
+    name: deploykit-runtime
+    driver: bridge
+
 volumes:
   deploykit-db:

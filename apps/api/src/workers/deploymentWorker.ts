@@ -1,14 +1,15 @@
 import { randomUUID } from "node:crypto";
 import {
   claimNextJob,
+  completeJob,
   extendJobLease,
   failJob,
+  failJobTerminal,
   recoverExpiredJobs,
 } from "./deploymentQueue.js";
-import {
-  DeploymentExecutor,
-  UnconfiguredDeploymentExecutor,
-} from "./deploymentExecutor.js";
+import type { DeploymentExecutor } from "./deploymentExecutor.js";
+import { RealDeploymentExecutor } from "./deploymentPipeline.js";
+import { PipelineError } from "../deployments/deploymentErrors.js";
 
 const WORKER_ID =
   process.env.WORKER_ID ?? `worker-${randomUUID()}`;
@@ -28,8 +29,7 @@ const LEASE_RENEWAL_MS = Math.max(
 
 let shuttingDown = false;
 
-const executor: DeploymentExecutor =
-  new UnconfiguredDeploymentExecutor();
+const executor: DeploymentExecutor = new RealDeploymentExecutor();
 
 function log(
   level: "info" | "error",
@@ -120,11 +120,15 @@ async function processJob() {
       imageDigest: result.imageDigest,
     });
 
-    /*
-     * The executor will later update the deployment to `verifying`.
-     * Only then should completeJob() be called by the final execution
-     * pipeline after health/readiness verification.
-     */
+    // Pipeline leaves the deployment in `deploying` after a verified
+    // release switch. Only now may the job be completed — never report
+    // success unless the full pipeline succeeded.
+    await completeJob(job.id, job.deploymentId, WORKER_ID);
+
+    log("info", "deployment.job_completed", {
+      jobId: job.id,
+      deploymentId: job.deploymentId,
+    });
 
     return true;
   } catch (error) {
@@ -132,20 +136,41 @@ async function processJob() {
       error instanceof Error
         ? error.message
         : "Unknown deployment execution error";
+    const code =
+      error instanceof PipelineError ? error.code : "EXECUTION_FAILED";
 
     log("error", "deployment.execution_failed", {
       jobId: job.id,
       deploymentId: job.deploymentId,
       attempt: job.attempts,
       error: message,
+      code,
     });
 
-    await failJob(
-      job.id,
-      job.deploymentId,
-      WORKER_ID,
-      message
-    );
+    try {
+      if (error instanceof PipelineError && !error.retryable) {
+        await failJobTerminal(
+          job.id,
+          job.deploymentId,
+          WORKER_ID,
+          `${code}: ${message}`,
+          code
+        );
+      } else {
+        await failJob(job.id, job.deploymentId, WORKER_ID, message);
+      }
+    } catch (failError) {
+      // Ownership may have been lost (lease expired/cancelled).
+      // Never throw from the failure path; the job will be recovered.
+      log("error", "deployment.fail_recording_failed", {
+        jobId: job.id,
+        deploymentId: job.deploymentId,
+        error:
+          failError instanceof Error
+            ? failError.message
+            : "Unknown error",
+      });
+    }
 
     return true;
   } finally {

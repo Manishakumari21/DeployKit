@@ -1,4 +1,5 @@
 import pool from "../db/database.js";
+import { canTransition } from "../deployments/deploymentStateMachine.js";
 
 const DEFAULT_LEASE_MS = 30_000;
 
@@ -93,18 +94,55 @@ export async function claimNextJob(
       throw new Error("Deployment for queued job no longer exists");
     }
 
-    const previousStatus = deploymentResult.rows[0].status;
+    const previousStatus = deploymentResult.rows[0].status as string;
 
+    // Only force `queued -> cloning`. Retried/expired jobs may already be
+    // past cloning; forcing them back would violate the state machine.
+    const nextStatus =
+      previousStatus === "queued" ? "cloning" : previousStatus;
+
+    if (nextStatus !== previousStatus) {
+      if (!canTransition(previousStatus as never, nextStatus as never)) {
+        throw new Error(
+          `Invalid deployment transition ${previousStatus} -> ${nextStatus}`
+        );
+      }
+      await client.query(
+        `
+        UPDATE deployments
+        SET
+          status = 'cloning',
+          started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+        `,
+        [claimed.deployment_id]
+      );
+    } else {
+      await client.query(
+        `
+        UPDATE deployments
+        SET started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+        `,
+        [claimed.deployment_id]
+      );
+    }
+
+    // Persist attempt history (deployment_attempts has UNIQUE(deployment,attempt)).
     await client.query(
       `
-      UPDATE deployments
-      SET
-        status = 'cloning',
-        started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = $1
+      INSERT INTO deployment_attempts (
+        deployment_id, attempt_number, status, worker_id, started_at
+      )
+      VALUES ($1, $2, 'cloning', $3, CURRENT_TIMESTAMP)
+      ON CONFLICT (deployment_id, attempt_number)
+      DO UPDATE SET status = EXCLUDED.status,
+                    worker_id = EXCLUDED.worker_id,
+                    started_at = CURRENT_TIMESTAMP
       `,
-      [claimed.deployment_id]
+      [claimed.deployment_id, claimed.attempts, workerId]
     );
 
     await client.query(
@@ -121,14 +159,15 @@ export async function claimNextJob(
         $1,
         'deployment.claimed',
         $2,
-        'cloning',
         $3,
-        $4::jsonb
+        $4,
+        $5::jsonb
       )
       `,
       [
         claimed.deployment_id,
         previousStatus,
+        nextStatus,
         "Deployment claimed by worker",
         JSON.stringify({
           workerId,
@@ -212,6 +251,21 @@ export async function completeJob(
       );
     }
 
+    const dep = await client.query(
+      `SELECT status FROM deployments WHERE id = $1 FOR UPDATE`,
+      [deploymentId]
+    );
+    if (dep.rowCount === 0) {
+      throw new Error("Deployment not found");
+    }
+    const from = dep.rows[0].status as string;
+    // Pipeline activates via deploying -> active.
+    if (from !== "deploying") {
+      throw new Error(
+        `Cannot complete deployment from status ${from}`
+      );
+    }
+
     await client.query(
       `
       UPDATE deployments
@@ -220,7 +274,6 @@ export async function completeJob(
         finished_at = CURRENT_TIMESTAMP,
         updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
-        AND status = 'verifying'
       `,
       [deploymentId]
     );
@@ -238,14 +291,15 @@ export async function completeJob(
       VALUES (
         $1,
         'deployment.completed',
-        'verifying',
-        'active',
         $2,
-        $3::jsonb
+        'active',
+        $3,
+        $4::jsonb
       )
       `,
       [
         deploymentId,
+        from,
         "Deployment completed successfully",
         JSON.stringify({
           workerId,
@@ -271,21 +325,24 @@ export async function recoverExpiredJobs(): Promise<number> {
     const result = await client.query(
       `
       SELECT
-        id,
-        deployment_id,
-        attempts,
-        max_attempts
-      FROM deployment_jobs
+        j.id,
+        j.deployment_id,
+        j.attempts,
+        j.max_attempts,
+        d.status AS deployment_status
+      FROM deployment_jobs j
+      JOIN deployments d ON d.id = j.deployment_id
       WHERE
-        status = 'running'
-        AND lease_expires_at IS NOT NULL
-        AND lease_expires_at <= CURRENT_TIMESTAMP
-      FOR UPDATE SKIP LOCKED
+        j.status = 'running'
+        AND j.lease_expires_at IS NOT NULL
+        AND j.lease_expires_at <= CURRENT_TIMESTAMP
+      FOR UPDATE OF j SKIP LOCKED
       `
     );
 
     for (const job of result.rows) {
       const exhausted = job.attempts >= job.max_attempts;
+      const prevStatus = job.deployment_status as string;
 
       if (exhausted) {
         await client.query(
@@ -303,19 +360,43 @@ export async function recoverExpiredJobs(): Promise<number> {
           [job.id]
         );
 
+        // Only transition non-terminal deployments to failed.
+        if (prevStatus !== "active" && prevStatus !== "failed" && prevStatus !== "cancelled") {
+          await client.query(
+            `
+            UPDATE deployments
+            SET
+              status = 'failed',
+              error_code = 'WORKER_LEASE_EXPIRED',
+              error_message =
+                'Worker lease expired after maximum attempts',
+              finished_at = CURRENT_TIMESTAMP,
+              updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+            `,
+            [job.deployment_id]
+          );
+        }
+
         await client.query(
           `
-          UPDATE deployments
-          SET
-            status = 'failed',
-            error_code = 'WORKER_LEASE_EXPIRED',
-            error_message =
-              'Worker lease expired after maximum attempts',
-            finished_at = CURRENT_TIMESTAMP,
-            updated_at = CURRENT_TIMESTAMP
-          WHERE id = $1
+          INSERT INTO deployment_events (
+            deployment_id, event_type, status_from, status_to,
+            message, metadata
+          )
+          VALUES ($1,'deployment.lease_expired',$2,'failed',
+            'Worker lease expired; deployment failed',
+            $3::jsonb)
           `,
-          [job.deployment_id]
+          [
+            job.deployment_id,
+            prevStatus,
+            JSON.stringify({
+              jobId: job.id,
+              attempts: job.attempts,
+              maxAttempts: job.max_attempts,
+            }),
+          ]
         );
       } else {
         await client.query(
@@ -334,18 +415,48 @@ export async function recoverExpiredJobs(): Promise<number> {
           [job.id]
         );
 
+        // Requeue deployment only if it can legally return to queued.
+        const canRequeue = canTransition(
+          prevStatus as never,
+          "queued" as never
+        );
+        const nextStatus = canRequeue ? "queued" : prevStatus;
+        if (canRequeue) {
+          await client.query(
+            `
+            UPDATE deployments
+            SET
+              status = 'queued',
+              error_code = 'WORKER_LEASE_EXPIRED',
+              error_message =
+                'Worker lease expired; deployment requeued',
+              updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+            `,
+            [job.deployment_id]
+          );
+        }
+
         await client.query(
           `
-          UPDATE deployments
-          SET
-            status = 'queued',
-            error_code = 'WORKER_LEASE_EXPIRED',
-            error_message =
-              'Worker lease expired; deployment requeued',
-            updated_at = CURRENT_TIMESTAMP
-          WHERE id = $1
+          INSERT INTO deployment_events (
+            deployment_id, event_type, status_from, status_to,
+            message, metadata
+          )
+          VALUES ($1,'deployment.lease_recovered',$2,$3,
+            'Worker lease expired; job recovered',
+            $4::jsonb)
           `,
-          [job.deployment_id]
+          [
+            job.deployment_id,
+            prevStatus,
+            nextStatus,
+            JSON.stringify({
+              jobId: job.id,
+              attempts: job.attempts,
+              maxAttempts: job.max_attempts,
+            }),
+          ]
         );
       }
     }
@@ -353,6 +464,85 @@ export async function recoverExpiredJobs(): Promise<number> {
     await client.query("COMMIT");
 
     return result.rows.length;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function failJobTerminal(
+  jobId: string,
+  deploymentId: string,
+  workerId: string,
+  errorMessage: string,
+  errorCode = "DEPLOYMENT_FAILED"
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const jobResult = await client.query(
+      `
+      SELECT attempts, max_attempts FROM deployment_jobs
+      WHERE id = $1 AND status = 'running' AND locked_by = $2
+      FOR UPDATE
+      `,
+      [jobId, workerId]
+    );
+    if (jobResult.rows.length !== 1) {
+      throw new Error(
+        "Deployment job is no longer owned by this worker"
+      );
+    }
+    const safeMessage = errorMessage.slice(0, 4000);
+    const dep = await client.query(
+      `SELECT status FROM deployments WHERE id = $1 FOR UPDATE`,
+      [deploymentId]
+    );
+    const previousStatus =
+      dep.rows[0]?.status ?? "unknown";
+    await client.query(
+      `
+      UPDATE deployment_jobs
+      SET status = 'failed', locked_at = NULL, locked_by = NULL,
+          lease_expires_at = NULL, last_error = $2,
+          attempts = GREATEST(attempts, max_attempts),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      `,
+      [jobId, safeMessage]
+    );
+    if (
+      previousStatus !== "active" &&
+      previousStatus !== "cancelled" &&
+      previousStatus !== "failed"
+    ) {
+      await client.query(
+        `
+        UPDATE deployments
+        SET status = 'failed', error_code = $2, error_message = $3,
+            finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+        `,
+        [deploymentId, errorCode, safeMessage]
+      );
+    }
+    await client.query(
+      `
+      INSERT INTO deployment_events (
+        deployment_id, event_type, status_from, status_to, message, metadata
+      )
+      VALUES ($1,'deployment.failed',$2,'failed',$3,$4::jsonb)
+      `,
+      [
+        deploymentId,
+        previousStatus,
+        "Deployment failed without retry",
+        JSON.stringify({ error: safeMessage.slice(0, 1000) }),
+      ]
+    );
+    await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -412,7 +602,8 @@ export async function failJob(
       );
     }
 
-    const previousStatus = deploymentResult.rows[0].status;
+    const previousStatus = deploymentResult.rows[0].status as string;
+    const safeMessage = errorMessage.slice(0, 4000);
 
     if (shouldRetry) {
       const backoffSeconds = Math.min(
@@ -434,21 +625,35 @@ export async function failJob(
           updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
         `,
-        [jobId, backoffSeconds, errorMessage]
+        [jobId, backoffSeconds, safeMessage]
       );
 
-      await client.query(
-        `
-        UPDATE deployments
-        SET
-          status = 'queued',
-          error_code = 'DEPLOYMENT_RETRY',
-          error_message = $2,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = $1
-        `,
-        [deploymentId, errorMessage]
-      );
+      // Retry must return to queued; if the current status cannot
+      // legally transition, force via failed->queued path is still invalid
+      // for active/cancelled — guard terminal states.
+      if (
+        previousStatus !== "active" &&
+        previousStatus !== "cancelled"
+      ) {
+        const canRequeue = canTransition(
+          previousStatus as never,
+          "queued" as never
+        );
+        if (canRequeue) {
+          await client.query(
+            `
+            UPDATE deployments
+            SET
+              status = 'queued',
+              error_code = 'DEPLOYMENT_RETRY',
+              error_message = $2,
+              updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+            `,
+            [deploymentId, safeMessage]
+          );
+        }
+      }
 
       await client.query(
         `
@@ -477,9 +682,20 @@ export async function failJob(
             attempt: job.attempts,
             maxAttempts: job.max_attempts,
             backoffSeconds,
-            error: errorMessage,
+            error: safeMessage.slice(0, 1000),
           }),
         ]
+      );
+
+      await client.query(
+        `
+        UPDATE deployment_attempts
+        SET status = 'failed',
+            error_message = $3,
+            finished_at = CURRENT_TIMESTAMP
+        WHERE deployment_id = $1 AND attempt_number = $2
+        `,
+        [deploymentId, job.attempts, safeMessage.slice(0, 2000)]
       );
 
       await client.query("COMMIT");
@@ -499,22 +715,28 @@ export async function failJob(
         updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
       `,
-      [jobId, errorMessage]
+      [jobId, safeMessage]
     );
 
-    await client.query(
-      `
-      UPDATE deployments
-      SET
-        status = 'failed',
-        error_code = 'DEPLOYMENT_FAILED',
-        error_message = $2,
-        finished_at = CURRENT_TIMESTAMP,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = $1
-      `,
-      [deploymentId, errorMessage]
-    );
+    if (
+      previousStatus !== "active" &&
+      previousStatus !== "cancelled" &&
+      previousStatus !== "failed"
+    ) {
+      await client.query(
+        `
+        UPDATE deployments
+        SET
+          status = 'failed',
+          error_code = 'DEPLOYMENT_FAILED',
+          error_message = $2,
+          finished_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+        `,
+        [deploymentId, safeMessage]
+      );
+    }
 
     await client.query(
       `
@@ -542,9 +764,20 @@ export async function failJob(
         JSON.stringify({
           attempts: job.attempts,
           maxAttempts: job.max_attempts,
-          error: errorMessage,
+          error: safeMessage.slice(0, 1000),
         }),
       ]
+    );
+
+    await client.query(
+      `
+      UPDATE deployment_attempts
+      SET status = 'failed',
+          error_message = $3,
+          finished_at = CURRENT_TIMESTAMP
+      WHERE deployment_id = $1 AND attempt_number = $2
+      `,
+      [deploymentId, job.attempts, safeMessage.slice(0, 2000)]
     );
 
     await client.query("COMMIT");

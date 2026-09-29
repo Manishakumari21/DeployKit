@@ -1,8 +1,9 @@
 export interface BuildPolicy {
   timeoutMs: number;
+  /** Enforced via `docker buildx --resource memory=...`. */
   memoryBytes: number;
+  /** Enforced via `docker buildx --resource cpu-quota=...` (period 100000). */
   cpuLimit: number;
-  pidsLimit: number;
   networkEnabled: boolean;
   maxBuildContextBytes: number;
 }

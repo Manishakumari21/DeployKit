@@ -10,7 +10,6 @@ const ENV_KEYS = [
   "DEPLOYKIT_BUILD_TIMEOUT_MS",
   "DEPLOYKIT_BUILD_MEMORY_BYTES",
   "DEPLOYKIT_BUILD_CPU_LIMIT",
-  "DEPLOYKIT_BUILD_PIDS_LIMIT",
   "DEPLOYKIT_MAX_BUILD_CONTEXT_BYTES",
 ] as const;
 
@@ -54,7 +53,6 @@ test("accepts valid overrides", () => {
     process.env.DEPLOYKIT_BUILD_TIMEOUT_MS = "60000";
     process.env.DEPLOYKIT_BUILD_MEMORY_BYTES = "1073741824";
     process.env.DEPLOYKIT_BUILD_CPU_LIMIT = "4";
-    process.env.DEPLOYKIT_BUILD_PIDS_LIMIT = "256";
     process.env.DEPLOYKIT_MAX_BUILD_CONTEXT_BYTES = "536870912";
 
     const policy = getBuildPolicy();
@@ -62,7 +60,6 @@ test("accepts valid overrides", () => {
     assert.equal(policy.timeoutMs, 60000);
     assert.equal(policy.memoryBytes, 1073741824);
     assert.equal(policy.cpuLimit, 4);
-    assert.equal(policy.pidsLimit, 256);
     assert.equal(policy.maxBuildContextBytes, 536870912);
   });
 });

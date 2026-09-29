@@ -81,7 +81,6 @@ CMD ["sh"]
             memoryBytes:
               1024 * 1024 * 1024,
             cpuLimit: 2,
-            pidsLimit: 256,
             networkEnabled: true,
             maxBuildContextBytes:
               50 * 1024 * 1024,

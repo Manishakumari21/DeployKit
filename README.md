@@ -240,4 +240,56 @@ create a second deployment.
   deletions, other events are ignored (202).
 * One linked repository per project; branch must equal
   `projects.branch`; `auto_deploy` defaults to false.
-* No zero-downtime guarantees; single-node worker as in Phase 03.
+* Single-node worker; see Phase 05 for traffic-switch guarantees.
+
+## Phase 05 — Zero-downtime releases via gateway
+
+Flow: new release container starts beside the active one, must pass
+HTTP readiness, then one DB transaction (per-project advisory lock)
+marks it `active`, retires the old release, and records the traffic
+route in `project_gateways`. The worker then repoints the `dk-gateway`
+nginx container (`nginx -t` + graceful `nginx -s reload`, no dropped
+connections) and verifies traffic through the gateway before stopping
+the superseded runtime. Rollback reuses the stored image digest and
+follows the same verify-then-switch path; it never rebuilds.
+
+Guarantees actually implemented:
+
+* At most one `active` release per project (partial unique index +
+  serialized activation; repeated activation is a no-op).
+* The old release keeps serving until the replacement is healthy AND
+  the gateway route is verified; unhealthy releases never switch
+  traffic and their runtimes are removed.
+* PostgreSQL is the source of truth: gateway config is always
+  (re)generated from `project_gateways` + the active release, so a
+  crash between DB commit and reload converges on retry via
+  `syncProjectGateway`. Activation is idempotent, cleanup is
+  idempotent, deployment resume never rebuilds after a release exists.
+
+### Environment variables (new)
+
+| Var | Default | Purpose |
+| --- | ------- | ------- |
+| `DEPLOYKIT_GATEWAY_CONTAINER` | `dk-gateway` | gateway container for config reload |
+| `DEPLOYKIT_GATEWAY_ROUTES_DIR` | `/gateway-routes` | shared routes volume in worker |
+| `DEPLOYKIT_GATEWAY_HOST` | `dk-gateway` | gateway address for traffic verification |
+
+`docker compose up` runs the gateway (no published ports, no Docker
+socket; socket stays worker-only). App containers still publish no
+host ports; only the active release is reachable through the gateway
+as `dk-p<shortid>.deploykit.local`.
+
+### Tests
+
+`npm test` runs unit + DB suites serially (`--test-concurrency=1`;
+the suites share one database and parallel files deadlocked on
+cascading project deletes). Docker suites stay separate:
+`npm run test:integration` (incl. live gateway traffic-switch test),
+`npm run test:build`.
+
+### Limitations
+
+* Single node; gateway is one nginx container (failure domain, no HA).
+* No TLS/DNS automation; gateway serves plain HTTP on the runtime
+  network with no published host ports.
+* Readiness is HTTP 2xx/3xx on `/`; no app-specific health contracts.

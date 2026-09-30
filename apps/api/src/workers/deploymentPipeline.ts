@@ -13,6 +13,13 @@ import {
   DockerRuntimeManager,
   RuntimeManagerError,
 } from "../infrastructure/runtime/dockerRuntimeManager.js";
+import {
+  NginxGatewayRouter,
+} from "../infrastructure/gateway/nginxGatewayRouter.js";
+import type {
+  RouteTarget,
+  TrafficRouter,
+} from "../infrastructure/gateway/trafficRouter.js";
 import type {
   RuntimeManager,
   RuntimeInfo,
@@ -35,14 +42,18 @@ import {
   markRelease,
   activateRelease,
   getActiveRelease,
+  getReleaseForDeployment,
 } from "../services/releaseService.js";
 
 export interface PipelineDependencies {
   buildExecutor?: BuildExecutor;
   runtimeManager?: RuntimeManager;
+  trafficRouter?: TrafficRouter;
   checkout?: typeof withCheckedOutRepository;
   runtimeNetwork?: string;
   healthTimeoutMs?: number;
+  routeTimeoutMs?: number;
+  gatewayName?: string;
 }
 
 import { execFile } from "node:child_process";
@@ -168,21 +179,39 @@ async function getDeploymentRow(deploymentId: string) {
 export class RealDeploymentExecutor implements DeploymentExecutor {
   private readonly buildExecutor: BuildExecutor;
   private readonly runtimeManager: RuntimeManager;
+  private readonly trafficRouter: TrafficRouter;
   private readonly checkout: typeof withCheckedOutRepository;
   private readonly runtimeNetwork: string;
   private readonly healthTimeoutMs: number;
+  private readonly routeTimeoutMs: number;
+  private readonly gatewayName: string;
 
   constructor(deps: PipelineDependencies = {}) {
     this.buildExecutor =
       deps.buildExecutor ?? new BuildxBuildExecutor();
     this.runtimeManager =
       deps.runtimeManager ?? new DockerRuntimeManager();
+    this.trafficRouter =
+      deps.trafficRouter ?? new NginxGatewayRouter();
     this.checkout = deps.checkout ?? withCheckedOutRepository;
     this.runtimeNetwork =
       deps.runtimeNetwork ??
       process.env.DEPLOYKIT_RUNTIME_NETWORK ??
       "deploykit-runtime";
     this.healthTimeoutMs = deps.healthTimeoutMs ?? 60_000;
+    this.routeTimeoutMs = deps.routeTimeoutMs ?? 30_000;
+    const gatewayName = (
+      deps.gatewayName ??
+      process.env.DEPLOYKIT_GATEWAY_CONTAINER ??
+      "dk-gateway"
+    ).trim();
+    if (!/^[a-z0-9][a-z0-9_.-]{0,127}$/.test(gatewayName)) {
+      throw new PipelineError(
+        PIPELINE_ERROR_CODES.ACTIVATION_FAILED,
+        "Invalid gateway container name"
+      );
+    }
+    this.gatewayName = gatewayName;
   }
 
   async execute(
@@ -326,6 +355,24 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       "Source checkout complete; build started"
     );
 
+    const existingRelease = await getReleaseForDeployment(
+      context.deploymentId
+    );
+    if (existingRelease && existingRelease.status === "failed") {
+      await pool.query(`DELETE FROM releases WHERE id = $1`, [
+        existingRelease.id,
+      ]);
+    } else if (existingRelease) {
+      return this.resumeRelease(context, {
+        projectId,
+        releaseId: existingRelease.id,
+        imageRepository: existingRelease.image_repository,
+        imageDigest: existingRelease.image_digest,
+        commitSha: existingRelease.commit_sha,
+        branch: existingRelease.branch ?? branch,
+      });
+    }
+
     let result: DeploymentExecutionResult;
     try {
       result = await this.checkout(
@@ -362,23 +409,35 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
           }
 
           const cur = await getDeploymentRow(context.deploymentId);
-          await setDeploymentStatus(
-            context.deploymentId,
-            cur.status,
-            "verifying",
-            "deployment.build_succeeded",
-            "Build succeeded; image digest recorded",
-            {
-              commitSha,
-              imageReference: build.imageReference,
-              imageDigest: build.imageDigest,
-            },
-            {
-              commit_sha: commitSha.toLowerCase(),
-              image_repository: imageRepository,
-              image_digest: build.imageDigest,
-            }
-          );
+          if (cur.status !== "verifying") {
+            await setDeploymentStatus(
+              context.deploymentId,
+              cur.status,
+              "verifying",
+              "deployment.build_succeeded",
+              "Build succeeded; image digest recorded",
+              {
+                commitSha,
+                imageReference: build.imageReference,
+                imageDigest: build.imageDigest,
+              },
+              {
+                commit_sha: commitSha.toLowerCase(),
+                image_repository: imageRepository,
+                image_digest: build.imageDigest,
+              }
+            );
+          } else {
+            await pool.query(
+              `
+              UPDATE deployments
+              SET commit_sha = $2, image_repository = $3, image_digest = $4,
+                  updated_at = CURRENT_TIMESTAMP
+              WHERE id = $1
+              `,
+              [context.deploymentId, commitSha.toLowerCase(), imageRepository, build.imageDigest]
+            );
+          }
 
           const previousActive =
             await getActiveRelease(projectId);
@@ -416,6 +475,64 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       throw error;
     }
     return result!;
+  }
+
+  private async resumeRelease(
+    context: DeploymentExecutionContext,
+    input: {
+      projectId: string;
+      releaseId: string;
+      imageRepository: string;
+      imageDigest: string;
+      commitSha: string;
+      branch: string;
+    }
+  ): Promise<DeploymentExecutionResult> {
+    await this.ensureStatus(
+      context.deploymentId,
+      ["cloning", "queued"],
+      "building",
+      "deployment.build_resumed",
+      "Resuming deployment with existing release"
+    );
+    const cur = await getDeploymentRow(context.deploymentId);
+    if (cur.status === "building") {
+      await setDeploymentStatus(
+        context.deploymentId,
+        cur.status,
+        "verifying",
+        "deployment.build_resumed",
+        "Resuming deployment with existing release",
+        {
+          commitSha: input.commitSha,
+          imageDigest: input.imageDigest,
+        },
+        {
+          commit_sha: input.commitSha.toLowerCase(),
+          image_repository: input.imageRepository,
+          image_digest: input.imageDigest,
+        }
+      );
+    } else if (
+      cur.status !== "verifying" &&
+      cur.status !== "deploying"
+    ) {
+      throw new PipelineError(
+        PIPELINE_ERROR_CODES.ACTIVATION_FAILED,
+        `Cannot resume deployment from status ${cur.status}`
+      );
+    }
+    const previousActive = await getActiveRelease(input.projectId);
+    return this.deployRelease(context, {
+      projectId: input.projectId,
+      deploymentId: context.deploymentId,
+      releaseId: input.releaseId,
+      imageRepository: input.imageRepository,
+      imageDigest: input.imageDigest,
+      commitSha: input.commitSha,
+      branch: input.branch,
+      previousActiveId: previousActive?.id ?? null,
+    });
   }
 
   private async resolveGitHubToken(projectId: string): Promise<string | undefined> {
@@ -487,6 +604,20 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     const imageRef = `${input.imageRepository}@${input.imageDigest}`;
     let runtime: RuntimeInfo | null = null;
 
+    const storedRelease = await pool.query(
+      `SELECT status FROM releases WHERE id = $1`,
+      [input.releaseId]
+    );
+    const storedStatus = storedRelease.rows[0]?.status as string | undefined;
+    if (storedStatus === "failed") {
+      throw new PipelineError(
+        PIPELINE_ERROR_CODES.ACTIVATION_FAILED,
+        "Release is marked failed and cannot be deployed"
+      );
+    }
+    const needsMarking =
+      storedStatus !== "healthy" && storedStatus !== "active";
+
     const containerPort = await discoverExposedPort(imageRef);
 
     await this.runtimeManager.remove(containerName).catch(() => undefined);
@@ -516,13 +647,14 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         `
         INSERT INTO runtime_instances (
           release_id, status, container_name, container_id,
-          container_port, host_port, health_path, started_at
+          container_port, host_port, ip_address, health_path, started_at
         )
-        VALUES ($1,'starting',$2,$3,$4,$4,$5, CURRENT_TIMESTAMP)
+        VALUES ($1,'starting',$2,$3,$4,$4,$6,$5, CURRENT_TIMESTAMP)
         ON CONFLICT (container_name)
         DO UPDATE SET release_id = EXCLUDED.release_id,
                       container_id = EXCLUDED.container_id,
                       status = 'starting',
+                      ip_address = EXCLUDED.ip_address,
                       started_at = CURRENT_TIMESTAMP
         `,
         [
@@ -531,8 +663,12 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
           runtime.containerId,
           runtime.containerPort,
           RUNTIME_DEFAULTS.healthPath,
+          runtime.ipAddress,
         ]
       );
+      if (needsMarking) {
+        await markRelease(input.releaseId, "starting");
+      }
 
       try {
         await this.runtimeManager.waitForHealthy(
@@ -557,7 +693,9 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         `,
         [input.releaseId, runtime.containerName]
       );
-      await markRelease(input.releaseId, "healthy");
+      if (needsMarking) {
+        await markRelease(input.releaseId, "healthy");
+      }
 
       const cur = await getDeploymentRow(input.deploymentId);
       if (cur.status !== "deploying") {
@@ -575,12 +713,39 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         await activateRelease(
           input.projectId,
           input.releaseId,
-          input.deploymentId
+          input.deploymentId,
+          {
+            gatewayName: this.gatewayName,
+            containerName: runtime.containerName,
+            containerIp: runtime.ipAddress,
+            containerPort: runtime.containerPort,
+          }
         );
       } catch (error) {
         throw new PipelineError(
           PIPELINE_ERROR_CODES.ACTIVATION_FAILED,
           error instanceof Error ? error.message : "Activation failed"
+        );
+      }
+
+      const route: RouteTarget = {
+        projectId: input.projectId,
+        releaseId: input.releaseId,
+        containerName: runtime.containerName,
+        containerIp: runtime.ipAddress,
+        containerPort: runtime.containerPort,
+      };
+      try {
+        await this.trafficRouter.sync(route);
+        await this.trafficRouter.verifyRoute(route, this.routeTimeoutMs);
+      } catch (error) {
+        await this.trafficRouter.sync(route).catch(() => undefined);
+        throw new PipelineError(
+          PIPELINE_ERROR_CODES.ACTIVATION_FAILED,
+          error instanceof Error
+            ? `Traffic switch failed: ${error.message.slice(0, 300)}`
+            : "Traffic switch failed",
+          { retryable: true }
         );
       }
 
@@ -597,7 +762,11 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         imageDigest: input.imageDigest,
       };
     } catch (error) {
-      if (runtime) {
+      const releaseRow = await pool
+        .query(`SELECT status FROM releases WHERE id = $1`, [input.releaseId])
+        .catch(() => null);
+      const releaseActive = releaseRow?.rows[0]?.status === "active";
+      if (runtime && !releaseActive) {
         await this.runtimeManager
           .remove(runtime.containerName)
           .catch(() => undefined);
@@ -608,14 +777,16 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
           )
           .catch(() => undefined);
       }
-      await markRelease(input.releaseId, "failed", {
-        code:
-          error instanceof PipelineError
-            ? error.code
-            : "RUNTIME_FAILED",
-        message:
-          error instanceof Error ? error.message : String(error),
-      }).catch(() => undefined);
+      if (!releaseActive) {
+        await markRelease(input.releaseId, "failed", {
+          code:
+            error instanceof PipelineError
+              ? error.code
+              : "RUNTIME_FAILED",
+          message:
+            error instanceof Error ? error.message : String(error),
+        }).catch(() => undefined);
+      }
       if (
         error instanceof PipelineError ||
         error instanceof RuntimeManagerError

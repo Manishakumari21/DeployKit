@@ -7,7 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "tsx --test \"src/**/*.unit.test.ts\"",
+    "test": "tsx --test --test-concurrency=1 \"src/**/*.unit.test.ts\"",
     "worker": "node dist/workers/deploymentWorker.js",
     "test:integration": "tsx --test \"src/**/*.integration.test.ts\"",
     "test:build": "tsx --test src/infrastructure/build/buildxBuildExecutor.integration.test.ts"

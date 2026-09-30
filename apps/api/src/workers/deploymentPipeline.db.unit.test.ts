@@ -78,6 +78,17 @@ function fakeRuntime() {
   };
 }
 
+function fakeRouter() {
+  return {
+    async sync() {},
+    async verifyRoute() {},
+    async remove() {},
+    async activeTarget() {
+      return null;
+    },
+  };
+}
+
 async function createProject(name: string) {
   const result = await pool.query(
     `
@@ -130,6 +141,10 @@ test("pipeline builds, releases and leaves deployment deploying", async () => {
         return fn({ workspace: "/tmp", commitSha: SHA });
       }) as never,
       runtimeNetwork: "deploykit-runtime",
+      gatewayName: "dk-gateway",
+      routeTimeoutMs: 1000,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      trafficRouter: fakeRouter() as any,
       healthTimeoutMs: 1000,
     });
     const result = await executor.execute({
@@ -197,6 +212,10 @@ test("rollback reuses the stored digest without rebuilding", async () => {
         throw new Error("must not checkout on rollback");
       }) as never,
       runtimeNetwork: "deploykit-runtime",
+      gatewayName: "dk-gateway",
+      routeTimeoutMs: 1000,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      trafficRouter: fakeRouter() as any,
       healthTimeoutMs: 1000,
     });
     const result = await executor.execute({
@@ -239,6 +258,10 @@ test("pipeline cleans up new runtime when health fails", async () => {
         return fn({ workspace: "/tmp", commitSha: SHA });
       }) as never,
       runtimeNetwork: "deploykit-runtime",
+      gatewayName: "dk-gateway",
+      routeTimeoutMs: 1000,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      trafficRouter: fakeRouter() as any,
       healthTimeoutMs: 1000,
     });
     await assert.rejects(

@@ -17,6 +17,33 @@ export async function claimNextJob(
   const client = await pool.connect();
 
   try {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await claimNextJobAttempt(client, workerId, leaseMs);
+      } catch (error) {
+        if (
+          attempt < 2 &&
+          error instanceof Error &&
+          "code" in error &&
+          (error as { code?: string }).code === "40P01"
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+          continue;
+        }
+        throw error;
+      }
+    }
+  } finally {
+    client.release();
+  }
+}
+
+async function claimNextJobAttempt(
+  client: import("pg").PoolClient,
+  workerId: string,
+  leaseMs: number
+): Promise<ClaimedJob | null> {
+  try {
     await client.query("BEGIN");
 
     const result = await client.query(
@@ -186,8 +213,6 @@ export async function claimNextJob(
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
-  } finally {
-    client.release();
   }
 }
 

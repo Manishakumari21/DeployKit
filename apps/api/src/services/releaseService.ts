@@ -54,6 +54,8 @@ export async function createRelease(input: CreateReleaseInput) {
         started_at
       )
       VALUES ($1,$2,$3,$4,$5,$6,'pending',$7, CURRENT_TIMESTAMP)
+      ON CONFLICT (deployment_id)
+      DO NOTHING
       RETURNING *
       `,
       [
@@ -67,25 +69,54 @@ export async function createRelease(input: CreateReleaseInput) {
       ]
     );
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as { code?: string }).code === "23505"
-    ) {
+    throw error;
+  }
+  if (result.rows.length === 0) {
+    const existing = await pool.query(
+      `
+      SELECT * FROM releases WHERE deployment_id = $1
+      `,
+      [input.deploymentId]
+    );
+    if (existing.rowCount === 0) {
       throw new Error(
         "A release already exists for this deployment"
       );
     }
-    throw error;
+    return existing.rows[0];
   }
   return result.rows[0];
 }
+
+const RELEASE_TRANSITIONS: Record<ReleaseStatus, ReadonlySet<ReleaseStatus>> = {
+  pending: new Set(["starting", "failed"]),
+  starting: new Set(["healthy", "failed"]),
+  healthy: new Set(["failed"]),
+  active: new Set([]),
+  stopped: new Set([]),
+  failed: new Set([]),
+};
 
 export async function markRelease(
   releaseId: string,
   status: ReleaseStatus,
   error?: { code: string; message: string }
 ) {
+  const current = await pool.query(
+    `
+    SELECT status FROM releases WHERE id = $1
+    `,
+    [releaseId]
+  );
+  if (current.rowCount === 0) {
+    throw new Error("Release not found");
+  }
+  const from = current.rows[0].status as ReleaseStatus;
+  if (from !== status && !RELEASE_TRANSITIONS[from]?.has(status)) {
+    throw new Error(
+      `Invalid release transition ${from} -> ${status}`
+    );
+  }
   const column =
     status === "healthy"
       ? "healthy_at"
@@ -128,10 +159,26 @@ export async function markRelease(
   }
 }
 
+export interface ActivationRoute {
+  gatewayName: string;
+  containerName: string;
+  containerIp: string;
+  containerPort: number;
+}
+
+export async function getReleaseForDeployment(deploymentId: string) {
+  const result = await pool.query(
+    `SELECT * FROM releases WHERE deployment_id = $1`,
+    [deploymentId]
+  );
+  return result.rows[0] ?? null;
+}
+
 export async function activateRelease(
   projectId: string,
   releaseId: string,
-  deploymentId: string
+  deploymentId: string,
+  route: ActivationRoute | null = null
 ): Promise<void> {
   const client = await pool.connect();
   try {
@@ -157,6 +204,25 @@ export async function activateRelease(
     if (target.rows[0].project_id !== projectId) {
       throw new Error(
         "Release does not belong to the requested project"
+      );
+    }
+    if (target.rows[0].status === "active") {
+      const linked = await client.query(
+        `
+        SELECT release_id FROM deployments
+        WHERE id = $1 AND project_id = $2
+        `,
+        [deploymentId, projectId]
+      );
+      if (
+        linked.rowCount === 1 &&
+        linked.rows[0].release_id === releaseId
+      ) {
+        await client.query("COMMIT");
+        return;
+      }
+      throw new Error(
+        "Release is already active"
       );
     }
     if (target.rows[0].status !== "healthy") {
@@ -209,6 +275,44 @@ export async function activateRelease(
     if (depUpdate.rowCount !== 1) {
       throw new Error(
         "Deployment not found for the requested project"
+      );
+    }
+
+    if (route) {
+      if (
+        !/^[a-z0-9][a-z0-9_.-]{0,127}$/.test(route.gatewayName) ||
+        !/^[a-z0-9][a-z0-9_.-]{0,127}$/.test(route.containerName) ||
+        !/^(\d{1,3}\.){3}\d{1,3}$/.test(route.containerIp) ||
+        !Number.isInteger(route.containerPort) ||
+        route.containerPort < 1 ||
+        route.containerPort > 65535
+      ) {
+        throw new Error("Invalid activation route");
+      }
+      await client.query(
+        `
+        INSERT INTO project_gateways (
+          project_id, gateway_name, active_release_id,
+          target_container, target_ip, target_port, config_rev
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, 1)
+        ON CONFLICT (project_id)
+        DO UPDATE SET gateway_name = EXCLUDED.gateway_name,
+                      active_release_id = EXCLUDED.active_release_id,
+                      target_container = EXCLUDED.target_container,
+                      target_ip = EXCLUDED.target_ip,
+                      target_port = EXCLUDED.target_port,
+                      config_rev = project_gateways.config_rev + 1,
+                      updated_at = CURRENT_TIMESTAMP
+        `,
+        [
+          projectId,
+          route.gatewayName,
+          releaseId,
+          route.containerName,
+          route.containerIp,
+          route.containerPort,
+        ]
       );
     }
 

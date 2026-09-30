@@ -80,7 +80,6 @@ services:
       dockerfile: Dockerfile
 
     container_name: deploykit-worker
-
     command: ["node", "dist/workers/deploymentWorker.js"]
 
     environment:
@@ -92,6 +91,9 @@ services:
       DEPLOYKIT_RUNTIME_NETWORK: deploykit-runtime
       DEPLOYKIT_BUILDER_NAME: deploykit-builder
       DEPLOYKIT_ALLOWED_GIT_HOSTS: github.com
+      DEPLOYKIT_GATEWAY_CONTAINER: dk-gateway
+      DEPLOYKIT_GATEWAY_ROUTES_DIR: /gateway-routes
+      DEPLOYKIT_GATEWAY_HOST: dk-gateway
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
@@ -101,6 +103,7 @@ services:
       # Worker only: Buildx and runtime need Docker access.
       # Never mount the socket into api/web (public surface).
       - /var/run/docker.sock:/var/run/docker.sock
+      - deploykit-gateway-routes:/gateway-routes
 
     depends_on:
       postgres:
@@ -110,6 +113,19 @@ services:
 
     networks:
       - default
+      - runtime
+
+  gateway:
+    build:
+      context: ./ops/gateway
+      dockerfile: Dockerfile
+
+    container_name: dk-gateway
+
+    volumes:
+      - deploykit-gateway-routes:/etc/nginx/routes
+
+    networks:
       - runtime
 
 networks:
@@ -122,3 +138,4 @@ networks:
 
 volumes:
   deploykit-db:
+  deploykit-gateway-routes:

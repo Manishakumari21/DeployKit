@@ -253,14 +253,14 @@ test("concurrent activations serialize to exactly one active release", async () 
   }
 });
 
-test("duplicate release for one deployment is rejected", async () => {
+test("repeat release creation for one deployment is idempotent", async () => {
   if (!(await dbAvailable())) {
     return;
   }
   const project = await createProject(`rel-dup-${Date.now()}`);
   try {
     const dep = await createDeployment(project.id);
-    await createRelease({
+    const first = await createRelease({
       deploymentId: dep.id,
       projectId: project.id,
       imageRepository: "deploykit/app",
@@ -269,18 +269,17 @@ test("duplicate release for one deployment is rejected", async () => {
       branch: "main",
       supersedesReleaseId: null,
     });
-    await assert.rejects(
-      createRelease({
-        deploymentId: dep.id,
-        projectId: project.id,
-        imageRepository: "deploykit/app",
-        imageDigest: DIGEST_B,
-        commitSha: SHA_B,
-        branch: "main",
-        supersedesReleaseId: null,
-      }),
-      /already exists/
-    );
+    const second = await createRelease({
+      deploymentId: dep.id,
+      projectId: project.id,
+      imageRepository: "deploykit/app",
+      imageDigest: DIGEST_B,
+      commitSha: SHA_B,
+      branch: "main",
+      supersedesReleaseId: null,
+    });
+    assert.equal(second.id, first.id);
+    assert.equal(second.image_digest, DIGEST_A);
   } finally {
     await pool.query(`DELETE FROM projects WHERE id = $1`, [project.id]);
   }

@@ -163,7 +163,7 @@ function appendTail(
     .toString("utf8");
 }
 
-function runDocker(
+export function runDocker(
   binary: string,
   args: string[],
   timeoutMs = 30_000

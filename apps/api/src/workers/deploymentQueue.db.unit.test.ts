@@ -81,7 +81,6 @@ test("claim increments attempts and records attempt history", async () => {
       [deployment.id]
     );
     assert.equal(attempts.rowCount, 1);
-    // Leave running; fail it to requeue for cleanup.
     await failJob(
       claimed!.id,
       claimed!.deploymentId,
@@ -110,7 +109,6 @@ test("expired leases are recovered with audit events", async () => {
     });
     const claimed = await claimNextJob("test-worker-2", 50);
     assert.ok(claimed);
-    // Force expiry.
     await pool.query(
       `UPDATE deployment_jobs SET lease_expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE id = $1`,
       [claimed!.id]

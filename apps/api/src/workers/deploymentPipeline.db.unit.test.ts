@@ -159,7 +159,6 @@ test("rollback reuses the stored digest without rebuilding", async () => {
   }
   const project = await createProject(`piperb-${Date.now()}`);
   try {
-    // Seed a known-good release.
     const seedDep = await pool.query(
       `INSERT INTO deployments (project_id, status, trigger, branch, commit_sha, image_repository, image_digest)
        VALUES ($1,'active','manual','main',$2,'deploykit/seed','sha256:${"c".repeat(64)}') RETURNING *`,
@@ -170,7 +169,6 @@ test("rollback reuses the stored digest without rebuilding", async () => {
        VALUES ($1,$2,'deploykit/seed','sha256:${"c".repeat(64)}',$3,'main','active') RETURNING *`,
       [seedDep.rows[0].id, project.id, SHA]
     );
-    // Rollback deployment row.
     const rbDep = await pool.query(
       `INSERT INTO deployments (project_id, status, trigger, branch, rollback_release_id)
        VALUES ($1,'cloning','rollback','main',$2) RETURNING *`,

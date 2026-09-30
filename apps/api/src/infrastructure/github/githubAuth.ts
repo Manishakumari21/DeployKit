@@ -139,7 +139,6 @@ export async function getInstallationToken(installationId: string): Promise<stri
   const config = getGitHubConfig();
   const key = installationId.trim();
   const cached = cache.get(key);
-  // Refresh 60s before expiry; never cache forever.
   if (cached && cached.expiresAt - 60_000 > Date.now()) return cached.token;
   const inFlight = pending.get(key);
   if (inFlight) return inFlight;

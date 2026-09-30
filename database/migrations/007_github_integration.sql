@@ -1,5 +1,3 @@
--- Phase 04: GitHub App integration + webhook delivery dedup + project linking.
--- Forward-only; no destructive changes.
 
 CREATE TABLE IF NOT EXISTS github_installations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -45,7 +43,6 @@ ON github_webhook_deliveries(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS github_deliveries_repo_idx
 ON github_webhook_deliveries(lower(repository_full_name));
 
--- Project linking: explicit opt-in for auto deploy.
 ALTER TABLE projects
 ADD COLUMN IF NOT EXISTS auto_deploy BOOLEAN NOT NULL DEFAULT false;
 

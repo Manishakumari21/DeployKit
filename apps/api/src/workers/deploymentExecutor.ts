@@ -17,10 +17,6 @@ export interface DeploymentExecutor {
   ): Promise<DeploymentExecutionResult>;
 }
 
-/**
- * Intentionally unavailable until the secure deployment executor
- * is implemented.
- */
 export class UnconfiguredDeploymentExecutor
   implements DeploymentExecutor
 {

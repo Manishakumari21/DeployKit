@@ -12,7 +12,6 @@ export async function recordDeploymentEvent(
     metadata?: Record<string, unknown>;
   }
 ): Promise<void> {
-  // Allowlist event types to prevent arbitrary injection from callers.
   if (!/^[a-z0-9._-]{1,100}$/i.test(input.eventType)) {
     throw new Error("Invalid deployment event type");
   }

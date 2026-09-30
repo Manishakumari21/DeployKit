@@ -22,9 +22,7 @@ const CHECKOUT_TIMEOUT_MS = Number(
 export interface SourceCheckoutOptions {
   repositoryUrl: string;
   branch: string;
-  /** Exact commit to deploy (GitHub push SHA). Validated 40-char hex. */
   targetCommitSha?: string | null;
-  /** GitHub App installation token; passed via child env (GIT_CONFIG_*), never argv/URL/logs. */
   authToken?: string | null;
 }
 
@@ -169,10 +167,6 @@ function gitEnvironment(authToken?: string | null): NodeJS.ProcessEnv {
     GIT_ASKPASS: "/bin/false",
     LC_ALL: "C",
   };
-  // Credential via child-process environment, never argv: `ps` shows
-  // command lines to all users, while environ is same-user restricted.
-  // GIT_CONFIG_* applies transiently to the child only; nothing is
-  // written to the repository .git/config.
   if (authToken !== undefined && authToken !== null) {
     validateAuthToken(authToken);
     env.GIT_CONFIG_COUNT = "1";
@@ -188,7 +182,6 @@ function validateAuthToken(authToken: string): void {
   }
 }
 
-/** Non-secret git config flags. Never carries credentials (see gitEnvironment). */
 function baseGitConfig(): string[] {
   return [
     "-c",
@@ -200,7 +193,6 @@ function baseGitConfig(): string[] {
   ];
 }
 
-/** Test hooks: prove secrets travel via child env, never argv/URL. */
 export function __gitEnvironmentForTest(authToken?: string | null): NodeJS.ProcessEnv {
   return gitEnvironment(authToken ?? null);
 }
@@ -311,8 +303,6 @@ export async function withCheckedOutRepository<T>(
       workspace,
     ], undefined, authToken);
 
-    // Pin to the exact pushed commit so the worker deploys what GitHub sent,
-    // not whatever the branch tip moved to afterwards.
     if (targetSha) {
       await runGit([...gitBase, "fetch", "--depth", "1", "origin", targetSha], workspace, authToken);
       await runGit([...gitBase, "checkout", "--detach", targetSha], workspace, authToken);

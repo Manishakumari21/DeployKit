@@ -96,7 +96,6 @@ test("crashed delivery (persisted, never processed) resumes on redelivery", asyn
       autoDeploy: true,
     });
     const deliveryId = `r-${Date.now()}-crash`;
-    // Simulate crash: row persisted as received, handler died before processing.
     await pool.query(
       `INSERT INTO github_webhook_deliveries (delivery_id, event_type, status, attempts)
        VALUES ($1, 'push', 'received', 0)`,

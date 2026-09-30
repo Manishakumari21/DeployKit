@@ -43,8 +43,6 @@ test("checkout never puts the token in argv, URL, logs, or .git/config", async (
   await writeFile(argvLog, "");
   await writeFile(envLog, "");
   const sha = "f".repeat(40);
-  // Fake `git`: emulates clone/fetch/checkout/rev-parse without network.
-  // Records argv and whether the credential arrived via env.
   await writeFile(
     path.join(bin, "git"),
     `#!/bin/sh
@@ -75,7 +73,7 @@ exit 0
   process.env.FAKE_GIT_ARGV_LOG = argvLog;
   try {
     const url = "https://github.com/acme/app.git";
-    validateRepositoryUrl(url); // throws if credentials embedded
+    validateRepositoryUrl(url); 
     const result = await withCheckedOutRepository(
       { repositoryUrl: url, branch: "main", authToken: TOKEN },
       async ({ workspace, commitSha }) => {

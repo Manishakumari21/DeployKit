@@ -36,7 +36,6 @@ test(
     const manager = new DockerRuntimeManager();
     const name = `dk-it-${Date.now().toString(36)}`;
 
-    // Digest enforcement stays active: mutable tags are rejected.
     await assert.rejects(
       manager.create({
         containerName: `${name}-rej`,
@@ -52,8 +51,6 @@ test(
       /immutable digest/
     );
 
-    // Build a minimal read-only-compatible server (busybox httpd) and
-    // capture its immutable manifest digest via buildx metadata.
     const workspace = await mkdtemp(
       path.join(os.tmpdir(), "deploykit-runtime-test-")
     );

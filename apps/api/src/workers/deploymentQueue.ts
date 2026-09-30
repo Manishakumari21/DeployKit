@@ -96,8 +96,6 @@ export async function claimNextJob(
 
     const previousStatus = deploymentResult.rows[0].status as string;
 
-    // Only force `queued -> cloning`. Retried/expired jobs may already be
-    // past cloning; forcing them back would violate the state machine.
     const nextStatus =
       previousStatus === "queued" ? "cloning" : previousStatus;
 
@@ -130,7 +128,6 @@ export async function claimNextJob(
       );
     }
 
-    // Persist attempt history (deployment_attempts has UNIQUE(deployment,attempt)).
     await client.query(
       `
       INSERT INTO deployment_attempts (
@@ -259,7 +256,6 @@ export async function completeJob(
       throw new Error("Deployment not found");
     }
     const from = dep.rows[0].status as string;
-    // Pipeline activates via deploying -> active.
     if (from !== "deploying") {
       throw new Error(
         `Cannot complete deployment from status ${from}`
@@ -360,7 +356,6 @@ export async function recoverExpiredJobs(): Promise<number> {
           [job.id]
         );
 
-        // Only transition non-terminal deployments to failed.
         if (prevStatus !== "active" && prevStatus !== "failed" && prevStatus !== "cancelled") {
           await client.query(
             `
@@ -415,7 +410,6 @@ export async function recoverExpiredJobs(): Promise<number> {
           [job.id]
         );
 
-        // Requeue deployment only if it can legally return to queued.
         const canRequeue = canTransition(
           prevStatus as never,
           "queued" as never
@@ -628,9 +622,6 @@ export async function failJob(
         [jobId, backoffSeconds, safeMessage]
       );
 
-      // Retry must return to queued; if the current status cannot
-      // legally transition, force via failed->queued path is still invalid
-      // for active/cancelled — guard terminal states.
       if (
         previousStatus !== "active" &&
         previousStatus !== "cancelled"

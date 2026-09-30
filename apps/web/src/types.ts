@@ -6,7 +6,6 @@ export type Project = {
   created_at: string;
 };
 
-// Professional PaaS nav — mirrors Dokploy / Coolify / Vercel grouping
 export type NavKey =
   | "overview"
   | "services"

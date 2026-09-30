@@ -43,8 +43,6 @@ test("assertTransition throws on invalid moves", () => {
 });
 
 test("building must go through verifying, never straight to deploying", () => {
-  // Rollback and build paths share deployRelease, which requires
-  // verifying -> deploying. This pins the linear pipeline shape.
   assert.equal(canTransition("building", "deploying"), false);
   assert.equal(canTransition("building", "verifying"), true);
   assert.equal(canTransition("verifying", "deploying"), true);

@@ -12,12 +12,6 @@ export type DeploymentStatus =
 export const TERMINAL_STATUSES: ReadonlySet<DeploymentStatus> =
   new Set(["active", "failed", "cancelled"]);
 
-/**
- * Forward-only production pipeline:
- * queued -> cloning -> building -> verifying -> deploying -> active
- * `pushing` is retained for future registry flows (building -> pushing -> verifying)
- * but the local --load flow skips it.
- */
 const ALLOWED_TRANSITIONS: Record<
   DeploymentStatus,
   ReadonlySet<DeploymentStatus>

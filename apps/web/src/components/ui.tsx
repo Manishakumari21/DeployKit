@@ -2,7 +2,6 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { cx } from "../lib/format";
 import type { DeployStatus } from "../types";
 
-// Professional monochrome kit (Vercel/Railway-like) — one accent, status colors only.
 export function Panel({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <div className={cx("rounded-xl border border-zinc-800 bg-zinc-900/60", className)}>

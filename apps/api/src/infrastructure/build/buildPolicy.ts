@@ -39,7 +39,6 @@ export function getBuildPolicy(): BuildPolicy {
     ),
   };
 
-  // Sane upper bounds so a misconfigured env cannot OOM the builder host.
   if (policy.timeoutMs > 60 * 60 * 1000) {
     throw new Error(
       "DEPLOYKIT_BUILD_TIMEOUT_MS must be <= 3600000"

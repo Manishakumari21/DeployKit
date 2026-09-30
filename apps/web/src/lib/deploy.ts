@@ -1,7 +1,5 @@
 import type { Deployment, Domain, Project } from "../types";
 
-// Deterministic mock layer — derives a Vercel/Coolify-style model from
-// the real projects table so the UI looks professional before Phase 02 backend.
 function hash(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
@@ -26,7 +24,7 @@ const AUTHORS = ["manisha", "dev-patel", "ci-bot", "sara-k", "alex-r"];
 export function toDeployments(projects: Project[]): Deployment[] {
   return projects.flatMap((p, pi) => {
     const h = hash(p.id);
-    const count = 1 + (h % 3); // 1-3 deploys per service
+    const count = 1 + (h % 3); 
     return Array.from({ length: count }, (_, i) => {
       const n = hash(p.id + i);
       const status: Deployment["status"] =

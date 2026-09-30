@@ -43,7 +43,6 @@ export async function createDeployment(
 
     const project = projectResult.rows[0];
 
-    // Rollback deployments must reference a valid, non-failed release.
     if (input.trigger === "rollback") {
       if (!input.rollbackReleaseId) {
         await client.query("ROLLBACK");
@@ -285,7 +284,6 @@ export async function cancelDeployment(id: string) {
       `,
       [id]
     );
-    // Force-cancel the job regardless of worker ownership.
     await client.query(
       `
       UPDATE deployment_jobs

@@ -9,7 +9,6 @@ const app = express();
 
 app.use(cors());
 
-// GitHub webhooks need raw bytes for HMAC verification: mount BEFORE json().
 app.use(
   "/api/webhooks",
   express.raw({ type: "*/*", limit: "1mb" }),

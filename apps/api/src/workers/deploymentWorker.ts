@@ -120,9 +120,6 @@ async function processJob() {
       imageDigest: result.imageDigest,
     });
 
-    // Pipeline leaves the deployment in `deploying` after a verified
-    // release switch. Only now may the job be completed — never report
-    // success unless the full pipeline succeeded.
     await completeJob(job.id, job.deploymentId, WORKER_ID);
 
     log("info", "deployment.job_completed", {
@@ -160,8 +157,6 @@ async function processJob() {
         await failJob(job.id, job.deploymentId, WORKER_ID, message);
       }
     } catch (failError) {
-      // Ownership may have been lost (lease expired/cancelled).
-      // Never throw from the failure path; the job will be recovered.
       log("error", "deployment.fail_recording_failed", {
         jobId: job.id,
         deploymentId: job.deploymentId,
@@ -181,11 +176,6 @@ async function processJob() {
 }
 
 async function run() {
-  /*
-   * Safety gate:
-   * the worker must not accidentally execute deployments before
-   * the secure executor is installed.
-   */
   if (process.env.DEPLOYMENT_WORKER_ENABLED !== "true") {
     log(
       "info",

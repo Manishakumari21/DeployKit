@@ -461,8 +461,6 @@ export class BuildxBuildExecutor
           : "none"
       );
 
-      // Truly enforce BuildPolicy at the BuildKit layer.
-      // memory= accepts bytes (go-units); cpu-quota uses period 100000.
       args.push(
         "--resource",
         `memory=${request.policy.memoryBytes}`

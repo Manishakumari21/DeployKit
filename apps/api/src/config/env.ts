@@ -19,7 +19,6 @@ export function assertEnv(): void {
   }
 }
 
-// Optional strict check, call explicitly if DB is required
 export function requireDatabaseUrl(): string {
   return requireEnv("DATABASE_URL");
 }

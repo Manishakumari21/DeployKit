@@ -15,7 +15,6 @@ function read(name: string): string | undefined {
 }
 
 function normalizePrivateKey(raw: string): string {
-  // Allow escaped newlines when the PEM is stored in a single-line env var.
   const withNewlines = raw.includes("\\n") ? raw.replace(/\\n/g, "\n") : raw;
   return withNewlines.trim();
 }

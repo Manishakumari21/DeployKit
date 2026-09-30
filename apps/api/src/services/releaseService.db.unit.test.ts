@@ -123,7 +123,6 @@ test("failed activation leaves the old active release intact", async () => {
     ]);
     await activateRelease(project.id, rel1.id, dep1.id);
 
-    // Target is still pending (never healthy) -> activation must fail.
     const dep2 = await createDeployment(project.id);
     const rel2 = await createRelease({
       deploymentId: dep2.id,
@@ -200,8 +199,6 @@ test("activation scopes the deployment update to the project", async () => {
     await pool.query(`UPDATE releases SET status = 'healthy' WHERE id = $1`, [
       relA.id,
     ]);
-    // depB belongs to another project: link must be refused even though
-    // the release itself is valid for projectA.
     const depB = await createDeployment(projectB.id);
     await assert.rejects(
       activateRelease(projectA.id, relA.id, depB.id),
@@ -246,8 +243,6 @@ test("concurrent activations serialize to exactly one active release", async () 
       `UPDATE releases SET status = 'healthy' WHERE id IN ($1, $2)`,
       [rel1.id, rel2.id]
     );
-    // Serialized by the per-project advisory lock: no unique violation,
-    // exactly one active release afterwards.
     await Promise.all([
       activateRelease(project.id, rel1.id, dep1.id),
       activateRelease(project.id, rel2.id, dep2.id),

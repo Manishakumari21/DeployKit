@@ -46,7 +46,6 @@ export async function getRepository(
     throw new GitHubApiError("INVALID_REPO", "Invalid repository full name");
   }
   const config = getGitHubConfig();
-  // Token stays in the Authorization header; never interpolated into errors.
   const token = await getInstallationToken(installationId);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10_000);

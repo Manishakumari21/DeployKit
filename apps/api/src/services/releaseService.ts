@@ -30,9 +30,6 @@ export async function createRelease(input: CreateReleaseInput) {
   if (!input.branch || input.branch.trim().length === 0) {
     throw new Error("Release requires a branch");
   }
-  // Deployment ownership: the deployment must exist and belong to the
-  // same project, otherwise releases could be forged across projects.
-  // Duplicate prevention is enforced by UNIQUE(deployment_id).
   const dep = await pool.query(
     `
     SELECT id, project_id FROM deployments WHERE id = $1
@@ -131,18 +128,6 @@ export async function markRelease(
   }
 }
 
-/**
- * Transactional switch: new release must already be healthy.
- * Old active release is preserved as `stopped`, never deleted.
- *
- * Concurrency safety:
- * - One transaction, serialized per project via a transactional advisory
- *   lock (two deployments for the same project cannot interleave here).
- * - The previous active release is transitioned to `stopped` BEFORE the
- *   new release becomes `active`, so the partial unique index
- *   (`releases_one_active_per_project_idx`) can never see two active rows.
- * - Any error rolls back: the old active release stays active.
- */
 export async function activateRelease(
   projectId: string,
   releaseId: string,
@@ -152,14 +137,11 @@ export async function activateRelease(
   try {
     await client.query("BEGIN");
 
-    // Serialize activation per project. Transaction-scoped: released on
-    // COMMIT/ROLLBACK. Fixed first key namespaces our locks.
     await client.query(
       `SELECT pg_advisory_xact_lock(810971722, hashtext($1))`,
       [projectId]
     );
 
-    // Lock and validate the target release.
     const target = await client.query(
       `
       SELECT id, project_id, status
@@ -183,7 +165,6 @@ export async function activateRelease(
       );
     }
 
-    // Lock the current active release, if any.
     const current = await client.query(
       `
       SELECT id FROM releases
@@ -197,7 +178,6 @@ export async function activateRelease(
         ? current.rows[0].id
         : null;
 
-    // Stop the old release FIRST so two active rows can never coexist.
     if (previousId) {
       await client.query(
         `
@@ -218,8 +198,6 @@ export async function activateRelease(
       [releaseId]
     );
 
-    // Scope the deployment update to the same project so a mismatched
-    // deployment id can never be linked to this release.
     const depUpdate = await client.query(
       `
       UPDATE deployments

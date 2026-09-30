@@ -62,10 +62,6 @@ function shortId(id: string): string {
   return id.replace(/-/g, "").slice(0, 8).toLowerCase();
 }
 
-/**
- * Inspect the built image for its first EXPOSED TCP port.
- * Falls back to the conventional default when the image exposes nothing.
- */
 async function discoverExposedPort(imageRef: string): Promise<number> {
   const dockerBinary =
     process.env.DEPLOYKIT_DOCKER_BINARY ?? "docker";
@@ -250,7 +246,6 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       "Rollback started from stored digest"
     );
 
-    // Persist immutable identity from the stored release (no rebuild).
     await pool.query(
       `
       UPDATE deployments
@@ -266,10 +261,6 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       ]
     );
 
-    // Rollback follows the same linear path as builds: the stored digest
-    // is validated here (building -> verifying), then deployRelease takes
-    // verifying -> deploying after runtime health succeeds. Skipping
-    // straight to deploying would violate the state machine.
     const rolledBack = await getDeploymentRow(context.deploymentId);
     if (rolledBack.status === "building") {
       await setDeploymentStatus(
@@ -370,7 +361,6 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
             throw error;
           }
 
-          // building -> verifying + persist immutable identity.
           const cur = await getDeploymentRow(context.deploymentId);
           await setDeploymentStatus(
             context.deploymentId,
@@ -445,8 +435,6 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       );
       return await getInstallationToken(String(installationId));
     } catch {
-      // Public repos must keep working when GitHub App is unconfigured;
-      // private checkout will fail closed with CLONE_FAILED.
       return undefined;
     }
   }
@@ -469,7 +457,6 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       return;
     }
     if (!allowedFrom.includes(cur.status)) {
-      // Already past this stage (retry after partial progress) — continue.
       return;
     }
     await setDeploymentStatus(
@@ -500,16 +487,8 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     const imageRef = `${input.imageRepository}@${input.imageDigest}`;
     let runtime: RuntimeInfo | null = null;
 
-    // Discover the container's listening port from image EXPOSE metadata.
-    // Hardcoding a port would health-check the wrong target for images
-    // that listen elsewhere (e.g. busybox httpd on :80 vs default :3000).
     const containerPort = await discoverExposedPort(imageRef);
 
-    // Best-effort removal of a stale container with our deterministic name.
-    // The name is scoped to this deployment (dk-p<proj>-d<dep>), so a
-    // same-name container can only be a leftover from an earlier attempt
-    // that crashed between create and cleanup; without this, retries would
-    // fail permanently on name conflict.
     await this.runtimeManager.remove(containerName).catch(() => undefined);
 
     try {
@@ -529,8 +508,6 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       };
       runtime = await this.runtimeManager.create(spec);
       await this.runtimeManager.start(runtime.containerName);
-      // Inspect after start: only now does the container have an IP
-      // on the runtime network.
       runtime = await this.runtimeManager.inspect(
         runtime.containerName,
         this.runtimeNetwork
@@ -582,7 +559,6 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       );
       await markRelease(input.releaseId, "healthy");
 
-      // verifying -> deploying (runtime healthy, ready to switch).
       const cur = await getDeploymentRow(input.deploymentId);
       if (cur.status !== "deploying") {
         await setDeploymentStatus(
@@ -595,7 +571,6 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         );
       }
 
-      // Transactional switch; old active preserved as stopped.
       try {
         await activateRelease(
           input.projectId,
@@ -609,7 +584,6 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         );
       }
 
-      // Safe rollout: only now stop/remove the previous release's containers.
       if (input.previousActiveId) {
         await this.cleanupReleaseContainers(
           input.previousActiveId,
@@ -623,7 +597,6 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         imageDigest: input.imageDigest,
       };
     } catch (error) {
-      // Cleanup owned new runtime; never touch the old active on failure.
       if (runtime) {
         await this.runtimeManager
           .remove(runtime.containerName)
@@ -669,7 +642,6 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     );
     for (const r of rows.rows) {
       const name = r.container_name as string;
-      // Never destroy the new release's container even on name collision.
       const isNew = await pool.query(
         `SELECT 1 FROM runtime_instances WHERE release_id = $1 AND container_name = $2`,
         [newReleaseId, name]

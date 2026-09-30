@@ -1,5 +1,3 @@
--- Phase 03 hardening: release commit linkage + useful indexes.
--- Forward-only; no destructive changes.
 
 ALTER TABLE releases
 ADD COLUMN IF NOT EXISTS commit_sha VARCHAR(64);

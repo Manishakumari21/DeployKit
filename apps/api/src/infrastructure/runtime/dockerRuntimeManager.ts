@@ -102,8 +102,6 @@ function validateHealthPath(
 
 function validateImageReference(ref: string): string {
   const value = ref.trim();
-  // Phase 03 requires immutable digest references to prevent tag mutation.
-  // Format: repository@sha256:<64 hex> (tag prefix optional but digest required).
   if (!/@sha256:[0-9a-f]{64}$/i.test(value)) {
     throw new RuntimeManagerError(
       "INVALID_IMAGE_REFERENCE",
@@ -400,10 +398,6 @@ export class DockerRuntimeManager
     const rawId = await runDocker(this.dockerBinary, args);
     const containerId = rawId.trim().split(/\s+/)[0];
 
-    // NOTE: a freshly created (not yet started) container has no IP
-    // on the network, so do not inspect for an address here. The caller
-    // must start the container then inspect it to obtain the runtime IP.
-    // If creation succeeded but we cannot proceed, remove the container.
     if (!/^[0-9a-f]{64}$/i.test(containerId)) {
       await runDocker(this.dockerBinary, [
         "container",
@@ -560,8 +554,6 @@ export class DockerRuntimeManager
       );
     }
 
-    // Prefer the port recorded at creation; fall back to EXPOSE metadata
-    // for containers created before the label existed.
     const healthPath = validateHealthPath(
       data.Config?.Labels?.["io.deploykit.health-path"] ?? "/"
     );

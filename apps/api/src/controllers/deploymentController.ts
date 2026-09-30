@@ -49,7 +49,6 @@ export async function createDeploymentController(
       });
     }
 
-    // Rollback must go through the dedicated endpoint with a target release.
     if (triggerResult.data === "rollback") {
       return res.status(400).json({
         error: "Use POST /api/projects/:id/rollback for rollbacks",

@@ -1,4 +1,3 @@
--- Rollback target linkage. Nullable; only set for trigger='rollback'.
 ALTER TABLE deployments
 ADD COLUMN IF NOT EXISTS rollback_release_id UUID
 REFERENCES releases(id) ON DELETE SET NULL;

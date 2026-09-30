@@ -70,7 +70,6 @@ export async function linkProjectRepository(input: {
         [input.repositoryId ?? null, installationDbId, fullName]
       );
     } else {
-      // Re-point to the current installation; a repo belongs to one installation.
       await client.query(
         `UPDATE github_repositories SET installation_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
         [repo.rows[0].id, installationDbId]

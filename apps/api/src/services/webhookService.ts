@@ -67,17 +67,6 @@ async function markDelivery(
   );
 }
 
-/**
- * Crash-safe claim with DB-only mutual exclusion.
- *
- * - One transaction + per-delivery advisory lock serializes concurrent
- *   duplicates: exactly one handler owns the delivery.
- * - `processing` rows carry a lease (updated_at); a fresh lease means
- *   another handler is live -> duplicate. A stale lease (crash) or
- *   `received`/`failed` row is reclaimable, so a redelivery resumes.
- * - Deployment creation stays idempotent via `github:<delivery>` as
- *   the final exactly-once guard.
- */
 const PROCESSING_LEASE_MS = 5 * 60 * 1000;
 
 async function claimDelivery(
@@ -124,7 +113,6 @@ async function claimDelivery(
       await client.query("COMMIT");
       return { status: "duplicate" };
     }
-    // received / failed / stale processing: reclaim for this handler.
     await client.query(
       `UPDATE github_webhook_deliveries
        SET status = 'processing', event_type = $2,
@@ -158,8 +146,6 @@ async function findLinkedProject(fullName: string): Promise<{
     [fullName]
   );
   if (result.rowCount === 0) return null;
-  // Prefer the project whose branch will match; caller filters further.
-  // Return first row; multi-project same-repo is resolved by branch below.
   const row = result.rows[0];
   return {
     project: row,
@@ -214,9 +200,6 @@ export async function handleGitHubWebhook(input: {
     throw new WebhookError("INVALID_EVENT", "Invalid event type", 400);
   }
 
-  // DB-serialized claim: exactly one concurrent handler owns the delivery.
-  // Crash between persist and deployment creation leaves a reclaimable
-  // `processing`/lease row; deployment creation itself stays idempotent.
   const alreadyHandled = await claimDelivery(deliveryId, event);
   if (alreadyHandled) return alreadyHandled;
 
@@ -282,10 +265,8 @@ export async function handleGitHubWebhook(input: {
     throw new WebhookError("INVALID_SHA", "Invalid commit SHA in payload", 400);
   }
 
-  // Resolve linked project for this repo+branch.
   const linked = await findLinkedProjectForBranch(fullName, branch);
   if (!linked) {
-    // Distinguish wrong-branch vs unlinked for observability without leaking.
     const anyLink = await findLinkedProject(fullName);
     const reason = anyLink ? "branch_mismatch_or_disabled" : "repository_not_linked";
     await markDelivery(deliveryId, "ignored", {
@@ -304,7 +285,6 @@ export async function handleGitHubWebhook(input: {
     });
     return { status: "ignored", reason: "auto_deploy_disabled" };
   }
-  // Installation linkage check: payload installation must match linked installation.
   if (
     installationId !== null &&
     linked.repo.installation_id !== null &&

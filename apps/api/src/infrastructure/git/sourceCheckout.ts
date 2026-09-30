@@ -22,6 +22,10 @@ const CHECKOUT_TIMEOUT_MS = Number(
 export interface SourceCheckoutOptions {
   repositoryUrl: string;
   branch: string;
+  /** Exact commit to deploy (GitHub push SHA). Validated 40-char hex. */
+  targetCommitSha?: string | null;
+  /** GitHub App installation token; passed via child env (GIT_CONFIG_*), never argv/URL/logs. */
+  authToken?: string | null;
 }
 
 export interface SourceCheckoutResult {
@@ -155,8 +159,8 @@ export function validateBranch(branch: string): string {
   return value;
 }
 
-function gitEnvironment(): NodeJS.ProcessEnv {
-  return {
+function gitEnvironment(authToken?: string | null): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
     PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
     GIT_TERMINAL_PROMPT: "0",
     GIT_CONFIG_NOSYSTEM: "1",
@@ -165,11 +169,57 @@ function gitEnvironment(): NodeJS.ProcessEnv {
     GIT_ASKPASS: "/bin/false",
     LC_ALL: "C",
   };
+  // Credential via child-process environment, never argv: `ps` shows
+  // command lines to all users, while environ is same-user restricted.
+  // GIT_CONFIG_* applies transiently to the child only; nothing is
+  // written to the repository .git/config.
+  if (authToken !== undefined && authToken !== null) {
+    validateAuthToken(authToken);
+    env.GIT_CONFIG_COUNT = "1";
+    env.GIT_CONFIG_KEY_0 = "http.extraHeader";
+    env.GIT_CONFIG_VALUE_0 = `AUTHORIZATION: bearer ${authToken}`;
+  }
+  return env;
+}
+
+function validateAuthToken(authToken: string): void {
+  if (/[\r\n\0]/.test(authToken) || authToken.length === 0 || authToken.length > 4096) {
+    throw new SourceCheckoutError("INVALID_AUTH_TOKEN", "Invalid Git credential");
+  }
+}
+
+/** Non-secret git config flags. Never carries credentials (see gitEnvironment). */
+function baseGitConfig(): string[] {
+  return [
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "protocol.file.allow=never",
+    "-c",
+    "fetch.fsckObjects=true",
+  ];
+}
+
+/** Test hooks: prove secrets travel via child env, never argv/URL. */
+export function __gitEnvironmentForTest(authToken?: string | null): NodeJS.ProcessEnv {
+  return gitEnvironment(authToken ?? null);
+}
+
+export function __gitArgvForTest(kind: "clone" | "fetch" | "rev-parse"): string[] {
+  const gitBase = baseGitConfig();
+  if (kind === "clone") {
+    return [...gitBase, "clone", "--depth", "1", "--branch", "main", "<url>", "<workspace>"];
+  }
+  if (kind === "fetch") {
+    return [...gitBase, "fetch", "--depth", "1", "origin", "<sha>"];
+  }
+  return [...gitBase, "rev-parse", "HEAD"];
 }
 
 async function runGit(
   args: string[],
-  cwd?: string
+  cwd?: string,
+  authToken?: string | null
 ) {
   try {
     return await execFileAsync(
@@ -177,7 +227,7 @@ async function runGit(
       args,
       {
         cwd,
-        env: gitEnvironment(),
+        env: gitEnvironment(authToken ?? null),
         timeout: CHECKOUT_TIMEOUT_MS,
         maxBuffer: 5 * 1024 * 1024,
         windowsHide: true,
@@ -222,6 +272,15 @@ export async function withCheckedOutRepository<T>(
 
   const branch = validateBranch(options.branch);
 
+  let targetSha: string | null = null;
+  if (options.targetCommitSha !== undefined && options.targetCommitSha !== null) {
+    const normalized = options.targetCommitSha.trim().toLowerCase();
+    if (!/^[0-9a-f]{40}$/.test(normalized)) {
+      throw new SourceCheckoutError("INVALID_COMMIT_SHA", "Invalid target commit SHA");
+    }
+    targetSha = normalized;
+  }
+
   await mkdir(CHECKOUT_ROOT, {
     recursive: true,
   });
@@ -233,14 +292,13 @@ export async function withCheckedOutRepository<T>(
 
   await mkdir(workspace);
 
+  const gitBase = baseGitConfig();
+  const authToken = options.authToken ?? null;
+  if (authToken !== null) validateAuthToken(authToken);
+
   try {
     await runGit([
-      "-c",
-      "core.hooksPath=/dev/null",
-      "-c",
-      "protocol.file.allow=never",
-      "-c",
-      "fetch.fsckObjects=true",
+      ...gitBase,
       "clone",
       "--depth",
       "1",
@@ -251,18 +309,23 @@ export async function withCheckedOutRepository<T>(
       branch,
       repositoryUrl.toString(),
       workspace,
-    ]);
+    ], undefined, authToken);
+
+    // Pin to the exact pushed commit so the worker deploys what GitHub sent,
+    // not whatever the branch tip moved to afterwards.
+    if (targetSha) {
+      await runGit([...gitBase, "fetch", "--depth", "1", "origin", targetSha], workspace, authToken);
+      await runGit([...gitBase, "checkout", "--detach", targetSha], workspace, authToken);
+    }
 
     const { stdout } = await runGit(
       [
-        "-c",
-        "core.hooksPath=/dev/null",
-        "-c",
-        "protocol.file.allow=never",
+        ...gitBase,
         "rev-parse",
         "HEAD",
       ],
-      workspace
+      workspace,
+      authToken
     );
 
     const commitSha = stdout.trim();
@@ -271,6 +334,13 @@ export async function withCheckedOutRepository<T>(
       throw new SourceCheckoutError(
         "INVALID_COMMIT_SHA",
         "Git returned an invalid commit SHA"
+      );
+    }
+
+    if (targetSha && commitSha.toLowerCase() !== targetSha) {
+      throw new SourceCheckoutError(
+        "COMMIT_MISMATCH",
+        "Checked-out commit does not match the requested SHA"
       );
     }
 

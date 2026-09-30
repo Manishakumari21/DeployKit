@@ -321,6 +321,11 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     const projectId = row.project_id as string;
     const repositoryUrl = row.repository_url as string;
     const branch = (row.branch as string) ?? "main";
+    const pinnedSha =
+      typeof row.commit_sha === "string" && /^[0-9a-f]{40}$/i.test(row.commit_sha)
+        ? (row.commit_sha as string).toLowerCase()
+        : null;
+    const authToken = await this.resolveGitHubToken(projectId);
 
     await this.ensureStatus(
       context.deploymentId,
@@ -333,7 +338,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     let result: DeploymentExecutionResult;
     try {
       result = await this.checkout(
-        { repositoryUrl, branch },
+        { repositoryUrl, branch, targetCommitSha: pinnedSha, authToken },
         async ({ commitSha, workspace }) => {
           const policy = getBuildPolicy();
           const imageRepository =
@@ -421,6 +426,29 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       throw error;
     }
     return result!;
+  }
+
+  private async resolveGitHubToken(projectId: string): Promise<string | undefined> {
+    try {
+      const link = await pool.query(
+        `SELECT i.github_installation_id
+         FROM projects p
+         JOIN github_repositories r ON r.id = p.github_repository_id
+         JOIN github_installations i ON i.id = r.installation_id
+         WHERE p.id = $1`,
+        [projectId]
+      );
+      const installationId = link.rows[0]?.github_installation_id;
+      if (installationId === undefined || installationId === null) return undefined;
+      const { getInstallationToken } = await import(
+        "../infrastructure/github/githubAuth.js"
+      );
+      return await getInstallationToken(String(installationId));
+    } catch {
+      // Public repos must keep working when GitHub App is unconfigured;
+      // private checkout will fail closed with CLONE_FAILED.
+      return undefined;
+    }
   }
 
   private async ensureStatus(

@@ -185,3 +185,59 @@ npx tsx --test src/infrastructure/runtime/dockerRuntimeManager.integration.test.
   (no reverse proxy / connection draining in Phase 03).
 * Health checks target the image's exposed port (discovered from
   EXPOSE metadata, fallback 3000) at `/` over the runtime network.
+
+## Phase 04 — GitHub App + automatic deployments
+
+Flow: `GitHub push -> POST /api/webhooks/github (HMAC verified) ->
+delivery persisted (PK delivery ID) -> repo/project resolved ->
+deployment+job created (trigger github_push, exact SHA,
+idempotency github:<delivery>) -> 202 -> worker (Phase 03 pipeline
+checks out the pinned SHA; private repos use an installation token
+passed via child-process env `GIT_CONFIG_*`, never argv/URL/logs)`.
+
+Delivery claims are serialized per delivery with a transactional
+advisory lock; `processing` rows carry a 5-minute lease, so a crash
+between persist and deployment creation is resumed by redelivery
+while a live handler is not double-processed. Deployment creation
+stays idempotent (`github:<delivery>` unique), so repeats never
+create a second deployment.
+
+### Environment variables (new)
+
+| Var | Purpose |
+| --- | ------- |
+| `GITHUB_APP_ID` | GitHub App ID (required for webhooks/private repos) |
+| `GITHUB_APP_PRIVATE_KEY` | App RSA private key PEM (`\n` escapes allowed) |
+| `GITHUB_WEBHOOK_SECRET` | Webhook HMAC secret |
+| `GITHUB_API_BASE_URL` | Default `https://api.github.com` (override for mocks) |
+| `GITHUB_INSTALLATION_ID` | Optional default installation |
+
+### Endpoints
+
+* `POST /api/webhooks/github` (raw 1mb body): 202 accepted/duplicate/
+  ignored, 401 bad signature, 400 malformed. Requires
+  `X-Hub-Signature-256`, `X-GitHub-Delivery`, `X-GitHub-Event`.
+* `POST /api/projects/:id/github-link`
+  (`{ installationId, repositoryFullName, repositoryId?, autoDeploy? }`)
+* `GET /api/projects/:id/github-link`, `DELETE /api/projects/:id/github-link`
+
+### Setup
+
+1. Create a GitHub App: permissions Contents read-only, Metadata
+   read-only; subscribe to `push`; set webhook URL to
+   `https://<host>/api/webhooks/github` with a secret.
+2. Install the App on the repo; note installation ID + full_name.
+3. Set `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`,
+   `GITHUB_WEBHOOK_SECRET` on api/worker; migrate DB through
+   `007_github_integration.sql`.
+4. Link: `POST /api/projects/:id/github-link` with installation +
+   full_name (enables `auto_deploy`, matches `projects.branch`).
+5. Push to the linked branch -> 202 -> worker deploys the exact SHA.
+
+### Limitations
+
+* Only `push` to `refs/heads/<branch>` auto-deploys; tags, PRs,
+  deletions, other events are ignored (202).
+* One linked repository per project; branch must equal
+  `projects.branch`; `auto_deploy` defaults to false.
+* No zero-downtime guarantees; single-node worker as in Phase 03.

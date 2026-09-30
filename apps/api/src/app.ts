@@ -3,10 +3,19 @@ import cors from "cors";
 import pool from "./db/database.js";
 import projectRoutes from "./routes/projectRoutes.js";
 import deploymentRoutes from "./routes/deploymentRoutes.js";
+import webhookRoutes from "./routes/webhookRoutes.js";
 
 const app = express();
 
 app.use(cors());
+
+// GitHub webhooks need raw bytes for HMAC verification: mount BEFORE json().
+app.use(
+  "/api/webhooks",
+  express.raw({ type: "*/*", limit: "1mb" }),
+  webhookRoutes
+);
+
 app.use(express.json());
 
 

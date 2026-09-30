@@ -32,6 +32,10 @@ services:
     environment:
       PORT: 3000
       DATABASE_URL: ${DATABASE_URL}
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      GITHUB_API_BASE_URL: ${GITHUB_API_BASE_URL:-https://api.github.com}
 
     ports:
       - "3001:3000"
@@ -88,6 +92,10 @@ services:
       DEPLOYKIT_RUNTIME_NETWORK: deploykit-runtime
       DEPLOYKIT_BUILDER_NAME: deploykit-builder
       DEPLOYKIT_ALLOWED_GIT_HOSTS: github.com
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      GITHUB_API_BASE_URL: ${GITHUB_API_BASE_URL:-https://api.github.com}
 
     volumes:
       # Worker only: Buildx and runtime need Docker access.

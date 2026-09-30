@@ -15,6 +15,7 @@ export interface CreateDeploymentInput {
   trigger: DeploymentTrigger;
   idempotencyKey: string | null;
   rollbackReleaseId?: string | null;
+  commitSha?: string | null;
 }
 
 export async function createDeployment(
@@ -76,6 +77,16 @@ export async function createDeployment(
       );
     }
 
+    let commitSha: string | null = null;
+    if (input.commitSha !== undefined && input.commitSha !== null) {
+      const normalized = input.commitSha.trim().toLowerCase();
+      if (!/^[0-9a-f]{40}$/.test(normalized)) {
+        await client.query("ROLLBACK");
+        throw new Error("commit_sha must be a 40-char hex SHA");
+      }
+      commitSha = normalized;
+    }
+
     let deployment;
 
     if (input.idempotencyKey) {
@@ -86,10 +97,11 @@ export async function createDeployment(
           status,
           trigger,
           branch,
+          commit_sha,
           idempotency_key,
           rollback_release_id
         )
-        VALUES ($1, 'queued', $2, $3, $4, $5)
+        VALUES ($1, 'queued', $2, $3, $5, $4, $6)
         ON CONFLICT (
           project_id,
           idempotency_key
@@ -103,6 +115,7 @@ export async function createDeployment(
           input.trigger,
           project.branch,
           input.idempotencyKey,
+          commitSha,
           input.rollbackReleaseId ?? null,
         ]
       );
@@ -131,15 +144,17 @@ export async function createDeployment(
           status,
           trigger,
           branch,
+          commit_sha,
           rollback_release_id
         )
-        VALUES ($1, 'queued', $2, $3, $4)
+        VALUES ($1, 'queued', $2, $3, $4, $5)
         RETURNING *
         `,
         [
           input.projectId,
           input.trigger,
           project.branch,
+          commitSha,
           input.rollbackReleaseId ?? null,
         ]
       );

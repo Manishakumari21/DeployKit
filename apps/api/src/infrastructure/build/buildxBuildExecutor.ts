@@ -11,6 +11,7 @@ import path from "node:path";
 
 import type {
   BuildExecutor,
+  BuildPolicy,
   BuildRequest,
   BuildResult,
 } from "./buildExecutor.js";
@@ -142,6 +143,56 @@ export function validateImageTag(
   }
 
   return value;
+}
+
+export interface BuildxBuildArgsInput {
+  builder: string;
+  imageReference: string;
+  commitSha: string;
+  policy: BuildPolicy;
+  push?: boolean;
+}
+
+export function buildBuildxArgs(input: BuildxBuildArgsInput): string[] {
+  const push = input.push ?? false;
+
+  const args = [
+    "buildx",
+    "build",
+
+    "--builder",
+    input.builder,
+
+    "--progress",
+    "plain",
+
+    "--metadata-file",
+    "<metadata-file>",
+
+    "--tag",
+    input.imageReference,
+
+    push ? "--push" : "--load",
+
+    "--label",
+    `org.opencontainers.image.revision=${input.commitSha}`,
+
+    "--label",
+    "io.deploykit.managed=true",
+  ];
+
+  args.push(
+    "--network",
+    input.policy.networkEnabled ? "default" : "none"
+  );
+
+  args.push("--resource", `memory=${input.policy.memoryBytes}`);
+  args.push(
+    "--resource",
+    `cpu-quota=${input.policy.cpuLimit * 100000}`
+  );
+
+  return args;
 }
 
 async function getDirectorySize(
@@ -429,45 +480,16 @@ export class BuildxBuildExecutor
     );
 
     try {
-      const args = [
-        "buildx",
-        "build",
+      const push = request.push ?? false;
 
-        "--builder",
-        this.builder,
-
-        "--progress",
-        "plain",
-
-        "--metadata-file",
-        metadataFile,
-
-        "--tag",
+      const args = buildBuildxArgs({
+        builder: this.builder,
         imageReference,
-
-        "--load",
-
-        "--label",
-        `org.opencontainers.image.revision=${request.commitSha}`,
-
-        "--label",
-        "io.deploykit.managed=true",
-      ];
-
-      args.push(
-        "--network",
-        request.policy.networkEnabled
-          ? "default"
-          : "none"
-      );
-
-      args.push(
-        "--resource",
-        `memory=${request.policy.memoryBytes}`
-      );
-      args.push(
-        "--resource",
-        `cpu-quota=${request.policy.cpuLimit * 100000}`
+        commitSha: request.commitSha,
+        policy: request.policy,
+        push,
+      }).map((arg) =>
+        arg === "<metadata-file>" ? metadataFile : arg
       );
 
       args.push(request.workspace);

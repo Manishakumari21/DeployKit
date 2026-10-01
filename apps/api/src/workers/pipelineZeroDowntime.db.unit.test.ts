@@ -79,6 +79,7 @@ function fakeRuntime() {
       };
     },
     async waitForHealthy() {},
+    async pull() {},
   };
 }
 

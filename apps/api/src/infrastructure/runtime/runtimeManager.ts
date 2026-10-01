@@ -42,6 +42,14 @@ export interface RuntimeManager {
     runtime: RuntimeInfo,
     timeoutMs: number
   ): Promise<void>;
+
+  /**
+   * Pull an immutable digest reference (`repository@sha256:...`)
+   * from the registry so a subsequent `create` does not depend on
+   * a local image cache. Explicit so registry retrieval is visible
+   * in the pipeline and testable in isolation.
+   */
+  pull(reference: string): Promise<void>;
 }
 
 export class UnconfiguredRuntimeManager
@@ -91,6 +99,14 @@ export class UnconfiguredRuntimeManager
   async waitForHealthy(
     _runtime: RuntimeInfo,
     _timeoutMs: number
+  ): Promise<void> {
+    throw new Error(
+      "RUNTIME_MANAGER_NOT_CONFIGURED"
+    );
+  }
+
+  async pull(
+    _reference: string
   ): Promise<void> {
     throw new Error(
       "RUNTIME_MANAGER_NOT_CONFIGURED"

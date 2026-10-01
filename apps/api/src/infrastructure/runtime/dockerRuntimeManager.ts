@@ -475,6 +475,24 @@ export class DockerRuntimeManager
     );
   }
 
+  async pull(
+    reference: string
+  ): Promise<void> {
+    const imageReference = validateImageReference(
+      reference
+    );
+
+    await runDocker(
+      this.dockerBinary,
+      [
+        "image",
+        "pull",
+        imageReference,
+      ],
+      120_000
+    );
+  }
+
   async inspect(
     containerName: string,
     expectedNetwork?: string

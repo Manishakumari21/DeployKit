@@ -44,6 +44,13 @@ import {
   getActiveRelease,
   getReleaseForDeployment,
 } from "../services/releaseService.js";
+import {
+  digestReference,
+  getOptionalRegistryConfig,
+  registryRepositoryForProject,
+  registryTagForDeployment,
+  type RegistryConfig,
+} from "../infrastructure/registry/registryConfig.js";
 
 export interface PipelineDependencies {
   buildExecutor?: BuildExecutor;
@@ -71,6 +78,17 @@ const RUNTIME_DEFAULTS = {
 
 function shortId(id: string): string {
   return id.replace(/-/g, "").slice(0, 8).toLowerCase();
+}
+
+export function shouldPullImage(
+  imageRepository: string,
+  registry: RegistryConfig | null = getOptionalRegistryConfig()
+): boolean {
+  if (!registry) {
+    return false;
+  }
+
+  return imageRepository.startsWith(`${registry.registryHost}/`);
 }
 
 async function discoverExposedPort(imageRef: string): Promise<number> {
@@ -374,15 +392,27 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     }
 
     let result: DeploymentExecutionResult;
+    const registry = getOptionalRegistryConfig();
     try {
       result = await this.checkout(
         { repositoryUrl, branch, targetCommitSha: pinnedSha, authToken },
         async ({ commitSha, workspace }) => {
           const policy = getBuildPolicy();
-          const imageRepository =
-            `deploykit/project-${shortId(projectId)}`;
-          const imageTag =
-            `d-${shortId(context.deploymentId)}-${commitSha.slice(0, 7).toLowerCase()}`;
+          const imageRepository = registry
+            ? registryRepositoryForProject(registry, projectId)
+            : `deploykit/project-${shortId(projectId)}`;
+          const imageTag = registry
+            ? registryTagForDeployment(context.deploymentId, commitSha)
+            : `d-${shortId(context.deploymentId)}-${commitSha.slice(0, 7).toLowerCase()}`;
+          if (registry) {
+            await this.ensureStatus(
+              context.deploymentId,
+              ["building"],
+              "pushing",
+              "deployment.push_started",
+              "Build output will be pushed to the image registry"
+            );
+          }
           let build;
           try {
             build = await this.buildExecutor.build({
@@ -391,6 +421,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
               imageTag,
               commitSha,
               policy,
+              push: registry !== null,
             });
           } catch (error) {
             if (error instanceof BuildExecutorError) {
@@ -414,8 +445,12 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
               context.deploymentId,
               cur.status,
               "verifying",
-              "deployment.build_succeeded",
-              "Build succeeded; image digest recorded",
+              registry
+                ? "deployment.image_pushed"
+                : "deployment.build_succeeded",
+              registry
+                ? "Image pushed; immutable digest recorded"
+                : "Build succeeded; image digest recorded",
               {
                 commitSha,
                 imageReference: build.imageReference,
@@ -617,6 +652,28 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     }
     const needsMarking =
       storedStatus !== "healthy" && storedStatus !== "active";
+
+    if (shouldPullImage(input.imageRepository)) {
+      try {
+        await this.runtimeManager.pull(
+          digestReference(input.imageRepository, input.imageDigest)
+        );
+      } catch (error) {
+        const retryable =
+          error instanceof RuntimeManagerError &&
+          (error.code === "DOCKER_TIMEOUT" ||
+            /timeout|refused|unavailable/i.test(
+              error instanceof Error ? error.message : ""
+            ));
+        throw new PipelineError(
+          PIPELINE_ERROR_CODES.RUNTIME_FAILED,
+          error instanceof Error
+            ? `Image pull failed: ${error.message.slice(0, 300)}`
+            : "Image pull failed",
+          { retryable }
+        );
+      }
+    }
 
     const containerPort = await discoverExposedPort(imageRef);
 

@@ -293,3 +293,58 @@ cascading project deletes). Docker suites stay separate:
 * No TLS/DNS automation; gateway serves plain HTTP on the runtime
   network with no published host ports.
 * Readiness is HTTP 2xx/3xx on `/`; no app-specific health contracts.
+
+## Phase 06 — Image registry & artifact lifecycle
+
+Flow: `checkout -> Buildx --push to the local registry ->
+registry-resolved immutable digest -> release (repository + digest)
+-> runtime pulls repository@digest -> health verification ->
+active release`. Release identity remains `repository@sha256:<digest>`;
+mutable tags are never used as release identity. Rollback reuses the
+stored digest and never rebuilds.
+
+The registry is **development-only**: unauthenticated, reachable on
+the internal `deploykit-default` network as `deploykit-registry:5000`,
+no host ports published, data persisted in the
+`deploykit-registry-data` volume (`registry:2.8.3`, pinned).
+Only the worker touches the registry; the API has no registry access
+and no registry dependency.
+
+When `DEPLOYKIT_REGISTRY_HOST` is unset, the pipeline keeps the Phase 03
+local behavior (`--load`, no push, no pull). When set, builds use
+`--push` (never combined with `--load`), deployment status passes
+through `pushing`, and the runtime pulls the digest reference before
+`container create`. Digest resolution uses
+`docker buildx imagetools inspect` against the registry (not the local
+RepoDigests cache, which can disagree with the stored manifest).
+
+### Environment variables (new)
+
+| Var | Default | Purpose |
+| --- | ------- | ------- |
+| `DEPLOYKIT_REGISTRY_HOST` | unset (registry disabled) | registry hostname[:port], e.g. `deploykit-registry:5000` |
+| `DEPLOYKIT_REGISTRY_NAMESPACE` | `deploykit` | registry namespace prefix |
+| `DEPLOYKIT_REGISTRY_INSECURE` | `false` | `true` is LOCAL DEVELOPMENT ONLY (loopback / `deploykit-registry` hosts only) |
+
+### Tests
+
+```bash
+cd apps/api
+npm test                                   # fast unit + DB suites (no Docker/registry needed)
+npm run test:registry                      # ephemeral 127.0.0.1 registry: push/digest/exists/restart/unreachable
+```
+
+`test:registry` boots its own throwaway registry container and removes
+it afterwards; it does not use the Compose registry service or volumes.
+`test:integration` skips the registry lifecycle tests unless
+`DEPLOYKIT_TEST_REGISTRY_HOST` is set.
+
+### Limitations
+
+* No registry authentication, no TLS, no HA, no retention/GC policy,
+  no image signing — not production-grade artifact storage.
+* The pushing Docker daemon must allow HTTP for the local registry
+  (loopback addresses are exempt by default; a non-loopback
+  `deploykit-registry` hostname may require an `insecure-registries`
+  daemon entry when commands execute on the host daemon via the
+  worker-mounted socket).

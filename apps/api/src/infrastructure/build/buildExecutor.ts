@@ -12,6 +12,12 @@ export interface BuildRequest {
   imageTag: string;
   commitSha: string;
   policy: BuildPolicy;
+  /**
+   * When true, build with `--push` (registry mode) instead of
+   * `--load` (local mode). Defaults to false to preserve local
+   * development behavior. `--load` and `--push` are never combined.
+   */
+  push?: boolean;
 }
 
 export interface BuildResult {

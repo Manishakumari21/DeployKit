@@ -85,7 +85,7 @@ services:
     environment:
       PORT: 3000
       DATABASE_URL: ${DATABASE_URL}
-      DEPLOYMENT_WORKER_ENABLED: "false"
+      DEPLOYMENT_WORKER_ENABLED: "true"
       WORKER_POLL_INTERVAL_MS: 2000
       WORKER_LEASE_MS: 30000
       DEPLOYKIT_RUNTIME_NETWORK: deploykit-runtime
@@ -94,6 +94,9 @@ services:
       DEPLOYKIT_GATEWAY_CONTAINER: dk-gateway
       DEPLOYKIT_GATEWAY_ROUTES_DIR: /gateway-routes
       DEPLOYKIT_GATEWAY_HOST: dk-gateway
+      DEPLOYKIT_REGISTRY_HOST: ${DEPLOYKIT_REGISTRY_HOST:-}
+      DEPLOYKIT_REGISTRY_NAMESPACE: ${DEPLOYKIT_REGISTRY_NAMESPACE:-deploykit}
+      DEPLOYKIT_REGISTRY_INSECURE: ${DEPLOYKIT_REGISTRY_INSECURE:-false}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
@@ -110,10 +113,42 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+      registry:
+        condition: service_healthy
 
     networks:
       - default
       - runtime
+
+  registry:
+    # Pinned to registry:2.8.3 (2.x line): mature, stable /v2/ API,
+    # OCI-compatible, minimal surface. Pinned by patch to avoid
+    # `latest` drift. Development-only: unauthenticated, internal
+    # network only, no host ports published by default.
+    image: registry:2.8.3
+    container_name: deploykit-registry
+
+    environment:
+      REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY: /var/lib/registry
+
+    volumes:
+      - deploykit-registry-data:/var/lib/registry
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O /dev/null http://localhost:5000/v2/ || exit 1"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    restart: unless-stopped
+
+    networks:
+      - default
 
   gateway:
     build:
@@ -139,3 +174,4 @@ networks:
 volumes:
   deploykit-db:
   deploykit-gateway-routes:
+  deploykit-registry-data:

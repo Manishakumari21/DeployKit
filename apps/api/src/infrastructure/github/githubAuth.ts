@@ -95,10 +95,7 @@ async function requestInstallationToken(
       10_000
     );
   } catch (error) {
-    throw new GitHubAuthError(
-      "TOKEN_REQUEST_FAILED",
-      error instanceof Error ? "GitHub token request failed" : "GitHub token request failed"
-    );
+    throw new GitHubAuthError("TOKEN_REQUEST_FAILED", error instanceof Error ? "GitHub token request failed" : "GitHub token request failed");
   }
   if (res.status === 401 || res.status === 403) {
     throw new GitHubAuthError("INSTALLATION_AUTH_FAILED", "GitHub installation not authorized");

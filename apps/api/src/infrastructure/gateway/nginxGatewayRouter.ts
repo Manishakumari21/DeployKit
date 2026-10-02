@@ -96,10 +96,7 @@ export class NginxGatewayRouter implements TrafficRouter {
       "dk-gateway"
     ).trim();
     if (!/^[a-z0-9][a-z0-9_.-]{0,127}$/.test(container)) {
-      throw new TrafficRouterError(
-        "INVALID_GATEWAY",
-        "Invalid gateway container name"
-      );
+      throw new TrafficRouterError("INVALID_GATEWAY", "Invalid gateway container name");
     }
     const routesDir = (
       options.routesDir ??
@@ -107,10 +104,7 @@ export class NginxGatewayRouter implements TrafficRouter {
       "/gateway-routes"
     ).trim();
     if (!routesDir || /[\0]/.test(routesDir)) {
-      throw new TrafficRouterError(
-        "INVALID_GATEWAY",
-        "Invalid gateway routes directory"
-      );
+      throw new TrafficRouterError("INVALID_GATEWAY", "Invalid gateway routes directory");
     }
     this.dockerBinary =
       options.dockerBinary ??
@@ -138,10 +132,7 @@ export class NginxGatewayRouter implements TrafficRouter {
       );
     } catch (error) {
       if (error instanceof RuntimeManagerError) {
-        throw new TrafficRouterError(
-          "GATEWAY_COMMAND_FAILED",
-          "Gateway command failed"
-        );
+        throw new TrafficRouterError("GATEWAY_COMMAND_FAILED", "Gateway command failed");
       }
       throw error;
     }
@@ -176,10 +167,7 @@ export class NginxGatewayRouter implements TrafficRouter {
   async verifyRoute(target: RouteTarget, timeoutMs: number): Promise<void> {
     validateRouteTarget(target);
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
-      throw new TrafficRouterError(
-        "INVALID_TIMEOUT",
-        "Route verification timeout must be positive"
-      );
+      throw new TrafficRouterError("INVALID_TIMEOUT", "Route verification timeout must be positive");
     }
     const deadline = Date.now() + timeoutMs;
     let lastError = "No response";

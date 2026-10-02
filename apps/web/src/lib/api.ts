@@ -1,11 +1,24 @@
-import type { Project } from "../types";
+import type { ApiDeployment, DeploymentEvent, Project } from "../types";
 
 export const API_URL =
   (import.meta.env.VITE_API_URL as string | undefined) ??
-  "http://localhost:3000/api";
+  "/api";
 
 async function json(res: Response) {
   return res.json().catch(() => ({}));
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, init);
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") throw e;
+    throw new Error("Could not reach the API", { cause: e });
+  }
+  const data = await json(res);
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data as T;
 }
 
 export async function fetchProjects(): Promise<Project[]> {
@@ -40,4 +53,28 @@ export async function createProject(input: {
 
 export async function deleteProject(id: string) {
   await fetch(`${API_URL}/projects/${id}`, { method: "DELETE" });
+}
+
+export function fetchDeployments(projectId: string): Promise<ApiDeployment[]> {
+  return request<ApiDeployment[]>(`/projects/${projectId}/deployments`);
+}
+
+export function createDeployment(projectId: string, idempotencyKey: string): Promise<ApiDeployment> {
+  return request<ApiDeployment>(`/projects/${projectId}/deployments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify({ trigger: "manual" }),
+  });
+}
+
+export function fetchDeployment(deploymentId: string, signal?: AbortSignal): Promise<ApiDeployment> {
+  return request<ApiDeployment>(`/deployments/${deploymentId}`, { signal });
+}
+
+export function fetchDeploymentEvents(deploymentId: string): Promise<DeploymentEvent[]> {
+  return request<DeploymentEvent[]>(`/deployments/${deploymentId}/events`);
+}
+
+export function cancelDeployment(deploymentId: string): Promise<{ id: string; status: string }> {
+  return request(`/deployments/${deploymentId}/cancel`, { method: "POST" });
 }

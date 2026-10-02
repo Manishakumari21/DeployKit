@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { runCommand, type ExecResult } from "../process/dockerExec.js";
 
 import {
   buildImageReference,
@@ -22,7 +22,6 @@ import { RegistryConfigError } from "./registryConfig.js";
 const DEFAULT_DOCKER_BINARY = "docker";
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_PUSH_TIMEOUT_MS = 120_000;
-const MAX_OUTPUT_BYTES = 64 * 1024;
 
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/i;
 
@@ -37,32 +36,20 @@ export function validateLocalReference(ref: string): string {
   const value = ref.trim();
 
   if (!value || value.length > 1024) {
-    throw new RegistryError(
-      "INVALID_REFERENCE",
-      "Local image reference is invalid"
-    );
+    throw new RegistryError("INVALID_REFERENCE", "Local image reference is invalid");
   }
 
   if (value.startsWith("-")) {
-    throw new RegistryError(
-      "INVALID_REFERENCE",
-      "Local image reference is invalid"
-    );
+    throw new RegistryError("INVALID_REFERENCE", "Local image reference is invalid");
   }
 
   // eslint-disable-next-line no-control-regex
   if (/[\s\u0000-\u001f\u007f'"`$\\;&|<>!()*?]/.test(value)) {
-    throw new RegistryError(
-      "INVALID_REFERENCE",
-      "Local image reference contains invalid characters"
-    );
+    throw new RegistryError("INVALID_REFERENCE", "Local image reference contains invalid characters");
   }
 
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value)) {
-    throw new RegistryError(
-      "INVALID_REFERENCE",
-      "Local image reference must not include a URL scheme"
-    );
+    throw new RegistryError("INVALID_REFERENCE", "Local image reference must not include a URL scheme");
   }
 
   return value;
@@ -75,19 +62,13 @@ export function validateDigestReference(ref: string): {
   const value = ref.trim();
 
   if (!value || value.length > 1024) {
-    throw new RegistryError(
-      "INVALID_REFERENCE",
-      "Image reference is invalid"
-    );
+    throw new RegistryError("INVALID_REFERENCE", "Image reference is invalid");
   }
 
   const atIndex = value.lastIndexOf("@");
 
   if (atIndex <= 0) {
-    throw new RegistryError(
-      "INVALID_REFERENCE",
-      "Image reference must be an immutable digest reference (repository@sha256:...)"
-    );
+    throw new RegistryError("INVALID_REFERENCE", "Image reference must be an immutable digest reference (repository@sha256:...)");
   }
 
   const repository = validateRegistryRepository(
@@ -162,81 +143,10 @@ export function classifyDockerFailure(
   return { code: "PUSH_FAILED", retryable: false };
 }
 
-interface CommandResult {
-  stdout: string;
-  stderr: string;
-  timedOut: boolean;
-  code: number;
-}
+type CommandResult = ExecResult;
 
-function appendTail(current: string, chunk: Buffer | string): string {
-  const next = current + chunk.toString();
-
-  if (Buffer.byteLength(next, "utf8") <= MAX_OUTPUT_BYTES) {
-    return next;
-  }
-
-  const buffer = Buffer.from(next, "utf8");
-
-  return buffer
-    .subarray(buffer.length - MAX_OUTPUT_BYTES)
-    .toString("utf8");
-}
-
-function runDockerCommand(
-  binary: string,
-  args: string[],
-  timeoutMs: number
-): Promise<CommandResult> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(binary, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      shell: false,
-    });
-
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    let settled = false;
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, timeoutMs);
-
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout = appendTail(stdout, chunk);
-    });
-
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr = appendTail(stderr, chunk);
-    });
-
-    child.on("error", (error) => {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      clearTimeout(timer);
-      reject(error);
-    });
-
-    child.on("close", (code) => {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      clearTimeout(timer);
-      resolve({
-        stdout: stdout.trim(),
-        stderr: stderr.trim(),
-        timedOut,
-        code: code ?? 1,
-      });
-    });
-  });
+function runDockerCommand(binary: string, args: string[], timeoutMs: number): Promise<CommandResult> {
+  return runCommand(binary, args, timeoutMs);
 }
 
 export class DockerImageRegistry implements ImageRegistry {
@@ -264,10 +174,7 @@ export class DockerImageRegistry implements ImageRegistry {
     const prefix = `${this.config.registryHost}/`;
 
     if (!repository.startsWith(prefix)) {
-      throw new RegistryError(
-        "INVALID_REFERENCE",
-        "Image repository is not under the configured registry"
-      );
+      throw new RegistryError("INVALID_REFERENCE", "Image repository is not under the configured registry");
     }
   }
 
@@ -301,10 +208,7 @@ export class DockerImageRegistry implements ImageRegistry {
       tag = validateRegistryTag(input.tag);
     } catch (error) {
       if (error instanceof RegistryConfigError) {
-        throw new RegistryError(
-          "INVALID_REFERENCE",
-          error.message
-        );
+        throw new RegistryError("INVALID_REFERENCE", error.message);
       }
       throw error;
     }
@@ -349,10 +253,6 @@ export class DockerImageRegistry implements ImageRegistry {
       );
     }
 
-    // Resolve the digest from the registry itself (not the local
-    // RepoDigests cache): after pushing multi-platform-capable
-    // content, the stored manifest digest can differ from the local
-    // image digest, and only the stored digest is pullable/runnable.
     const resolveResult = await this.run(
       [
         "buildx",
@@ -380,10 +280,7 @@ export class DockerImageRegistry implements ImageRegistry {
     const digest = parseImagetoolsDigest(resolveResult.stdout);
 
     if (!digest || !DIGEST_PATTERN.test(digest)) {
-      throw new RegistryError(
-        "DIGEST_MISSING",
-        "Pushed image digest could not be determined"
-      );
+      throw new RegistryError("DIGEST_MISSING", "Pushed image digest could not be determined");
     }
 
     return {
@@ -401,18 +298,13 @@ export class DockerImageRegistry implements ImageRegistry {
       ({ repository, digest } = validateDigestReference(reference));
     } catch (error) {
       if (error instanceof RegistryConfigError) {
-        throw new RegistryError(
-          "INVALID_REFERENCE",
-          error.message
-        );
+        throw new RegistryError("INVALID_REFERENCE", error.message);
       }
       throw error;
     }
 
     const digestRef = digestReference(repository, digest);
 
-    // `manifest inspect` cannot speak plain HTTP to insecure local
-    // registries; imagetools resolves digest references correctly.
     const result = await this.run(
       [
         "buildx",
@@ -442,10 +334,7 @@ export class DockerImageRegistry implements ImageRegistry {
     }
 
     if (isAuthMessage(result.stderr)) {
-      throw new RegistryError(
-        "AUTH_FAILED",
-        "Registry authentication failed"
-      );
+      throw new RegistryError("AUTH_FAILED", "Registry authentication failed");
     }
 
     if (isNetworkMessage(result.stderr)) {

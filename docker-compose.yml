@@ -77,7 +77,7 @@ services:
   worker:
     build:
       context: ./apps/api
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.worker
 
     container_name: deploykit-worker
     command: ["node", "dist/workers/deploymentWorker.js"]

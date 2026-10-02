@@ -34,40 +34,24 @@ function hasControlCharacters(value: string): boolean {
 export function validateRegistryHost(host: string): string {
   const value = host.trim();
 
-  if (!value) {
-    throw new RegistryConfigError(
-      "Registry host must not be empty"
-    );
-  }
+  if (!value) throw new RegistryConfigError("Registry host must not be empty");
 
-  if (value.length > MAX_HOST_LENGTH) {
-    throw new RegistryConfigError(
-      "Registry host is too long"
-    );
-  }
+  if (value.length > MAX_HOST_LENGTH) throw new RegistryConfigError("Registry host is too long");
 
   if (/\s/.test(value) || hasControlCharacters(value)) {
-    throw new RegistryConfigError(
-      "Registry host must not contain whitespace or control characters"
-    );
+    throw new RegistryConfigError("Registry host must not contain whitespace or control characters");
   }
 
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value)) {
-    throw new RegistryConfigError(
-      "Registry host must not include a URL scheme (use bare hostname[:port])"
-    );
+    throw new RegistryConfigError("Registry host must not include a URL scheme (use bare hostname[:port])");
   }
 
   if (value.includes("@") || value.includes("/")) {
-    throw new RegistryConfigError(
-      "Registry host must not contain credentials or path separators"
-    );
+    throw new RegistryConfigError("Registry host must not contain credentials or path separators");
   }
 
   if (!HOST_PATTERN.test(value.toLowerCase())) {
-    throw new RegistryConfigError(
-      "Registry host must be a hostname with an optional :port"
-    );
+    throw new RegistryConfigError("Registry host must be a hostname with an optional :port");
   }
 
   const port = value.split(":")[1];
@@ -78,47 +62,29 @@ export function validateRegistryHost(host: string): string {
       Number(port) < 1 ||
       Number(port) > 65535)
   ) {
-    throw new RegistryConfigError(
-      "Registry port must be between 1 and 65535"
-    );
+    throw new RegistryConfigError("Registry port must be between 1 and 65535");
   }
 
   return value.toLowerCase();
 }
 
-export function validateRegistryNamespace(
-  namespace: string
-): string {
+export function validateRegistryNamespace(namespace: string): string {
   const value = namespace.trim().toLowerCase();
 
-  if (!value) {
-    throw new RegistryConfigError(
-      "Registry namespace must not be empty"
-    );
-  }
+  if (!value) throw new RegistryConfigError("Registry namespace must not be empty");
 
-  if (value.length > MAX_NAMESPACE_LENGTH) {
-    throw new RegistryConfigError(
-      "Registry namespace is too long"
-    );
-  }
+  if (value.length > MAX_NAMESPACE_LENGTH) throw new RegistryConfigError("Registry namespace is too long");
 
   if (/\s/.test(namespace) || hasControlCharacters(namespace)) {
-    throw new RegistryConfigError(
-      "Registry namespace must not contain whitespace or control characters"
-    );
+    throw new RegistryConfigError("Registry namespace must not contain whitespace or control characters");
   }
 
   if (namespace !== namespace.toLowerCase()) {
-    throw new RegistryConfigError(
-      "Registry namespace must be lowercase"
-    );
+    throw new RegistryConfigError("Registry namespace must be lowercase");
   }
 
   if (!NAMESPACE_PATTERN.test(value)) {
-    throw new RegistryConfigError(
-      "Registry namespace must match [a-z0-9]+([._-][a-z0-9]+)*"
-    );
+    throw new RegistryConfigError("Registry namespace must match [a-z0-9]+([._-][a-z0-9]+)*");
   }
 
   return value;
@@ -158,9 +124,7 @@ function parseInsecureFlag(raw: string | undefined): boolean {
     return false;
   }
 
-  throw new RegistryConfigError(
-    "DEPLOYKIT_REGISTRY_INSECURE must be true/false (or 1/0)"
-  );
+  throw new RegistryConfigError("DEPLOYKIT_REGISTRY_INSECURE must be true/false (or 1/0)");
 }
 
 function assertInsecureAllowed(
@@ -187,15 +151,11 @@ export function getRegistryConfig(): RegistryConfig {
   const rawInsecure = process.env.DEPLOYKIT_REGISTRY_INSECURE;
 
   if (rawHost === undefined || rawHost.trim() === "") {
-    throw new RegistryConfigError(
-      "Missing required env var DEPLOYKIT_REGISTRY_HOST"
-    );
+    throw new RegistryConfigError("Missing required env var DEPLOYKIT_REGISTRY_HOST");
   }
 
   if (rawNamespace === undefined || rawNamespace.trim() === "") {
-    throw new RegistryConfigError(
-      "Missing required env var DEPLOYKIT_REGISTRY_NAMESPACE"
-    );
+    throw new RegistryConfigError("Missing required env var DEPLOYKIT_REGISTRY_NAMESPACE");
   }
 
   const registryHost = validateRegistryHost(rawHost);
@@ -221,59 +181,35 @@ export function isRegistryConfigured(): boolean {
   return getOptionalRegistryConfig() !== null;
 }
 
-export function validateRegistryRepository(
-  repository: string
-): string {
+export function validateRegistryRepository(repository: string): string {
   const value = repository.trim();
 
-  if (!value) {
-    throw new RegistryConfigError(
-      "Registry repository must not be empty"
-    );
-  }
+  if (!value) throw new RegistryConfigError("Registry repository must not be empty");
 
-  if (value.length > MAX_REPOSITORY_LENGTH) {
-    throw new RegistryConfigError(
-      "Registry repository is too long"
-    );
-  }
+  if (value.length > MAX_REPOSITORY_LENGTH) throw new RegistryConfigError("Registry repository is too long");
 
   if (value !== value.toLowerCase()) {
-    throw new RegistryConfigError(
-      "Registry repository must use lowercase characters"
-    );
+    throw new RegistryConfigError("Registry repository must use lowercase characters");
   }
 
   if (/\s/.test(value) || hasControlCharacters(value)) {
-    throw new RegistryConfigError(
-      "Registry repository must not contain whitespace or control characters"
-    );
+    throw new RegistryConfigError("Registry repository must not contain whitespace or control characters");
   }
 
   if (value.includes("@")) {
-    throw new RegistryConfigError(
-      "Registry repository must not contain a digest"
-    );
+    throw new RegistryConfigError("Registry repository must not contain a digest");
   }
 
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value)) {
-    throw new RegistryConfigError(
-      "Registry repository must not include a URL scheme"
-    );
+    throw new RegistryConfigError("Registry repository must not include a URL scheme");
   }
 
   const parts = value.split("/").filter(Boolean);
 
-  if (parts.length < 2) {
-    throw new RegistryConfigError(
-      "Registry repository must include a registry host prefix"
-    );
-  }
+  if (parts.length < 2) throw new RegistryConfigError("Registry repository must include a registry host prefix");
 
   if (!HOST_PATTERN.test(parts[0])) {
-    throw new RegistryConfigError(
-      "Registry repository has an invalid registry host prefix"
-    );
+    throw new RegistryConfigError("Registry repository has an invalid registry host prefix");
   }
 
   for (const part of parts.slice(1)) {
@@ -305,9 +241,7 @@ export function validateImageDigest(digest: string): string {
   const value = digest.trim();
 
   if (!DIGEST_PATTERN.test(value)) {
-    throw new RegistryConfigError(
-      "Image digest must match sha256:<64 hex chars>"
-    );
+    throw new RegistryConfigError("Image digest must match sha256:<64 hex chars>");
   }
 
   return value.toLowerCase();
@@ -361,9 +295,7 @@ export function registryTagForDeployment(
   }
 
   if (!/^[0-9a-f]{40}$/i.test(commitSha.trim())) {
-    throw new RegistryConfigError(
-      "Registry tag requires a valid 40-char commit SHA"
-    );
+    throw new RegistryConfigError("Registry tag requires a valid 40-char commit SHA");
   }
 
   return validateRegistryTag(

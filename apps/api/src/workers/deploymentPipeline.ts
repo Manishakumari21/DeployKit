@@ -110,9 +110,7 @@ async function discoverExposedPort(imageRef: string): Promise<number> {
         return port;
       }
     }
-  } catch {
-    // Fall through to the default port.
-  }
+  } catch {}
   return RUNTIME_DEFAULTS.fallbackPort;
 }
 
@@ -126,10 +124,7 @@ async function setDeploymentStatus(
   extra: Record<string, unknown> = {}
 ): Promise<void> {
   if (!canTransition(from as never, to as never)) {
-    throw new PipelineError(
-      PIPELINE_ERROR_CODES.ACTIVATION_FAILED,
-      `Invalid deployment transition ${from} -> ${to}`
-    );
+    throw new PipelineError(PIPELINE_ERROR_CODES.ACTIVATION_FAILED, `Invalid deployment transition ${from} -> ${to}`);
   }
   const client = await pool.connect();
   try {
@@ -224,10 +219,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       "dk-gateway"
     ).trim();
     if (!/^[a-z0-9][a-z0-9_.-]{0,127}$/.test(gatewayName)) {
-      throw new PipelineError(
-        PIPELINE_ERROR_CODES.ACTIVATION_FAILED,
-        "Invalid gateway container name"
-      );
+      throw new PipelineError(PIPELINE_ERROR_CODES.ACTIVATION_FAILED, "Invalid gateway container name");
     }
     this.gatewayName = gatewayName;
   }
@@ -240,10 +232,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       throw new PipelineError("DEPLOYMENT_NOT_FOUND", "Deployment not found");
     }
     if (row.status === "cancelled" || row.status === "active") {
-      throw new PipelineError(
-        PIPELINE_ERROR_CODES.ACTIVATION_FAILED,
-        `Deployment is already ${row.status}`
-      );
+      throw new PipelineError(PIPELINE_ERROR_CODES.ACTIVATION_FAILED, `Deployment is already ${row.status}`);
     }
 
     if (row.trigger === "rollback") {
@@ -323,10 +312,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         }
       );
     } else if (rolledBack.status !== "verifying") {
-      throw new PipelineError(
-        PIPELINE_ERROR_CODES.ACTIVATION_FAILED,
-        `Cannot continue rollback from status ${rolledBack.status}`
-      );
+      throw new PipelineError(PIPELINE_ERROR_CODES.ACTIVATION_FAILED, `Cannot continue rollback from status ${rolledBack.status}`);
     }
 
     const previousActive = await getActiveRelease(projectId);
@@ -552,10 +538,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       cur.status !== "verifying" &&
       cur.status !== "deploying"
     ) {
-      throw new PipelineError(
-        PIPELINE_ERROR_CODES.ACTIVATION_FAILED,
-        `Cannot resume deployment from status ${cur.status}`
-      );
+      throw new PipelineError(PIPELINE_ERROR_CODES.ACTIVATION_FAILED, `Cannot resume deployment from status ${cur.status}`);
     }
     const previousActive = await getActiveRelease(input.projectId);
     return this.deployRelease(context, {
@@ -600,10 +583,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
   ): Promise<void> {
     const cur = await getDeploymentRow(deploymentId);
     if (!cur) {
-      throw new PipelineError(
-        "DEPLOYMENT_NOT_FOUND",
-        "Deployment not found"
-      );
+      throw new PipelineError("DEPLOYMENT_NOT_FOUND", "Deployment not found");
     }
     if (cur.status === to) {
       return;
@@ -645,10 +625,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     );
     const storedStatus = storedRelease.rows[0]?.status as string | undefined;
     if (storedStatus === "failed") {
-      throw new PipelineError(
-        PIPELINE_ERROR_CODES.ACTIVATION_FAILED,
-        "Release is marked failed and cannot be deployed"
-      );
+      throw new PipelineError(PIPELINE_ERROR_CODES.ACTIVATION_FAILED, "Release is marked failed and cannot be deployed");
     }
     const needsMarking =
       storedStatus !== "healthy" && storedStatus !== "active";
@@ -779,10 +756,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
           }
         );
       } catch (error) {
-        throw new PipelineError(
-          PIPELINE_ERROR_CODES.ACTIVATION_FAILED,
-          error instanceof Error ? error.message : "Activation failed"
-        );
+        throw new PipelineError(PIPELINE_ERROR_CODES.ACTIVATION_FAILED, error instanceof Error ? error.message : "Activation failed");
       }
 
       const route: RouteTarget = {

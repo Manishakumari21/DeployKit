@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import {
   lstat,
   mkdtemp,
@@ -8,6 +7,7 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { runCommand } from "../process/dockerExec.js";
 
 import type {
   BuildExecutor,
@@ -17,7 +17,6 @@ import type {
 } from "./buildExecutor.js";
 
 const DEFAULT_BUILDER = "deploykit-builder";
-const MAX_ERROR_OUTPUT_BYTES = 64 * 1024;
 const SHA256_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/i;
 
 export class BuildExecutorError extends Error {
@@ -41,108 +40,34 @@ export interface BuildxBuildExecutorOptions {
   dockerBinary?: string;
 }
 
-export function validateImageRepository(
-  repository: string
-): string {
-  const value = repository.trim();
-
-  if (!value) {
-    throw new BuildExecutorError(
-      "INVALID_IMAGE_REPOSITORY",
-      "Image repository must not be empty"
-    );
-  }
-
-  if (value.length > 255) {
-    throw new BuildExecutorError(
-      "INVALID_IMAGE_REPOSITORY",
-      "Image repository is too long"
-    );
-  }
-
-  if (value !== value.toLowerCase()) {
-    throw new BuildExecutorError(
-      "INVALID_IMAGE_REPOSITORY",
-      "Image repository must use lowercase characters"
-    );
-  }
-
-  if (value.includes("@")) {
-    throw new BuildExecutorError(
-      "INVALID_IMAGE_REPOSITORY",
-      "Image repository must not contain a digest"
-    );
-  }
-
-  const parts = value.split("/").filter(Boolean);
-
-  if (parts.length === 0) {
-    throw new BuildExecutorError(
-      "INVALID_IMAGE_REPOSITORY",
-      "Invalid image repository"
-    );
-  }
-
+export function validateImageRepository(repository: string): string {
+  const v = repository.trim();
+  const err = (m: string): never => {
+    throw new BuildExecutorError("INVALID_IMAGE_REPOSITORY", m);
+  };
+  if (!v) err("Image repository must not be empty");
+  if (v.length > 255) err("Image repository is too long");
+  if (v !== v.toLowerCase()) err("Image repository must use lowercase characters");
+  if (v.includes("@")) err("Image repository must not contain a digest");
+  const parts = v.split("/").filter(Boolean);
+  if (!parts.length) err("Invalid image repository");
   let start = 0;
-
   const first = parts[0];
-
-  const looksLikeRegistry =
-    first === "localhost" ||
-    first.includes(".") ||
-    first.includes(":");
-
-  if (looksLikeRegistry) {
-    if (
-      !/^(?:localhost|[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)(?::[0-9]{1,5})?$/.test(
-        first
-      )
-    ) {
-      throw new BuildExecutorError(
-        "INVALID_IMAGE_REPOSITORY",
-        "Invalid image registry"
-      );
-    }
-
+  if (first === "localhost" || first.includes(".") || first.includes(":")) {
+    if (!/^(?:localhost|[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)(?::[0-9]{1,5})?$/.test(first)) err("Invalid image registry");
     start = 1;
   }
-
-  if (start >= parts.length) {
-    throw new BuildExecutorError(
-      "INVALID_IMAGE_REPOSITORY",
-      "Image repository must contain a repository path"
-    );
+  if (start >= parts.length) err("Image repository must contain a repository path");
+  for (const p of parts.slice(start)) {
+    if (!p.length || p.length > 255 || !/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/.test(p)) err(`Invalid image repository component: ${p}`);
   }
-
-  for (const part of parts.slice(start)) {
-    if (
-      part.length === 0 ||
-      part.length > 255 ||
-      !/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/.test(part)
-    ) {
-      throw new BuildExecutorError(
-        "INVALID_IMAGE_REPOSITORY",
-        `Invalid image repository component: ${part}`
-      );
-    }
-  }
-
-  return value;
+  return v;
 }
 
-export function validateImageTag(
-  tag: string
-): string {
-  const value = tag.trim();
-
-  if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(value)) {
-    throw new BuildExecutorError(
-      "INVALID_IMAGE_TAG",
-      "Invalid Docker image tag"
-    );
-  }
-
-  return value;
+export function validateImageTag(tag: string): string {
+  const v = tag.trim();
+  if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(v)) throw new BuildExecutorError("INVALID_IMAGE_TAG", "Invalid Docker image tag");
+  return v;
 }
 
 export interface BuildxBuildArgsInput {
@@ -186,12 +111,6 @@ export function buildBuildxArgs(input: BuildxBuildArgsInput): string[] {
     input.policy.networkEnabled ? "default" : "none"
   );
 
-  args.push("--resource", `memory=${input.policy.memoryBytes}`);
-  args.push(
-    "--resource",
-    `cpu-quota=${input.policy.cpuLimit * 100000}`
-  );
-
   return args;
 }
 
@@ -220,10 +139,7 @@ async function getDirectorySize(
     }
 
     if (total > limitBytes) {
-      throw new BuildExecutorError(
-        "BUILD_CONTEXT_TOO_LARGE",
-        `Build context exceeds the configured limit of ${limitBytes} bytes`
-      );
+      throw new BuildExecutorError("BUILD_CONTEXT_TOO_LARGE", `Build context exceeds the configured limit of ${limitBytes} bytes`);
     }
   }
 
@@ -238,10 +154,7 @@ async function assertBuildContext(
   const stat = await lstat(resolvedWorkspace);
 
   if (!stat.isDirectory()) {
-    throw new BuildExecutorError(
-      "INVALID_BUILD_CONTEXT",
-      "Build context must be a directory"
-    );
+    throw new BuildExecutorError("INVALID_BUILD_CONTEXT", "Build context must be a directory");
   }
 
   const dockerfile = path.join(
@@ -254,20 +167,14 @@ async function assertBuildContext(
   try {
     dockerfileStat = await lstat(dockerfile);
   } catch {
-    throw new BuildExecutorError(
-      "DOCKERFILE_NOT_FOUND",
-      "Repository does not contain a Dockerfile"
-    );
+    throw new BuildExecutorError("DOCKERFILE_NOT_FOUND", "Repository does not contain a Dockerfile");
   }
 
   if (
     !dockerfileStat.isFile() ||
     dockerfileStat.isSymbolicLink()
   ) {
-    throw new BuildExecutorError(
-      "INVALID_DOCKERFILE",
-      "Dockerfile must be a regular file"
-    );
+    throw new BuildExecutorError("INVALID_DOCKERFILE", "Dockerfile must be a regular file");
   }
 
   await getDirectorySize(
@@ -276,96 +183,20 @@ async function assertBuildContext(
   );
 }
 
-function appendTail(
-  current: string,
-  chunk: Buffer | string
-): string {
-  const next = current + chunk.toString();
-
-  if (Buffer.byteLength(next, "utf8") <= MAX_ERROR_OUTPUT_BYTES) {
-    return next;
+async function runBuild(binary: string, args: string[], timeoutMs: number) {
+  try {
+    return await runCommand(binary, args, timeoutMs, {
+      ...process.env,
+      DOCKER_BUILDKIT: "1",
+      BUILDKIT_PROGRESS: "plain",
+      BUILDX_METADATA_WARNINGS: "1",
+    });
+  } catch (e) {
+    throw new BuildExecutorError("BUILD_EXECUTION_FAILED", "Failed to execute Docker Buildx", e instanceof Error ? e.message : String(e));
   }
-
-  const buffer = Buffer.from(next, "utf8");
-
-  return buffer
-    .subarray(
-      buffer.length - MAX_ERROR_OUTPUT_BYTES
-    )
-    .toString("utf8");
 }
 
-interface ProcessResult {
-  code: number | null;
-  signal: NodeJS.Signals | null;
-  timedOut: boolean;
-  stderr: string;
-}
-
-function runProcess(
-  binary: string,
-  args: string[],
-  timeoutMs: number
-): Promise<ProcessResult> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(binary, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        DOCKER_BUILDKIT: "1",
-        BUILDKIT_PROGRESS: "plain",
-        BUILDX_METADATA_WARNINGS: "1",
-      },
-      shell: false,
-    });
-
-    let stderr = "";
-    let timedOut = false;
-    let settled = false;
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, timeoutMs);
-
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr = appendTail(stderr, chunk);
-    });
-
-    child.on("error", (error) => {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      clearTimeout(timer);
-      reject(error);
-    });
-
-    child.on(
-      "close",
-      (code, signal) => {
-        if (settled) {
-          return;
-        }
-
-        settled = true;
-        clearTimeout(timer);
-
-        resolve({
-          code,
-          signal,
-          timedOut,
-          stderr,
-        });
-      }
-    );
-  });
-}
-
-async function readDigest(
-  metadataFile: string
-): Promise<string> {
+async function readDigest(metadataFile: string): Promise<string> {
   let raw: string;
 
   try {
@@ -403,10 +234,7 @@ async function readDigest(
     typeof digest !== "string" ||
     !SHA256_DIGEST_PATTERN.test(digest)
   ) {
-    throw new BuildExecutorError(
-      "BUILD_DIGEST_MISSING",
-      "Build metadata did not contain a valid image digest"
-    );
+    throw new BuildExecutorError("BUILD_DIGEST_MISSING", "Build metadata did not contain a valid image digest");
   }
 
   return digest;
@@ -444,20 +272,14 @@ export class BuildxBuildExecutor
     );
 
     if (!/^[0-9a-f]{40}$/i.test(request.commitSha)) {
-      throw new BuildExecutorError(
-        "INVALID_COMMIT_SHA",
-        "Build requires a valid 40-char commit SHA"
-      );
+      throw new BuildExecutorError("INVALID_COMMIT_SHA", "Build requires a valid 40-char commit SHA");
     }
 
     if (
       !Number.isSafeInteger(request.policy.timeoutMs) ||
       request.policy.timeoutMs <= 0
     ) {
-      throw new BuildExecutorError(
-        "INVALID_BUILD_POLICY",
-        "Build timeout must be positive"
-      );
+      throw new BuildExecutorError("INVALID_BUILD_POLICY", "Build timeout must be positive");
     }
 
     await assertBuildContext(
@@ -494,29 +316,14 @@ export class BuildxBuildExecutor
 
       args.push(request.workspace);
 
-      const result = await runProcess(
-        this.dockerBinary,
-        args,
-        request.policy.timeoutMs
-      );
+      const result = await runBuild(this.dockerBinary, args, request.policy.timeoutMs);
 
       if (result.timedOut) {
-        throw new BuildExecutorError(
-          "BUILD_TIMEOUT",
-          `Docker build exceeded timeout of ${request.policy.timeoutMs}ms`,
-          result.stderr
-        );
+        throw new BuildExecutorError("BUILD_TIMEOUT", `Docker build exceeded timeout of ${request.policy.timeoutMs}ms`, result.stderr);
       }
 
-      if (
-        result.code !== 0 ||
-        result.signal !== null
-      ) {
-        throw new BuildExecutorError(
-          "BUILD_FAILED",
-          "Docker Buildx build failed",
-          result.stderr
-        );
+      if (result.code !== 0) {
+        throw new BuildExecutorError("BUILD_FAILED", "Docker Buildx build failed", result.stderr);
       }
 
       const imageDigest = await readDigest(

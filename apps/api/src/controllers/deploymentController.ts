@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { z } from "zod";
+import { uuidParam } from "./http.js";
 import {
   cancelDeployment,
   createDeployment,
@@ -163,22 +164,11 @@ export async function cancelDeploymentController(
   }
 }
 
-export async function getDeploymentController(
-  req: Request,
-  res: Response
-) {
+export async function getDeploymentController(req: Request, res: Response) {
   try {
-    const deploymentIdResult = uuidSchema.safeParse(req.params.id);
-
-    if (!deploymentIdResult.success) {
-      return res.status(400).json({
-        error: "Invalid deployment id",
-      });
-    }
-
-    const deployment = await getDeploymentById(
-      deploymentIdResult.data
-    );
+    const id = uuidParam(req, res, "Invalid deployment id");
+    if (!id) return;
+    const deployment = await getDeploymentById(id);
 
     if (!deployment) {
       return res.status(404).json({
@@ -196,22 +186,11 @@ export async function getDeploymentController(
   }
 }
 
-export async function getProjectDeploymentsController(
-  req: Request,
-  res: Response
-) {
+export async function getProjectDeploymentsController(req: Request, res: Response) {
   try {
-    const projectIdResult = uuidSchema.safeParse(req.params.id);
-
-    if (!projectIdResult.success) {
-      return res.status(400).json({
-        error: "Invalid project id",
-      });
-    }
-
-    const deployments = await getProjectDeployments(
-      projectIdResult.data
-    );
+    const id = uuidParam(req, res, "Invalid project id");
+    if (!id) return;
+    const deployments = await getProjectDeployments(id);
 
     return res.json(deployments);
   } catch (error) {
@@ -228,15 +207,13 @@ export async function getDeploymentEventsController(
   res: Response
 ) {
   try {
-    const idResult = uuidSchema.safeParse(req.params.id);
-    if (!idResult.success) {
-      return res.status(400).json({ error: "Invalid deployment id" });
-    }
-    const deployment = await getDeploymentById(idResult.data);
+    const id = uuidParam(req, res, "Invalid deployment id");
+    if (!id) return;
+    const deployment = await getDeploymentById(id);
     if (!deployment) {
       return res.status(404).json({ error: "Deployment not found" });
     }
-    const events = await getDeploymentEvents(idResult.data);
+    const events = await getDeploymentEvents(id);
     return res.json(events);
   } catch (error) {
     console.error("Get deployment events error:", error);

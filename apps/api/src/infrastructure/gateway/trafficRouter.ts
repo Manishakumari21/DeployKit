@@ -25,9 +25,7 @@ export class TrafficRouterError extends Error {
   }
 }
 
-export function validateRouteTarget(
-  target: RouteTarget
-): RouteTarget {
+export function validateRouteTarget(target: RouteTarget): RouteTarget {
   if (
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
       target.projectId
@@ -36,18 +34,12 @@ export function validateRouteTarget(
       target.releaseId
     )
   ) {
-    throw new TrafficRouterError(
-      "INVALID_ROUTE_TARGET",
-      "Route target requires valid project and release ids"
-    );
+    throw new TrafficRouterError("INVALID_ROUTE_TARGET", "Route target requires valid project and release ids");
   }
   if (
     !/^[a-z0-9][a-z0-9_.-]{0,127}$/.test(target.containerName)
   ) {
-    throw new TrafficRouterError(
-      "INVALID_ROUTE_TARGET",
-      "Invalid route target container"
-    );
+    throw new TrafficRouterError("INVALID_ROUTE_TARGET", "Invalid route target container");
   }
   if (
     !/^(\d{1,3}\.){3}\d{1,3}$/.test(target.containerIp) ||
@@ -55,20 +47,14 @@ export function validateRouteTarget(
       .split(".")
       .some((octet) => Number(octet) > 255)
   ) {
-    throw new TrafficRouterError(
-      "INVALID_ROUTE_TARGET",
-      "Invalid route target address"
-    );
+    throw new TrafficRouterError("INVALID_ROUTE_TARGET", "Invalid route target address");
   }
   if (
     !Number.isInteger(target.containerPort) ||
     target.containerPort < 1 ||
     target.containerPort > 65535
   ) {
-    throw new TrafficRouterError(
-      "INVALID_ROUTE_TARGET",
-      "Invalid route target port"
-    );
+    throw new TrafficRouterError("INVALID_ROUTE_TARGET", "Invalid route target port");
   }
   return target;
 }
@@ -76,10 +62,7 @@ export function validateRouteTarget(
 export function routeServerName(projectId: string): string {
   const short = projectId.replace(/-/g, "").slice(0, 8).toLowerCase();
   if (!/^[0-9a-f]{8}$/.test(short)) {
-    throw new TrafficRouterError(
-      "INVALID_PROJECT",
-      "Invalid project id for routing"
-    );
+    throw new TrafficRouterError("INVALID_PROJECT", "Invalid project id for routing");
   }
   return `dk-p${short}.deploykit.local`;
 }
@@ -88,10 +71,8 @@ export class UnconfiguredTrafficRouter implements TrafficRouter {  async sync(_t
     throw new Error("TRAFFIC_ROUTER_NOT_CONFIGURED");
   }
 
-  async verifyRoute(
-    _target: RouteTarget,
-    _timeoutMs: number
-  ): Promise<void> {
+  async verifyRoute(_target: RouteTarget,
+    _timeoutMs: number): Promise<void> {
     throw new Error("TRAFFIC_ROUTER_NOT_CONFIGURED");
   }
 

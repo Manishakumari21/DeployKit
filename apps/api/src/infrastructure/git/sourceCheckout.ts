@@ -60,47 +60,29 @@ export function validateRepositoryUrl(repositoryUrl: string): URL {
   try {
     url = new URL(repositoryUrl);
   } catch {
-    throw new SourceCheckoutError(
-      "INVALID_REPOSITORY_URL",
-      "Repository URL is not a valid URL"
-    );
+    throw new SourceCheckoutError("INVALID_REPOSITORY_URL", "Repository URL is not a valid URL");
   }
 
   if (url.protocol !== "https:") {
-    throw new SourceCheckoutError(
-      "UNSUPPORTED_REPOSITORY_PROTOCOL",
-      "Only HTTPS Git repositories are supported"
-    );
+    throw new SourceCheckoutError("UNSUPPORTED_REPOSITORY_PROTOCOL", "Only HTTPS Git repositories are supported");
   }
 
   if (url.username || url.password) {
-    throw new SourceCheckoutError(
-      "REPOSITORY_CREDENTIALS_FORBIDDEN",
-      "Credentials must not be embedded in repository URLs"
-    );
+    throw new SourceCheckoutError("REPOSITORY_CREDENTIALS_FORBIDDEN", "Credentials must not be embedded in repository URLs");
   }
 
   if (url.port && url.port !== "443") {
-    throw new SourceCheckoutError(
-      "UNSUPPORTED_REPOSITORY_PORT",
-      "Only the default HTTPS port is supported"
-    );
+    throw new SourceCheckoutError("UNSUPPORTED_REPOSITORY_PORT", "Only the default HTTPS port is supported");
   }
 
   if (url.search || url.hash) {
-    throw new SourceCheckoutError(
-      "INVALID_REPOSITORY_URL",
-      "Repository URL must not contain query parameters or fragments"
-    );
+    throw new SourceCheckoutError("INVALID_REPOSITORY_URL", "Repository URL must not contain query parameters or fragments");
   }
 
   const hostname = url.hostname.toLowerCase();
 
   if (!allowedHosts().has(hostname)) {
-    throw new SourceCheckoutError(
-      "REPOSITORY_HOST_NOT_ALLOWED",
-      `Git host is not allowed: ${hostname}`
-    );
+    throw new SourceCheckoutError("REPOSITORY_HOST_NOT_ALLOWED", `Git host is not allowed: ${hostname}`);
   }
 
   const segments = url.pathname
@@ -108,10 +90,7 @@ export function validateRepositoryUrl(repositoryUrl: string): URL {
     .filter(Boolean);
 
   if (segments.length < 2) {
-    throw new SourceCheckoutError(
-      "INVALID_REPOSITORY_URL",
-      "Repository URL must contain an owner and repository"
-    );
+    throw new SourceCheckoutError("INVALID_REPOSITORY_URL", "Repository URL must contain an owner and repository");
   }
 
   return url;
@@ -120,24 +99,15 @@ export function validateBranch(branch: string): string {
   const value = branch.trim();
 
   if (!value) {
-    throw new SourceCheckoutError(
-      "INVALID_BRANCH",
-      "Branch must not be empty"
-    );
+    throw new SourceCheckoutError("INVALID_BRANCH", "Branch must not be empty");
   }
 
   if (value.length > 255) {
-    throw new SourceCheckoutError(
-      "INVALID_BRANCH",
-      "Branch is too long"
-    );
+    throw new SourceCheckoutError("INVALID_BRANCH", "Branch is too long");
   }
 
   if (/[\u0000-\u001f\u007f\s]/.test(value)) {
-    throw new SourceCheckoutError(
-      "INVALID_BRANCH",
-      "Branch contains invalid characters"
-    );
+    throw new SourceCheckoutError("INVALID_BRANCH", "Branch contains invalid characters");
   }
 
   if (
@@ -148,10 +118,7 @@ export function validateBranch(branch: string): string {
     value.endsWith(".") ||
     value.includes("\\")
   ) {
-    throw new SourceCheckoutError(
-      "INVALID_BRANCH",
-      "Branch contains invalid Git ref syntax"
-    );
+    throw new SourceCheckoutError("INVALID_BRANCH", "Branch contains invalid Git ref syntax");
   }
 
   return value;
@@ -239,10 +206,7 @@ async function runGit(
       "Git command failed";
 
     if (err.code === "ETIMEDOUT") {
-      throw new SourceCheckoutError(
-        "GIT_TIMEOUT",
-        "Git operation exceeded the configured timeout"
-      );
+      throw new SourceCheckoutError("GIT_TIMEOUT", "Git operation exceeded the configured timeout");
     }
 
     throw new SourceCheckoutError(
@@ -321,17 +285,11 @@ export async function withCheckedOutRepository<T>(
     const commitSha = stdout.trim();
 
     if (!/^[0-9a-f]{40}$/i.test(commitSha)) {
-      throw new SourceCheckoutError(
-        "INVALID_COMMIT_SHA",
-        "Git returned an invalid commit SHA"
-      );
+      throw new SourceCheckoutError("INVALID_COMMIT_SHA", "Git returned an invalid commit SHA");
     }
 
     if (targetSha && commitSha.toLowerCase() !== targetSha) {
-      throw new SourceCheckoutError(
-        "COMMIT_MISMATCH",
-        "Checked-out commit does not match the requested SHA"
-      );
+      throw new SourceCheckoutError("COMMIT_MISMATCH", "Checked-out commit does not match the requested SHA");
     }
 
     return await work({

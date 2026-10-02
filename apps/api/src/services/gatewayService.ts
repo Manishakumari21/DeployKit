@@ -15,9 +15,7 @@ export async function getProjectGateway(projectId: string) {
   return result.rows[0] ?? null;
 }
 
-export async function resolveActiveRoute(
-  projectId: string
-): Promise<RouteTarget | null> {
+export async function resolveActiveRoute(projectId: string): Promise<RouteTarget | null> {
   const result = await pool.query(
     `
     SELECT r.id AS release_id, i.container_name, i.ip_address, i.container_port
@@ -58,10 +56,7 @@ export async function syncProjectGateway(
 ): Promise<RouteTarget> {
   const target = await resolveActiveRoute(projectId);
   if (!target) {
-    throw new TrafficRouterError(
-      "NO_ACTIVE_ROUTE",
-      "Project has no healthy active runtime to route"
-    );
+    throw new TrafficRouterError("NO_ACTIVE_ROUTE", "Project has no healthy active runtime to route");
   }
   await router.sync(target);
   await router.verifyRoute(target, timeoutMs);

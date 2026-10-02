@@ -20,9 +20,7 @@ export interface DeploymentExecutor {
 export class UnconfiguredDeploymentExecutor
   implements DeploymentExecutor
 {
-  async execute(
-    _context: DeploymentExecutionContext
-  ): Promise<DeploymentExecutionResult> {
+  async execute(_context: DeploymentExecutionContext): Promise<DeploymentExecutionResult> {
     throw new Error(
       "DEPLOYMENT_EXECUTOR_NOT_CONFIGURED"
     );

@@ -65,15 +65,11 @@ export async function createDeployment(
       }
       if (rel.rows[0].status === "failed") {
         await client.query("ROLLBACK");
-        throw new Error(
-          "Cannot rollback to a failed release"
-        );
+        throw new Error("Cannot rollback to a failed release");
       }
     } else if (input.rollbackReleaseId) {
       await client.query("ROLLBACK");
-      throw new Error(
-        "rollback_release_id is only valid for rollback trigger"
-      );
+      throw new Error("rollback_release_id is only valid for rollback trigger");
     }
 
     let commitSha: string | null = null;
@@ -161,9 +157,7 @@ export async function createDeployment(
       deployment = insertResult.rows[0];
     }
 
-    if (!deployment) {
-      throw new Error("Failed to create deployment");
-    }
+    if (!deployment) throw new Error("Failed to create deployment");
 
     const jobResult = await client.query(
       `
@@ -220,9 +214,7 @@ export async function transitionDeployment(
       `SELECT status FROM deployments WHERE id = $1 FOR UPDATE`,
       [deploymentId]
     );
-    if (current.rowCount === 0) {
-      throw new Error("Deployment not found");
-    }
+    if (current.rowCount === 0) throw new Error("Deployment not found");
     const from = current.rows[0].status as DeploymentStatus;
     assertTransition(from, to);
     await client.query(

@@ -31,7 +31,7 @@ export function useProjects(notify: (m: string) => void) {
         setProjects(list);
         setHealthy(ok);
       } catch {
-        notify("Could not reach the API on :3000");
+        notify("Could not reach the API");
       } finally {
         setLoading(false);
         setRefreshing(false);

@@ -43,16 +43,10 @@ export class RegistryError extends Error {
 
 export class UnconfiguredImageRegistry implements ImageRegistry {
   async push(_input: PushInput): Promise<PushedImage> {
-    throw new RegistryError(
-      "INVALID_REFERENCE",
-      "Image registry is not configured"
-    );
+    throw new RegistryError("INVALID_REFERENCE", "Image registry is not configured");
   }
 
   async exists(_reference: string): Promise<boolean> {
-    throw new RegistryError(
-      "INVALID_REFERENCE",
-      "Image registry is not configured"
-    );
+    throw new RegistryError("INVALID_REFERENCE", "Image registry is not configured");
   }
 }

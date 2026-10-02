@@ -12,11 +12,7 @@ export interface BuildRequest {
   imageTag: string;
   commitSha: string;
   policy: BuildPolicy;
-  /**
-   * When true, build with `--push` (registry mode) instead of
-   * `--load` (local mode). Defaults to false to preserve local
-   * development behavior. `--load` and `--push` are never combined.
-   */
+  /** push=true uses --push, otherwise --load. Never combined. */
   push?: boolean;
 }
 
@@ -32,9 +28,7 @@ export interface BuildExecutor {
 export class UnconfiguredBuildExecutor
   implements BuildExecutor
 {
-  async build(
-    _request: BuildRequest
-  ): Promise<BuildResult> {
+  async build(_request: BuildRequest): Promise<BuildResult> {
     throw new Error(
       "BUILD_EXECUTOR_NOT_CONFIGURED"
     );

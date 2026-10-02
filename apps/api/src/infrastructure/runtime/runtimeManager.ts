@@ -43,71 +43,52 @@ export interface RuntimeManager {
     timeoutMs: number
   ): Promise<void>;
 
-  /**
-   * Pull an immutable digest reference (`repository@sha256:...`)
-   * from the registry so a subsequent `create` does not depend on
-   * a local image cache. Explicit so registry retrieval is visible
-   * in the pipeline and testable in isolation.
-   */
+  /** Pull repository@sha256:... so create never relies on local cache. */
   pull(reference: string): Promise<void>;
 }
 
 export class UnconfiguredRuntimeManager
   implements RuntimeManager
 {
-  async create(
-    _spec: RuntimeSpec
-  ): Promise<RuntimeInfo> {
+  async create(_spec: RuntimeSpec): Promise<RuntimeInfo> {
     throw new Error(
       "RUNTIME_MANAGER_NOT_CONFIGURED"
     );
   }
 
-  async start(
-    _containerName: string
-  ): Promise<void> {
+  async start(_containerName: string): Promise<void> {
     throw new Error(
       "RUNTIME_MANAGER_NOT_CONFIGURED"
     );
   }
 
-  async stop(
-    _containerName: string
-  ): Promise<void> {
+  async stop(_containerName: string): Promise<void> {
     throw new Error(
       "RUNTIME_MANAGER_NOT_CONFIGURED"
     );
   }
 
-  async remove(
-    _containerName: string
-  ): Promise<void> {
+  async remove(_containerName: string): Promise<void> {
     throw new Error(
       "RUNTIME_MANAGER_NOT_CONFIGURED"
     );
   }
 
-  async inspect(
-    _containerName: string,
-    _expectedNetwork?: string
-  ): Promise<RuntimeInfo> {
+  async inspect(_containerName: string,
+    _expectedNetwork?: string): Promise<RuntimeInfo> {
     throw new Error(
       "RUNTIME_MANAGER_NOT_CONFIGURED"
     );
   }
 
-  async waitForHealthy(
-    _runtime: RuntimeInfo,
-    _timeoutMs: number
-  ): Promise<void> {
+  async waitForHealthy(_runtime: RuntimeInfo,
+    _timeoutMs: number): Promise<void> {
     throw new Error(
       "RUNTIME_MANAGER_NOT_CONFIGURED"
     );
   }
 
-  async pull(
-    _reference: string
-  ): Promise<void> {
+  async pull(_reference: string): Promise<void> {
     throw new Error(
       "RUNTIME_MANAGER_NOT_CONFIGURED"
     );

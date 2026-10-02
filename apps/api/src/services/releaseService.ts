@@ -36,14 +36,8 @@ export async function createRelease(input: CreateReleaseInput) {
     `,
     [input.deploymentId]
   );
-  if (dep.rowCount === 0) {
-    throw new Error("Deployment not found");
-  }
-  if (dep.rows[0].project_id !== input.projectId) {
-    throw new Error(
-      "Deployment does not belong to the requested project"
-    );
-  }
+  if (dep.rowCount === 0) throw new Error("Deployment not found");
+  if (dep.rows[0].project_id !== input.projectId) throw new Error("Deployment does not belong to the requested project");
   let result;
   try {
     result = await pool.query(
@@ -78,11 +72,7 @@ export async function createRelease(input: CreateReleaseInput) {
       `,
       [input.deploymentId]
     );
-    if (existing.rowCount === 0) {
-      throw new Error(
-        "A release already exists for this deployment"
-      );
-    }
+    if (existing.rowCount === 0) throw new Error("A release already exists for this deployment");
     return existing.rows[0];
   }
   return result.rows[0];
@@ -108,9 +98,7 @@ export async function markRelease(
     `,
     [releaseId]
   );
-  if (current.rowCount === 0) {
-    throw new Error("Release not found");
-  }
+  if (current.rowCount === 0) throw new Error("Release not found");
   const from = current.rows[0].status as ReleaseStatus;
   if (from !== status && !RELEASE_TRANSITIONS[from]?.has(status)) {
     throw new Error(
@@ -198,14 +186,8 @@ export async function activateRelease(
       `,
       [releaseId]
     );
-    if (target.rowCount === 0) {
-      throw new Error("Release not found");
-    }
-    if (target.rows[0].project_id !== projectId) {
-      throw new Error(
-        "Release does not belong to the requested project"
-      );
-    }
+    if (target.rowCount === 0) throw new Error("Release not found");
+    if (target.rows[0].project_id !== projectId) throw new Error("Release does not belong to the requested project");
     if (target.rows[0].status === "active") {
       const linked = await client.query(
         `
@@ -221,15 +203,9 @@ export async function activateRelease(
         await client.query("COMMIT");
         return;
       }
-      throw new Error(
-        "Release is already active"
-      );
+      throw new Error("Release is already active");
     }
-    if (target.rows[0].status !== "healthy") {
-      throw new Error(
-        "Release must be healthy before activation"
-      );
-    }
+    if (target.rows[0].status !== "healthy") throw new Error("Release must be healthy before activation");
 
     const current = await client.query(
       `
@@ -272,11 +248,7 @@ export async function activateRelease(
       `,
       [deploymentId, releaseId, projectId]
     );
-    if (depUpdate.rowCount !== 1) {
-      throw new Error(
-        "Deployment not found for the requested project"
-      );
-    }
+    if (depUpdate.rowCount !== 1) throw new Error("Deployment not found for the requested project");
 
     if (route) {
       if (

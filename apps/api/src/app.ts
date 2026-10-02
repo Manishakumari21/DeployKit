@@ -17,7 +17,6 @@ app.use(
 
 app.use(express.json());
 
-
 app.get("/api/health", async (_req, res) => {
   try {
     await pool.query("SELECT 1");

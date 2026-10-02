@@ -101,9 +101,7 @@ async function claimNextJobAttempt(
       [job.id, workerId, leaseMs]
     );
 
-    if (updatedJob.rows.length !== 1) {
-      throw new Error("Failed to claim deployment job");
-    }
+    if (updatedJob.rows.length !== 1) throw new Error("Failed to claim deployment job");
 
     const claimed = updatedJob.rows[0];
 
@@ -117,9 +115,7 @@ async function claimNextJobAttempt(
       [claimed.deployment_id]
     );
 
-    if (deploymentResult.rows.length !== 1) {
-      throw new Error("Deployment for queued job no longer exists");
-    }
+    if (deploymentResult.rows.length !== 1) throw new Error("Deployment for queued job no longer exists");
 
     const previousStatus = deploymentResult.rows[0].status as string;
 
@@ -267,19 +263,13 @@ export async function completeJob(
       [jobId, workerId]
     );
 
-    if (jobResult.rows.length !== 1) {
-      throw new Error(
-        "Deployment job is no longer owned by this worker"
-      );
-    }
+    if (jobResult.rows.length !== 1) throw new Error("Deployment job is no longer owned by this worker");
 
     const dep = await client.query(
       `SELECT status FROM deployments WHERE id = $1 FOR UPDATE`,
       [deploymentId]
     );
-    if (dep.rowCount === 0) {
-      throw new Error("Deployment not found");
-    }
+    if (dep.rowCount === 0) throw new Error("Deployment not found");
     const from = dep.rows[0].status as string;
     if (from !== "deploying") {
       throw new Error(
@@ -509,11 +499,7 @@ export async function failJobTerminal(
       `,
       [jobId, workerId]
     );
-    if (jobResult.rows.length !== 1) {
-      throw new Error(
-        "Deployment job is no longer owned by this worker"
-      );
-    }
+    if (jobResult.rows.length !== 1) throw new Error("Deployment job is no longer owned by this worker");
     const safeMessage = errorMessage.slice(0, 4000);
     const dep = await client.query(
       `SELECT status FROM deployments WHERE id = $1 FOR UPDATE`,
@@ -596,11 +582,7 @@ export async function failJob(
       [jobId, workerId]
     );
 
-    if (jobResult.rows.length !== 1) {
-      throw new Error(
-        "Deployment job is no longer owned by this worker"
-      );
-    }
+    if (jobResult.rows.length !== 1) throw new Error("Deployment job is no longer owned by this worker");
 
     const job = jobResult.rows[0];
     const shouldRetry = job.attempts < job.max_attempts;
@@ -615,11 +597,7 @@ export async function failJob(
       [deploymentId]
     );
 
-    if (deploymentResult.rows.length !== 1) {
-      throw new Error(
-        "Deployment associated with job was not found"
-      );
-    }
+    if (deploymentResult.rows.length !== 1) throw new Error("Deployment associated with job was not found");
 
     const previousStatus = deploymentResult.rows[0].status as string;
     const safeMessage = errorMessage.slice(0, 4000);

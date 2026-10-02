@@ -50,10 +50,15 @@ export function QuietBtn({ className, children, ...r }: Btn) {
 }
 
 const STATUS: Record<DeployStatus, { dot: string; text: string; label: string }> = {
-  ready: { dot: "bg-emerald-400", text: "text-emerald-300", label: "Ready" },
-  building: { dot: "bg-amber-300 animate-pulse", text: "text-amber-200", label: "Building" },
-  failed: { dot: "bg-red-400", text: "text-red-300", label: "Failed" },
   queued: { dot: "bg-zinc-500", text: "text-zinc-400", label: "Queued" },
+  cloning: { dot: "bg-sky-400 animate-pulse", text: "text-sky-300", label: "Cloning" },
+  building: { dot: "bg-amber-300 animate-pulse", text: "text-amber-200", label: "Building" },
+  pushing: { dot: "bg-amber-300 animate-pulse", text: "text-amber-200", label: "Pushing" },
+  verifying: { dot: "bg-violet-300 animate-pulse", text: "text-violet-200", label: "Verifying" },
+  deploying: { dot: "bg-violet-300 animate-pulse", text: "text-violet-200", label: "Deploying" },
+  active: { dot: "bg-emerald-400", text: "text-emerald-300", label: "Active" },
+  failed: { dot: "bg-red-400", text: "text-red-300", label: "Failed" },
+  cancelled: { dot: "bg-zinc-600", text: "text-zinc-500", label: "Cancelled" },
 };
 
 export function StatusPill({ status }: { status: DeployStatus }) {

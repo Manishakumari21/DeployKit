@@ -90,6 +90,7 @@ services:
       WORKER_LEASE_MS: 30000
       DEPLOYKIT_RUNTIME_NETWORK: deploykit-runtime
       DEPLOYKIT_BUILDER_NAME: deploykit-builder
+      BUILDX_CONFIG: /tmp/deploykit-buildx
       DEPLOYKIT_ALLOWED_GIT_HOSTS: github.com
       DEPLOYKIT_GATEWAY_CONTAINER: dk-gateway
       DEPLOYKIT_GATEWAY_ROUTES_DIR: /gateway-routes
@@ -107,6 +108,9 @@ services:
       # Never mount the socket into api/web (public surface).
       - /var/run/docker.sock:/var/run/docker.sock
       - deploykit-gateway-routes:/gateway-routes
+      # Persist only worker-controlled Buildx state so the deterministic
+      # builder is reused across worker recreation (no host ~/.docker mount).
+      - deploykit-buildx-state:/tmp/deploykit-buildx
 
     depends_on:
       postgres:
@@ -175,3 +179,4 @@ volumes:
   deploykit-db:
   deploykit-gateway-routes:
   deploykit-registry-data:
+  deploykit-buildx-state:

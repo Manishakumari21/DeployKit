@@ -7,6 +7,20 @@ RUN apk add --no-cache \
     docker-cli \
     docker-cli-buildx
 
+# Pin Buildx to v0.37.1: the apk-provided v0.34.1 lacks `buildx build --resource`,
+# which Phase 08 uses for real build-step resource enforcement (verified on
+# host Buildx 0.37.1). Install the official release binary over the apk plugin.
+ARG BUILDX_VERSION=v0.37.1
+RUN wget -q -O /usr/libexec/docker/cli-plugins/docker-buildx \
+      https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64 \
+    && chmod +x /usr/libexec/docker/cli-plugins/docker-buildx \
+    && docker buildx version
+
+# Controlled Buildx state location (worker-only). Bootstrap ensures the
+# deterministic builder exists here; no host ~/.docker data is mounted.
+ENV BUILDX_CONFIG=/tmp/deploykit-buildx
+RUN mkdir -p /tmp/deploykit-buildx
+
 COPY package*.json ./
 
 RUN npm ci

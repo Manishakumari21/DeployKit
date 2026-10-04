@@ -40,11 +40,12 @@ export interface RuntimeManager {
 
   waitForHealthy(
     runtime: RuntimeInfo,
-    timeoutMs: number
+    timeoutMs: number,
+    signal?: AbortSignal
   ): Promise<void>;
 
   /** Pull repository@sha256:... so create never relies on local cache. */
-  pull(reference: string): Promise<void>;
+  pull(reference: string, signal?: AbortSignal): Promise<void>;
 }
 
 export class UnconfiguredRuntimeManager
@@ -82,13 +83,14 @@ export class UnconfiguredRuntimeManager
   }
 
   async waitForHealthy(_runtime: RuntimeInfo,
-    _timeoutMs: number): Promise<void> {
+    _timeoutMs: number,
+    _signal?: AbortSignal): Promise<void> {
     throw new Error(
       "RUNTIME_MANAGER_NOT_CONFIGURED"
     );
   }
 
-  async pull(_reference: string): Promise<void> {
+  async pull(_reference: string, _signal?: AbortSignal): Promise<void> {
     throw new Error(
       "RUNTIME_MANAGER_NOT_CONFIGURED"
     );

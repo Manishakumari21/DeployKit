@@ -231,7 +231,14 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     if (!row) {
       throw new PipelineError("DEPLOYMENT_NOT_FOUND", "Deployment not found");
     }
-    if (row.status === "cancelled" || row.status === "active") {
+    if (row.status === "cancelled") {
+      throw new PipelineError(
+        PIPELINE_ERROR_CODES.DEPLOYMENT_CANCELLED,
+        "Deployment was cancelled",
+        { retryable: false }
+      );
+    }
+    if (row.status === "active") {
       throw new PipelineError(PIPELINE_ERROR_CODES.ACTIVATION_FAILED, `Deployment is already ${row.status}`);
     }
 
@@ -380,9 +387,11 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     let result: DeploymentExecutionResult;
     const registry = getOptionalRegistryConfig();
     try {
+      await this.assertNotCancelled(context.deploymentId, context.signal);
       result = await this.checkout(
-        { repositoryUrl, branch, targetCommitSha: pinnedSha, authToken },
+        { repositoryUrl, branch, targetCommitSha: pinnedSha, authToken, signal: context.signal },
         async ({ commitSha, workspace }) => {
+          await this.assertNotCancelled(context.deploymentId, context.signal);
           const policy = getBuildPolicy();
           const imageRepository = registry
             ? registryRepositoryForProject(registry, projectId)
@@ -408,9 +417,17 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
               commitSha,
               policy,
               push: registry !== null,
+              signal: context.signal,
             });
           } catch (error) {
             if (error instanceof BuildExecutorError) {
+              if (error.code === "BUILD_CANCELLED" || context.signal?.aborted) {
+                throw new PipelineError(
+                  PIPELINE_ERROR_CODES.DEPLOYMENT_CANCELLED,
+                  "Deployment was cancelled during build",
+                  { retryable: false }
+                );
+              }
               throw new PipelineError(
                 error.code === "BUILD_TIMEOUT"
                   ? PIPELINE_ERROR_CODES.BUILD_TIMEOUT
@@ -422,8 +439,17 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
                 }
               );
             }
+            if (context.signal?.aborted) {
+              throw new PipelineError(
+                PIPELINE_ERROR_CODES.DEPLOYMENT_CANCELLED,
+                "Deployment was cancelled during build",
+                { retryable: false }
+              );
+            }
             throw error;
           }
+
+          await this.assertNotCancelled(context.deploymentId, context.signal);
 
           const cur = await getDeploymentRow(context.deploymentId);
           if (cur.status !== "verifying") {
@@ -487,9 +513,23 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       );
     } catch (error) {
       if (error instanceof SourceCheckoutError) {
+        if (error.code === "GIT_CANCELLED" || context.signal?.aborted) {
+          throw new PipelineError(
+            PIPELINE_ERROR_CODES.DEPLOYMENT_CANCELLED,
+            "Deployment was cancelled during source checkout",
+            { retryable: false }
+          );
+        }
         throw new PipelineError(
           PIPELINE_ERROR_CODES.CLONE_FAILED,
           error.message,
+          { retryable: false }
+        );
+      }
+      if (context.signal?.aborted) {
+        throw new PipelineError(
+          PIPELINE_ERROR_CODES.DEPLOYMENT_CANCELLED,
+          "Deployment was cancelled",
           { retryable: false }
         );
       }
@@ -574,6 +614,24 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     }
   }
 
+  private async assertNotCancelled(deploymentId: string, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) {
+      throw new PipelineError(
+        PIPELINE_ERROR_CODES.DEPLOYMENT_CANCELLED,
+        "Deployment was cancelled",
+        { retryable: false }
+      );
+    }
+    const cur = await getDeploymentRow(deploymentId);
+    if (cur?.status === "cancelled") {
+      throw new PipelineError(
+        PIPELINE_ERROR_CODES.DEPLOYMENT_CANCELLED,
+        "Deployment was cancelled",
+        { retryable: false }
+      );
+    }
+  }
+
   private async ensureStatus(
     deploymentId: string,
     allowedFrom: string[],
@@ -614,6 +672,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       previousActiveId: string | null;
     }
   ): Promise<DeploymentExecutionResult> {
+    await this.assertNotCancelled(input.deploymentId, context.signal);
     const containerName =
       `dk-p${shortId(input.projectId)}-d${shortId(input.deploymentId)}`;
     const imageRef = `${input.imageRepository}@${input.imageDigest}`;
@@ -633,9 +692,20 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     if (shouldPullImage(input.imageRepository)) {
       try {
         await this.runtimeManager.pull(
-          digestReference(input.imageRepository, input.imageDigest)
+          digestReference(input.imageRepository, input.imageDigest),
+          context.signal
         );
       } catch (error) {
+        if (
+          (error instanceof RuntimeManagerError && error.code === "RUNTIME_CANCELLED") ||
+          context.signal?.aborted
+        ) {
+          throw new PipelineError(
+            PIPELINE_ERROR_CODES.DEPLOYMENT_CANCELLED,
+            "Deployment was cancelled during image pull",
+            { retryable: false }
+          );
+        }
         const retryable =
           error instanceof RuntimeManagerError &&
           (error.code === "DOCKER_TIMEOUT" ||
@@ -651,6 +721,8 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         );
       }
     }
+
+    await this.assertNotCancelled(input.deploymentId, context.signal);
 
     const containerPort = await discoverExposedPort(imageRef);
 
@@ -707,9 +779,20 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       try {
         await this.runtimeManager.waitForHealthy(
           runtime,
-          this.healthTimeoutMs
+          this.healthTimeoutMs,
+          context.signal
         );
       } catch (error) {
+        if (
+          (error instanceof RuntimeManagerError && error.code === "RUNTIME_CANCELLED") ||
+          context.signal?.aborted
+        ) {
+          throw new PipelineError(
+            PIPELINE_ERROR_CODES.DEPLOYMENT_CANCELLED,
+            "Deployment was cancelled during health verification",
+            { retryable: false }
+          );
+        }
         throw new PipelineError(
           PIPELINE_ERROR_CODES.HEALTH_CHECK_FAILED,
           error instanceof Error
@@ -730,6 +813,8 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       if (needsMarking) {
         await markRelease(input.releaseId, "healthy");
       }
+
+      await this.assertNotCancelled(input.deploymentId, context.signal);
 
       const cur = await getDeploymentRow(input.deploymentId);
       if (cur.status !== "deploying") {
@@ -822,6 +907,13 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         error instanceof PipelineError ||
         error instanceof RuntimeManagerError
       ) {
+        if (error instanceof RuntimeManagerError && error.code === "RUNTIME_CANCELLED") {
+          throw new PipelineError(
+            PIPELINE_ERROR_CODES.DEPLOYMENT_CANCELLED,
+            "Deployment was cancelled",
+            { retryable: false }
+          );
+        }
         throw error instanceof PipelineError
           ? error
           : new PipelineError(
@@ -829,6 +921,13 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
               error.message,
               { retryable: false }
             );
+      }
+      if (context.signal?.aborted) {
+        throw new PipelineError(
+          PIPELINE_ERROR_CODES.DEPLOYMENT_CANCELLED,
+          "Deployment was cancelled",
+          { retryable: false }
+        );
       }
       throw error;
     }

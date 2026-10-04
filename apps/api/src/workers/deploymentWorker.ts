@@ -7,9 +7,11 @@ import {
   failJobTerminal,
   recoverExpiredJobs,
 } from "./deploymentQueue.js";
+import pool from "../db/database.js";
 import type { DeploymentExecutor } from "./deploymentExecutor.js";
 import { RealDeploymentExecutor } from "./deploymentPipeline.js";
 import { PipelineError } from "../deployments/deploymentErrors.js";
+import { BootstrapError, bootstrapWorker } from "./workerBootstrap.js";
 
 const WORKER_ID =
   process.env.WORKER_ID ?? `worker-${randomUUID()}`;
@@ -28,6 +30,7 @@ const LEASE_RENEWAL_MS = Math.max(
 );
 
 let shuttingDown = false;
+let activeAbort: AbortController | null = null;
 
 const executor: DeploymentExecutor = new RealDeploymentExecutor();
 
@@ -77,6 +80,9 @@ async function processJob() {
   });
 
   let leaseTimer: NodeJS.Timeout | undefined;
+  let cancelWatcher: NodeJS.Timeout | undefined;
+  const abort = new AbortController();
+  activeAbort = abort;
 
   try {
     leaseTimer = setInterval(async () => {
@@ -105,11 +111,33 @@ async function processJob() {
       }
     }, LEASE_RENEWAL_MS);
 
+    // Propagate API cancellation and worker shutdown to active work.
+    // Polls deployment status; aborts the build/git/health processes via AbortSignal.
+    cancelWatcher = setInterval(async () => {
+      try {
+        if (shuttingDown) {
+          abort.abort();
+          return;
+        }
+        const current = await pool.query(`SELECT status FROM deployments WHERE id = $1`, [job.deploymentId]);
+        if (current.rows[0]?.status === "cancelled") {
+          log("info", "deployment.cancel_requested", {
+            jobId: job.id,
+            deploymentId: job.deploymentId,
+          });
+          abort.abort();
+        }
+      } catch {
+        // Watcher must never fail the job; pipeline phase checks are authoritative.
+      }
+    }, 2000);
+
     const result = await executor.execute({
       deploymentId: job.deploymentId,
       jobId: job.id,
       attempt: job.attempts,
       maxAttempts: job.maxAttempts,
+      signal: abort.signal,
     });
 
     log("info", "deployment.execution_finished", {
@@ -144,6 +172,35 @@ async function processJob() {
       code,
     });
 
+    // Cancellation and shutdown must not resurrect the job: the API cancel path
+    // already moved deployment+job to `cancelled`, and shutdown aborts leave the
+    // lease to expire for recovery. Never call failJob in those cases.
+    if (
+      code === "DEPLOYMENT_CANCELLED" ||
+      code === "BUILD_CANCELLED" ||
+      abort.signal.aborted
+    ) {
+      try {
+        const current = await pool.query(`SELECT status FROM deployments WHERE id = $1`, [job.deploymentId]);
+        if (current.rows[0]?.status === "cancelled") {
+          log("info", "deployment.cancel_acknowledged", {
+            jobId: job.id,
+            deploymentId: job.deploymentId,
+          });
+          return true;
+        }
+      } catch {
+        // Fall through to normal failure handling if status check fails.
+      }
+      if (shuttingDown || abort.signal.aborted) {
+        log("info", "deployment.aborted_shutdown", {
+          jobId: job.id,
+          deploymentId: job.deploymentId,
+        });
+        return true;
+      }
+    }
+
     try {
       if (error instanceof PipelineError && !error.retryable) {
         await failJobTerminal(
@@ -169,8 +226,12 @@ async function processJob() {
 
     return true;
   } finally {
+    activeAbort = null;
     if (leaseTimer) {
       clearInterval(leaseTimer);
+    }
+    if (cancelWatcher) {
+      clearInterval(cancelWatcher);
     }
   }
 }
@@ -193,6 +254,23 @@ async function run() {
     pollIntervalMs: POLL_INTERVAL_MS,
     leaseMs: LEASE_MS,
   });
+
+  try {
+    const bootstrap = await bootstrapWorker();
+    log("info", "worker.processing", {
+      builder: bootstrap.builderName,
+      buildxConfigDir: bootstrap.buildxConfigDir,
+      registryHost: bootstrap.registryHost,
+    });
+  } catch (error) {
+    const code = error instanceof BootstrapError ? error.code : "BOOTSTRAP_FAILED";
+    log("error", "worker.bootstrap_failed", {
+      error: error instanceof Error ? error.message : "Unknown bootstrap error",
+      code,
+    });
+    process.exitCode = 1;
+    return;
+  }
 
   while (!shuttingDown) {
     try {
@@ -228,6 +306,15 @@ function requestShutdown(signal: string) {
   log("info", "worker.shutdown_requested", {
     signal,
   });
+
+  // Terminate active git/docker/health work where technically supported.
+  // The job lease then expires and is recovered; no orphan subprocess remains
+  // under DeployKit's control beyond the BuildKit session disconnect.
+  try {
+    activeAbort?.abort();
+  } catch {
+    // Abort must never throw during shutdown.
+  }
 }
 
 process.on("SIGTERM", () => requestShutdown("SIGTERM"));

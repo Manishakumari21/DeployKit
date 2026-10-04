@@ -24,6 +24,7 @@ export interface SourceCheckoutOptions {
   branch: string;
   targetCommitSha?: string | null;
   authToken?: string | null;
+  signal?: AbortSignal;
 }
 
 export interface SourceCheckoutResult {
@@ -178,8 +179,12 @@ export function __gitArgvForTest(kind: "clone" | "fetch" | "rev-parse"): string[
 async function runGit(
   args: string[],
   cwd?: string,
-  authToken?: string | null
+  authToken?: string | null,
+  signal?: AbortSignal
 ) {
+  if (signal?.aborted) {
+    throw new SourceCheckoutError("GIT_CANCELLED", "Git operation was cancelled");
+  }
   try {
     return await execFileAsync(
       "git",
@@ -190,9 +195,13 @@ async function runGit(
         timeout: CHECKOUT_TIMEOUT_MS,
         maxBuffer: 5 * 1024 * 1024,
         windowsHide: true,
+        signal,
       }
     );
   } catch (error) {
+    if (signal?.aborted || (error as NodeJS.ErrnoException)?.code === "ABORT_ERR") {
+      throw new SourceCheckoutError("GIT_CANCELLED", "Git operation was cancelled");
+    }
     const err = error as NodeJS.ErrnoException & {
       stdout?: string;
       stderr?: string;
@@ -265,11 +274,11 @@ export async function withCheckedOutRepository<T>(
       branch,
       repositoryUrl.toString(),
       workspace,
-    ], undefined, authToken);
+    ], undefined, authToken, options.signal);
 
     if (targetSha) {
-      await runGit([...gitBase, "fetch", "--depth", "1", "origin", targetSha], workspace, authToken);
-      await runGit([...gitBase, "checkout", "--detach", targetSha], workspace, authToken);
+      await runGit([...gitBase, "fetch", "--depth", "1", "origin", targetSha], workspace, authToken, options.signal);
+      await runGit([...gitBase, "checkout", "--detach", targetSha], workspace, authToken, options.signal);
     }
 
     const { stdout } = await runGit(
@@ -279,7 +288,8 @@ export async function withCheckedOutRepository<T>(
         "HEAD",
       ],
       workspace,
-      authToken
+      authToken,
+      options.signal
     );
 
     const commitSha = stdout.trim();

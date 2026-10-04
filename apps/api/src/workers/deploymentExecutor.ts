@@ -3,6 +3,7 @@ export interface DeploymentExecutionContext {
   jobId: string;
   attempt: number;
   maxAttempts: number;
+  signal?: AbortSignal;
 }
 
 export interface DeploymentExecutionResult {

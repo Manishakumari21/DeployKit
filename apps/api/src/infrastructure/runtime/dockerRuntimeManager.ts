@@ -60,13 +60,15 @@ function validateEnvironment(env: Record<string, string>): void {
     if (/[\r\n\0]/.test(v)) fail("INVALID_ENV_VALUE", `Environment variable contains invalid characters: ${k}`);
   }
 }
-export async function runDocker(binary: string, args: string[], timeoutMs = 30_000): Promise<string> {
+export async function runDocker(binary: string, args: string[], timeoutMs = 30_000, signal?: AbortSignal): Promise<string> {
   let result;
   try {
-    result = await runCommand(binary, args, timeoutMs);
+    result = await runCommand(binary, args, timeoutMs, undefined, signal);
   } catch (e) {
+    if (signal?.aborted) throw new RuntimeManagerError("RUNTIME_CANCELLED", "Docker operation was cancelled");
     throw new RuntimeManagerError("DOCKER_COMMAND_FAILED", e instanceof Error ? e.message : "Docker failed");
   }
+  if (result.aborted || signal?.aborted) throw new RuntimeManagerError("RUNTIME_CANCELLED", "Docker operation was cancelled");
   if (result.timedOut) throw new RuntimeManagerError("DOCKER_TIMEOUT", "Docker command timed out");
   if (result.code !== 0) throw new RuntimeManagerError("DOCKER_COMMAND_FAILED", result.stderr || `Docker exited with code ${result.code}`);
   return result.stdout;
@@ -278,7 +280,8 @@ export class DockerRuntimeManager
   }
 
   async pull(
-    reference: string
+    reference: string,
+    signal?: AbortSignal
   ): Promise<void> {
     const imageReference = validateImageReference(
       reference
@@ -291,7 +294,8 @@ export class DockerRuntimeManager
         "pull",
         imageReference,
       ],
-      120_000
+      120_000,
+      signal
     );
   }
 
@@ -394,13 +398,18 @@ export class DockerRuntimeManager
 
   async waitForHealthy(
     runtime: RuntimeInfo,
-    timeoutMs: number
+    timeoutMs: number,
+    signal?: AbortSignal
   ): Promise<void> {
     if (
       !Number.isSafeInteger(timeoutMs) ||
       timeoutMs <= 0
     ) {
       throw new RuntimeManagerError("INVALID_HEALTH_TIMEOUT", "Health-check timeout must be positive");
+    }
+
+    if (signal?.aborted) {
+      throw new RuntimeManagerError("RUNTIME_CANCELLED", "Health verification was cancelled");
     }
 
     const deadline = Date.now() + timeoutMs;
@@ -412,6 +421,9 @@ export class DockerRuntimeManager
     let lastError = "No response";
 
     while (Date.now() < deadline) {
+      if (signal?.aborted) {
+        throw new RuntimeManagerError("RUNTIME_CANCELLED", "Health verification was cancelled");
+      }
       try {
         const response = await fetch(
           `http://${runtime.ipAddress}:${runtime.containerPort}${healthPath}`,
@@ -437,10 +449,22 @@ export class DockerRuntimeManager
             : "Health check failed";
       }
 
-      await new Promise(
-        (resolve) =>
-          setTimeout(resolve, 1_000)
-      );
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve();
+        }, 1_000);
+        const onAbort = () => {
+          clearTimeout(timer);
+          reject(new RuntimeManagerError("RUNTIME_CANCELLED", "Health verification was cancelled"));
+        };
+        if (signal?.aborted) {
+          clearTimeout(timer);
+          reject(new RuntimeManagerError("RUNTIME_CANCELLED", "Health verification was cancelled"));
+          return;
+        }
+        signal?.addEventListener("abort", onAbort, { once: true });
+      });
     }
 
     throw new RuntimeManagerError("RUNTIME_HEALTH_TIMEOUT", `Runtime did not become healthy: ${lastError}`);

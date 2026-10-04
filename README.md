@@ -343,8 +343,46 @@ it afterwards; it does not use the Compose registry service or volumes.
 
 * No registry authentication, no TLS, no HA, no retention/GC policy,
   no image signing — not production-grade artifact storage.
-* The pushing Docker daemon must allow HTTP for the local registry
-  (loopback addresses are exempt by default; a non-loopback
-  `deploykit-registry` hostname may require an `insecure-registries`
-  daemon entry when commands execute on the host daemon via the
-  worker-mounted socket).
+* Host-Docker prerequisite for registry pulls (NOT automated by
+  DeployKit, which never touches host daemon config): the runtime
+  `docker image pull repository@digest` executes on the HOST Docker
+  daemon through the worker-mounted socket, so the host daemon itself
+  must resolve the registry hostname AND trust plain HTTP — i.e. an
+  `insecure-registries` entry for `deploykit-registry:5000` (plus name
+  resolution) followed by a daemon restart. Without this, registry-mode
+  deployments fail at pull with `RUNTIME_FAILED` while the previous
+  active release keeps serving. Loopback registries are exempt from the
+  insecure entry by default, but a loopback hostname cannot serve both
+  the builder netns and the host daemon at once.
+* Worker/build-side registry path IS automatic: worker bootstrap
+  writes the builder's `buildkitd.toml` (base from
+  `ops/buildkit/buildkitd.toml` plus `http = true` for the configured
+  insecure registry), converges the deterministic `deploykit-builder`
+  to it idempotently, and attaches the builder container to the
+  worker's networks so BuildKit pushes reach Compose registries.
+
+## Phase 08 — Worker/build hardening
+
+Bootstrap (`workers/workerBootstrap.ts`, runs before the queue starts;
+fail closed): `STARTING -> BOOTSTRAPPING (docker_cli, docker_daemon,
+buildx, builder_ensure/create/reused, builder_bootstrap,
+registry reachability, builder_network, orphan_cleanup) ->
+READY -> PROCESSING`. No jobs are claimed until `READY`. `BUILDX_CONFIG`
+points at worker-controlled `/tmp/deploykit-buildx` (persisted in the
+`deploykit-buildx-state` volume); no host `~/.docker` data is mounted.
+
+* Builder `deploykit-builder` (`docker-container` driver, Buildx
+  v0.37.1 pinned in `Dockerfile.worker`) is created on demand,
+  recreated only when the desired buildkitd config changes (marker
+  file), otherwise reused — warm build cache is preserved.
+* Build resource enforcement uses ONLY `buildx build --resource`
+  (`memory=<bytes>`, `cpu-quota=<cpus>*100000`), the flags supported by
+  the installed Buildx. They limit individual RUN/build-step
+  containers, NOT the BuildKit daemon as a whole.
+* Timeouts kill the real child (`SIGKILL`); cancellation propagates via
+  `AbortSignal` through git/build/pull/health verification, and API
+  cancellation is polled so active work aborts with typed
+  `DEPLOYMENT_CANCELLED` without resurrecting the job.
+* Cleanup is scoped to DeployKit-owned names/labels only
+  (`dk-p<8hex>-d<8hex>`, `io.deploykit.managed=true`); never global
+  prune. Failed deployments never disturb the active release.

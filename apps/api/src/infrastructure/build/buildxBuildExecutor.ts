@@ -81,6 +81,21 @@ export interface BuildxBuildArgsInput {
 export function buildBuildxArgs(input: BuildxBuildArgsInput): string[] {
   const push = input.push ?? false;
 
+  // Resource enforcement uses ONLY `docker buildx build --resource`,
+  // verified on Buildx 0.37.1 (`--resource memory=..`, `--resource cpu-quota=..`).
+  // Semantics: limits apply to individual RUN/build-step containers created
+  // during the build, NOT to the BuildKit daemon as a whole. Whole-daemon
+  // isolation would require builder-level (driver-opt / buildkitd) controls.
+  const memoryBytes = input.policy.memoryBytes;
+  const cpuLimit = input.policy.cpuLimit;
+  if (!Number.isSafeInteger(memoryBytes) || memoryBytes <= 0) {
+    throw new BuildExecutorError("INVALID_BUILD_POLICY", "Build memory limit must be positive");
+  }
+  if (!Number.isSafeInteger(cpuLimit) || cpuLimit <= 0) {
+    throw new BuildExecutorError("INVALID_BUILD_POLICY", "Build CPU limit must be positive");
+  }
+  const cpuQuota = cpuLimit * 100_000;
+
   const args = [
     "buildx",
     "build",
@@ -98,6 +113,12 @@ export function buildBuildxArgs(input: BuildxBuildArgsInput): string[] {
     input.imageReference,
 
     push ? "--push" : "--load",
+
+    "--resource",
+    `memory=${memoryBytes}`,
+
+    "--resource",
+    `cpu-quota=${cpuQuota}`,
 
     "--label",
     `org.opencontainers.image.revision=${input.commitSha}`,
@@ -183,15 +204,18 @@ async function assertBuildContext(
   );
 }
 
-async function runBuild(binary: string, args: string[], timeoutMs: number) {
+async function runBuild(binary: string, args: string[], timeoutMs: number, signal?: AbortSignal) {
   try {
     return await runCommand(binary, args, timeoutMs, {
       ...process.env,
       DOCKER_BUILDKIT: "1",
       BUILDKIT_PROGRESS: "plain",
       BUILDX_METADATA_WARNINGS: "1",
-    });
+    }, signal);
   } catch (e) {
+    if (signal?.aborted) {
+      throw new BuildExecutorError("BUILD_CANCELLED", "Docker build was cancelled");
+    }
     throw new BuildExecutorError("BUILD_EXECUTION_FAILED", "Failed to execute Docker Buildx", e instanceof Error ? e.message : String(e));
   }
 }
@@ -282,6 +306,20 @@ export class BuildxBuildExecutor
       throw new BuildExecutorError("INVALID_BUILD_POLICY", "Build timeout must be positive");
     }
 
+    if (
+      !Number.isSafeInteger(request.policy.memoryBytes) ||
+      request.policy.memoryBytes <= 0
+    ) {
+      throw new BuildExecutorError("INVALID_BUILD_POLICY", "Build memory limit must be positive");
+    }
+
+    if (
+      !Number.isSafeInteger(request.policy.cpuLimit) ||
+      request.policy.cpuLimit <= 0
+    ) {
+      throw new BuildExecutorError("INVALID_BUILD_POLICY", "Build CPU limit must be positive");
+    }
+
     await assertBuildContext(
       request.workspace,
       request.policy.maxBuildContextBytes
@@ -316,7 +354,11 @@ export class BuildxBuildExecutor
 
       args.push(request.workspace);
 
-      const result = await runBuild(this.dockerBinary, args, request.policy.timeoutMs);
+      const result = await runBuild(this.dockerBinary, args, request.policy.timeoutMs, request.signal);
+
+      if (result.aborted || request.signal?.aborted) {
+        throw new BuildExecutorError("BUILD_CANCELLED", "Docker build was cancelled", result.stderr);
+      }
 
       if (result.timedOut) {
         throw new BuildExecutorError("BUILD_TIMEOUT", `Docker build exceeded timeout of ${request.policy.timeoutMs}ms`, result.stderr);

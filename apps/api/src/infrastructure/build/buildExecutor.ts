@@ -14,6 +14,8 @@ export interface BuildRequest {
   policy: BuildPolicy;
   /** push=true uses --push, otherwise --load. Never combined. */
   push?: boolean;
+  /** AbortSignal for cancellation; aborts the underlying build process. */
+  signal?: AbortSignal;
 }
 
 export interface BuildResult {

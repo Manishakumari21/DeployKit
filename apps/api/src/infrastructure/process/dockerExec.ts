@@ -13,15 +13,21 @@ export interface ExecResult {
   stderr: string;
   code: number;
   timedOut: boolean;
+  aborted: boolean;
 }
 
 export function runCommand(
   binary: string,
   args: string[],
   timeoutMs: number,
-  env?: NodeJS.ProcessEnv
+  env?: NodeJS.ProcessEnv,
+  signal?: AbortSignal
 ): Promise<ExecResult> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      resolve({ stdout: "", stderr: "Operation was aborted", code: 1, timedOut: false, aborted: true });
+      return;
+    }
     const child = spawn(binary, args, {
       stdio: ["ignore", "pipe", "pipe"],
       shell: false,
@@ -30,11 +36,21 @@ export function runCommand(
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let aborted = false;
     let settled = false;
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill("SIGKILL");
     }, timeoutMs);
+    const onAbort = () => {
+      aborted = true;
+      child.kill("SIGKILL");
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
     child.stdout.on("data", (c: Buffer) => {
       stdout = appendTail(stdout, c);
     });
@@ -44,25 +60,29 @@ export function runCommand(
     child.on("error", (e) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      cleanup();
       reject(e);
     });
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
-      resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 1, timedOut });
+      cleanup();
+      // If abort fired but process already exited, still report it.
+      if (signal?.aborted) aborted = true;
+      resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 1, timedOut, aborted });
     });
   });
 }
 
-export async function runDockerStdout(binary: string, args: string[], timeoutMs = 30_000): Promise<string> {
+export async function runDockerStdout(binary: string, args: string[], timeoutMs = 30_000, signal?: AbortSignal): Promise<string> {
   let result: ExecResult;
   try {
-    result = await runCommand(binary, args, timeoutMs);
+    result = await runCommand(binary, args, timeoutMs, undefined, signal);
   } catch (e) {
+    if (signal?.aborted) throw new Error("Docker command was aborted");
     throw new Error(e instanceof Error ? e.message : "Docker command failed");
   }
+  if (result.aborted || signal?.aborted) throw new Error("Docker command was aborted");
   if (result.timedOut) throw new Error("Docker command timed out");
   if (result.code !== 0) throw new Error(result.stderr || `Docker exited with code ${result.code}`);
   return result.stdout;

@@ -1,13 +1,14 @@
 import { useMemo, useState } from "react";
 import { DeploymentDetails, DeploymentList } from "./components/deployments";
+import { CommandBar } from "./components/CommandBar";
 import { DomainsView, LogsView, SettingsView } from "./components/OpsViews";
 import { MetricsPanel } from "./components/MetricsPanel";
 import { ProjectModal } from "./components/ProjectModal";
 import { ServiceHeader } from "./components/ServiceHeader";
 import { ServicesGrid } from "./components/ServicesGrid";
-import { Sidebar } from "./components/Sidebar";
 import { Toast } from "./components/Toast";
 import { Topbar } from "./components/Topbar";
+import { Eyebrow } from "./components/ui";
 import { useDeployments } from "./hooks/useDeployments";
 import { useProjects, useToast } from "./hooks/useProjects";
 import type { ApiDeployment, NavKey } from "./types";
@@ -69,7 +70,7 @@ export default function App() {
     const d = await create();
     if (d) {
       setSelectedDeploymentId(d.id);
-      setToast(`Deployment ${d.status}: ${d.id.slice(0, 8)}`);
+      setToast(`Flight ${d.id.slice(0, 8)} away — ${d.status}`);
     } else {
       setToast(createError ?? "Failed to create deployment");
     }
@@ -99,7 +100,7 @@ export default function App() {
       const c = await add(name, repo, branch);
       setModal(false);
       selectProject(c.id);
-      setToast(`Service "${c.name}" created`);
+      setToast(`Service "${c.name}" commissioned`);
       setNav("services");
       return true;
     } catch (e) {
@@ -111,14 +112,21 @@ export default function App() {
   };
 
   return (
-    <div className="grid min-h-screen bg-zinc-950 text-zinc-100 lg:grid-cols-[240px_1fr]">
-      <Sidebar
-        nav={nav}
-        setNav={setNav}
-        counts={{ services: projects.length, deployments: deployments.length }}
-        healthy={healthy}
-      />
-      <div className="min-w-0">
+    <div className="dk-noise min-h-screen bg-ink-950 font-sans text-fog-100">
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[80] focus:rounded-lg focus:bg-signal-400 focus:px-3 focus:py-2 focus:text-sm focus:font-semibold focus:text-ink-950"
+      >
+        Skip to content
+      </a>
+      <div aria-hidden className="dk-grid-bg pointer-events-none fixed inset-0" />
+      <div className="sticky top-0 z-40">
+        <CommandBar
+          nav={nav}
+          setNav={setNav}
+          counts={{ services: projects.length, deployments: deployments.length }}
+          healthy={healthy}
+        />
         <Topbar
           query={query}
           setQuery={setQuery}
@@ -132,77 +140,88 @@ export default function App() {
           deploying={deploying}
           canDeploy={!!selectedProjectId}
         />
+      </div>
 
-        <main className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-4 sm:px-6">
-          {nav === "overview" && (
-            <>
-              <ServiceHeader project={featured} live={live} creating={deploying} onDeploy={handleDeploy} />
-              {createError && <p className="text-[13px] text-red-300">{createError}</p>}
-              <MetricsPanel projectId={selectedProjectId} />
-              <div className="grid items-start gap-3 xl:grid-cols-2">
-                <DeploymentList
-                  deployments={deployments.slice(0, 8)}
-                  loading={depLoading}
-                  error={depError}
-                  selectedId={selectedId}
-                  onSelect={setSelectedDeploymentId}
-                  onRetry={reloadDeployments}
-                />
-                {selectedId ? (
-                  <DeploymentDetails deploymentId={selectedId} onUpdate={handleListUpdate} />
-                ) : (
-                  <p className="text-[13px] text-zinc-500">Select a deployment to see details.</p>
-                )}
-              </div>
-            </>
-          )}
-
-          {nav === "services" && (
-            <>
-              <div className="flex items-end justify-between">
-                <div>
-                  <h1 className="text-lg font-semibold tracking-tight text-white">Services</h1>
-                  <p className="text-[13px] text-zinc-500">{services.length} services</p>
-                </div>
-              </div>
-              <ServicesGrid
-                projects={services}
-                loading={loading}
-                selectedId={selectedProjectId}
-                onNew={() => setModal(true)}
-                onSelect={selectProject}
-                onDelete={async (id) => {
-                  await remove(id);
-                  setToast("Service removed");
-                }}
-              />
-            </>
-          )}
-
-          {nav === "deployments" && (
-            <div className="grid items-start gap-3 xl:grid-cols-2">
+      <main id="main" className="relative mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-5 sm:px-6">
+        {nav === "overview" && (
+          <div className="dk-stagger flex flex-col gap-4">
+            <ServiceHeader project={featured} live={live} creating={deploying} onDeploy={handleDeploy} />
+            {createError && <p role="alert" className="text-[13px] text-red-300">{createError}</p>}
+            <MetricsPanel projectId={selectedProjectId} />
+            <div className="grid items-start gap-4 xl:grid-cols-2">
               <DeploymentList
-                deployments={deployments}
+                deployments={deployments.slice(0, 8)}
                 loading={depLoading}
                 error={depError}
                 selectedId={selectedId}
                 onSelect={setSelectedDeploymentId}
                 onRetry={reloadDeployments}
               />
-              {selectedId && <DeploymentDetails deploymentId={selectedId} onUpdate={handleListUpdate} />}
+              {selectedId ? (
+                <DeploymentDetails deploymentId={selectedId} onUpdate={handleListUpdate} />
+              ) : (
+                <p className="text-[13px] text-fog-500">Select a flight to track it down the rail.</p>
+              )}
             </div>
-          )}
-          {nav === "domains" && <DomainsView />}
-          {nav === "logs" && (
-            <LogsView
-              deployments={deployments}
-              selectedId={selectedId}
-              onSelect={(id) => setSelectedDeploymentId(id)}
+          </div>
+        )}
+
+        {nav === "services" && (
+          <div className="dk-stagger flex flex-col gap-3">
+            <div className="flex items-end justify-between">
+              <div>
+                <Eyebrow>Fleet roster</Eyebrow>
+                <h1 className="mt-1 text-xl font-bold tracking-tight text-white">
+                  {services.length} {services.length === 1 ? "service" : "services"}
+                </h1>
+              </div>
+            </div>
+            <ServicesGrid
+              projects={services}
+              loading={loading}
+              selectedId={selectedProjectId}
+              onNew={() => setModal(true)}
+              onSelect={selectProject}
+              onDelete={async (id) => {
+                await remove(id);
+                setToast("Service decommissioned");
+              }}
             />
-          )}
-          {nav === "settings" && <SettingsView />}
-        </main>
-      </div>
+          </div>
+        )}
+
+        {nav === "deployments" && (
+          <div className="dk-stagger grid items-start gap-4 xl:grid-cols-2">
+            <DeploymentList
+              deployments={deployments}
+              loading={depLoading}
+              error={depError}
+              selectedId={selectedId}
+              onSelect={setSelectedDeploymentId}
+              onRetry={reloadDeployments}
+            />
+            {selectedId && <DeploymentDetails deploymentId={selectedId} onUpdate={handleListUpdate} />}
+          </div>
+        )}
+        {nav === "domains" && <DomainsView />}
+        {nav === "logs" && (
+          <LogsView
+            deployments={deployments}
+            selectedId={selectedId}
+            onSelect={(id) => setSelectedDeploymentId(id)}
+          />
+        )}
+        {nav === "settings" && <SettingsView />}
+
+        <footer className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-2 pb-4 font-mono text-[11px] text-fog-500">
+          <span>deploykit · self-hosted</span>
+          <span aria-hidden>·</span>
+          <span className={healthy ? "text-signal-400" : "text-amber-300"}>
+            {healthy === null ? "linking…" : healthy ? "api live" : "api unreachable"}
+          </span>
+          <span className="ml-auto">queue → build → gateway → live</span>
+        </footer>
+      </main>
 
       <ProjectModal open={modal} busy={creating} error={formError} onClose={() => setModal(false)} onSubmit={submit} />
       <Toast msg={toast} onClose={() => setToast(null)} />

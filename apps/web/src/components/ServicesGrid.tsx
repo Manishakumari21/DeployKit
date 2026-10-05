@@ -1,8 +1,8 @@
 import { GitBranch, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { timeAgo } from "../lib/format";
 import type { Project } from "../types";
-import { Panel } from "./ui";
+import { DeployBtn, EmptyState, Panel, Skeleton } from "./ui";
 
 export function ServicesGrid({
   projects,
@@ -19,63 +19,105 @@ export function ServicesGrid({
   onSelect?: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
-  const [confirm, setConfirm] = useState<string | null>(null);
   if (loading)
     return (
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-        {[0, 1, 2].map((i) => (
-          <div key={i} className="h-44 animate-pulse rounded-xl border border-zinc-800 bg-zinc-900/60" />
-        ))}
-      </div>
-    );
-  if (!projects.length)
-    return (
-      <Panel className="border-dashed p-10 text-center">
-        <p className="font-semibold text-white">No services</p>
-        <p className="mx-auto mt-1 max-w-sm text-[13px] text-zinc-500">
-          Services mirror a Git repo + branch.
-        </p>
-        <button onClick={onNew} className="mx-auto mt-3 inline-flex items-center gap-1.5 rounded-lg bg-zinc-100 px-3.5 py-2 text-[13px] font-semibold text-zinc-950">
-          <Plus size={14} /> New service
-        </button>
+      <Panel>
+        <div className="flex flex-col gap-2 p-3">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-16" />
+          ))}
+        </div>
       </Panel>
     );
+
+  if (!projects.length)
+    return (
+      <Panel>
+        <EmptyState
+          title="No services on the roster"
+          body="A service mirrors one Git repository and branch. Connect a repo and DeployKit takes it from clone to live."
+          action={
+            <DeployBtn onClick={onNew}>
+              <Plus size={14} /> Connect a repository
+            </DeployBtn>
+          }
+        />
+      </Panel>
+    );
+
   return (
-    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-      {projects.map((p) => (
-        <Panel
-          key={p.id}
-          className={`group flex flex-col p-3.5 transition hover:border-zinc-700 ${selectedId === p.id ? "border-zinc-500" : ""}`}
-        >
-          <button onClick={() => onSelect?.(p.id)} className="flex items-center gap-2.5 text-left" aria-label={`Select ${p.name}`}>
-            <span className="grid size-9 place-items-center rounded-lg bg-zinc-100 text-[12px] font-black text-zinc-950">
-              {p.name.slice(0, 2).toUpperCase()}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[14px] font-semibold text-white">{p.name}</span>
-              <span className="flex items-center gap-1 font-mono text-[11px] text-zinc-500">
-                <GitBranch size={11} /> {p.branch} · {timeAgo(p.created_at)}
-              </span>
-            </span>
-          </button>
-          <p className="mt-2 truncate font-mono text-[11px] text-zinc-500">{p.repository_url}</p>
-          <div className="mt-2.5 flex items-center gap-1.5 border-t border-zinc-800 pt-2.5">
-            <button
-              onClick={() => {
-                if (confirm !== p.id) {
-                  setConfirm(p.id);
-                  setTimeout(() => setConfirm((c) => (c === p.id ? null : c)), 2500);
-                  return;
-                }
-                onDelete(p.id);
-              }}
-              className="ml-auto inline-flex items-center gap-1 text-[12px] text-zinc-500 hover:text-red-300"
-            >
-              <Trash2 size={13} /> {confirm === p.id ? "Confirm?" : "Remove"}
-            </button>
-          </div>
-        </Panel>
-      ))}
-    </div>
+    <Panel>
+      <ul className="divide-y divide-edge/70">
+        {projects.map((p) => {
+          const active = selectedId === p.id;
+          return (
+            <li key={p.id}>
+              <div
+                className={`group flex items-center gap-3 px-4 py-3 transition duration-200 ${
+                  active ? "bg-signal-950/40" : "hover:bg-ink-800/60"
+                }`}
+              >
+                <span
+                  aria-hidden
+                  className={`h-9 w-1 shrink-0 rounded-full ${active ? "bg-signal-400" : "bg-ink-700 group-hover:bg-fog-500"}`}
+                />
+                <button
+                  onClick={() => onSelect?.(p.id)}
+                  className="min-w-0 flex-1 cursor-pointer text-left"
+                  aria-label={`Select ${p.name}`}
+                  aria-pressed={active}
+                >
+                  <span className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="truncate text-[14px] font-semibold text-white">{p.name}</span>
+                    <span className="font-mono text-[11px] text-fog-500">
+                      {p.id.slice(0, 8)}
+                    </span>
+                    {active && (
+                      <span className="rounded border border-signal-500/40 bg-signal-950 px-1.5 font-mono text-[10px] font-medium text-signal-300">
+                        TRACKED
+                      </span>
+                    )}
+                  </span>
+                  <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] text-fog-500">
+                    <span className="inline-flex items-center gap-1">
+                      <GitBranch size={11} /> {p.branch}
+                    </span>
+                    <span className="truncate">{p.repository_url}</span>
+                    <span>· {timeAgo(p.created_at)}</span>
+                  </span>
+                </button>
+                <DeleteService id={p.id} onDelete={onDelete} />
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </Panel>
+  );
+}
+
+function DeleteService({ id, onDelete }: { id: string; onDelete: (id: string) => void }) {
+  const [confirm, setConfirm] = useState(false);
+  useEffect(() => {
+    if (!confirm) return;
+    const t = setTimeout(() => setConfirm(false), 2600);
+    return () => clearTimeout(t);
+  }, [confirm]);
+  return (
+    <button
+      onClick={() => {
+        if (!confirm) {
+          setConfirm(true);
+          return;
+        }
+        onDelete(id);
+      }}
+      onBlur={() => setConfirm(false)}
+      className={`inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 text-[12px] transition duration-200 active:scale-[0.98] ${
+        confirm ? "bg-red-950 font-semibold text-red-200" : "text-fog-500 hover:bg-ink-700 hover:text-red-300"
+      }`}
+    >
+      <Trash2 size={13} /> {confirm ? "Confirm" : "Remove"}
+    </button>
   );
 }

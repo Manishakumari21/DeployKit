@@ -78,3 +78,56 @@ export function fetchDeploymentEvents(deploymentId: string): Promise<DeploymentE
 export function cancelDeployment(deploymentId: string): Promise<{ id: string; status: string }> {
   return request(`/deployments/${deploymentId}/cancel`, { method: "POST" });
 }
+
+export type DeploymentLog = {
+  id: string;
+  deployment_id: string;
+  source: string;
+  level: string;
+  message: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type LogsResponse = {
+  items: DeploymentLog[];
+  next_cursor: string | null;
+  truncated: boolean;
+};
+
+export function fetchDeploymentLogs(
+  deploymentId: string,
+  params: { cursor?: string | null; limit?: number; source?: string; level?: string; direction?: "asc" | "desc" } = {},
+  signal?: AbortSignal,
+): Promise<LogsResponse> {
+  const q = new URLSearchParams();
+  if (params.cursor) q.set("cursor", params.cursor);
+  if (params.limit) q.set("limit", String(params.limit));
+  if (params.source) q.set("source", params.source);
+  if (params.level) q.set("level", params.level);
+  if (params.direction) q.set("direction", params.direction);
+  const suffix = q.toString() ? `?${q.toString()}` : "";
+  return request<LogsResponse>(`/deployments/${deploymentId}/logs${suffix}`, { signal });
+}
+
+export type ProjectMetrics = {
+  project_id: string;
+  deployments: {
+    total: number;
+    successful: number;
+    failed: number;
+    cancelled: number;
+    success_rate: number | null;
+    avg_duration_seconds: number | null;
+    build_count: number;
+    build_failures: number;
+    avg_build_duration_seconds: number | null;
+  };
+  queue: { queued: number; running: number; failed: number; succeeded: number; total_retries: number };
+  runtime: { active_releases: number; healthy_runtimes: number; unhealthy_runtimes: number };
+  worker: { enabled: boolean; poll_interval_ms: number; lease_ms: number; last_activity_at: string | null };
+};
+
+export function fetchProjectMetrics(projectId: string, signal?: AbortSignal): Promise<ProjectMetrics> {
+  return request<ProjectMetrics>(`/projects/${projectId}/metrics`, { signal });
+}

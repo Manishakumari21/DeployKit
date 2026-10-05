@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { DeploymentDetails, DeploymentList } from "./components/deployments";
 import { DomainsView, LogsView, SettingsView } from "./components/OpsViews";
+import { MetricsPanel } from "./components/MetricsPanel";
 import { ProjectModal } from "./components/ProjectModal";
 import { ServiceHeader } from "./components/ServiceHeader";
 import { ServicesGrid } from "./components/ServicesGrid";
@@ -137,6 +138,7 @@ export default function App() {
             <>
               <ServiceHeader project={featured} live={live} creating={deploying} onDeploy={handleDeploy} />
               {createError && <p className="text-[13px] text-red-300">{createError}</p>}
+              <MetricsPanel projectId={selectedProjectId} />
               <div className="grid items-start gap-3 xl:grid-cols-2">
                 <DeploymentList
                   deployments={deployments.slice(0, 8)}
@@ -191,7 +193,13 @@ export default function App() {
             </div>
           )}
           {nav === "domains" && <DomainsView />}
-          {nav === "logs" && <LogsView />}
+          {nav === "logs" && (
+            <LogsView
+              deployments={deployments}
+              selectedId={selectedId}
+              onSelect={(id) => setSelectedDeploymentId(id)}
+            />
+          )}
           {nav === "settings" && <SettingsView />}
         </main>
       </div>

@@ -386,3 +386,61 @@ points at worker-controlled `/tmp/deploykit-buildx` (persisted in the
 * Cleanup is scoped to DeployKit-owned names/labels only
   (`dk-p<8hex>-d<8hex>`, `io.deploykit.managed=true`); never global
   prune. Failed deployments never disturb the active release.
+
+## Phase 09 — Observability (logs + metrics)
+
+Deployment **events** (`deployment_events`: `deployment.queued`,
+`deployment.build_started`, `deployment.image_pushed`,
+`deployment.verified`, …) remain the structured state history.
+Operational **logs** (`deployment_logs`) are the git/build/runtime
+output. The concepts are separate and queried separately.
+
+Flow: pipeline phase hooks (`git` via `sourceCheckout.onLog`,
+`build` via `BuildRequest.onLog` streaming `--progress plain` lines,
+`registry`/`runtime`/`healthcheck`/`gateway` via pipeline log points)
+-> `services/deploymentLogService.ts` (redact + normalize + bound) ->
+Postgres `deployment_logs` (`010_deployment_logs.sql`) ->
+`GET /api/deployments/:id/logs` (cursor pagination) ->
+dashboard `LogsView` (3s cursor polling).
+
+Persisted vs live: only a **bounded window** is persisted per
+deployment (default 2000 lines / 1 MiB, 8 KiB per line; marker row
+`{truncated: true, reason: "deployment_limit"}` records truncation).
+On health/runtime failure a bounded container tail (`docker logs
+--tail 100`, DeployKit-owned `dk-p<8hex>-d<8hex>` containers only) is
+persisted for diagnostics. Unbounded `docker logs` streams are never
+copied into Postgres; use `docker logs` on the runtime host for full tails.
+
+### Environment variables (new)
+
+| Var | Default | Purpose |
+| --- | ------- | ------- |
+| `DEPLOYKIT_LOG_RETENTION_DAYS` | `30` (1..365) | `deleteExpiredLogs()` horizon |
+| `DEPLOYKIT_LOG_MAX_LINES_PER_DEPLOYMENT` | `2000` (1..20000) | per-deployment line cap |
+| `DEPLOYKIT_LOG_MAX_BYTES_PER_DEPLOYMENT` | `1048576` (64KiB..10MiB) | per-deployment byte cap |
+| `DEPLOYKIT_LOG_MAX_MESSAGE_BYTES` | `8192` (1KiB..64KiB) | per-line cap |
+
+Zero/negative/absurd values throw at startup (`config/logConfig.ts`).
+
+### API
+
+* `GET /api/deployments/:id/logs?cursor=&limit=&source=&level=&direction=`
+  -> `{items, next_cursor, truncated}`. Cursor is the last seen
+  `deployment_logs.id`; `limit` clamped to 1..200 (default 100). No
+  OFFSET. No cross-project reads (deployment UUIDs are unguessable and
+  scoped via `deployment_logs.project_id`).
+* `GET /api/projects/:id/metrics` -> sampled deployment/queue/runtime/
+  worker metrics from indexed aggregates (polled, not real-time). No
+  platform-wide endpoint (no authenticated platform scope exists).
+
+Real-time: SSE (`/logs/stream`) was evaluated and deferred — no
+authenticated streaming infrastructure, no connection accounting, and
+deployments are short-lived. Cursor polling gives bounded reads without
+held connections; see `web/src/hooks/useDeploymentLogs.ts`.
+
+### Security
+
+Git tokens, `GIT_CONFIG_*` secret content, private URLs with secrets,
+and env dumps are never logged. `redactSecrets` + metadata key
+allowlist mirror the `deploymentEvents` policy; command lines that
+could contain secrets are not persisted (phase tags instead).

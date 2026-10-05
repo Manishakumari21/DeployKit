@@ -51,6 +51,27 @@ import {
   registryTagForDeployment,
   type RegistryConfig,
 } from "../infrastructure/registry/registryConfig.js";
+import {
+  appendOutput,
+  safeAppendLog,
+  type LogLevel,
+  type LogSource,
+} from "../services/deploymentLogService.js";
+
+// Best-effort operational log helper: logging failures must never break a
+// deployment (Phase 08 error semantics are preserved). All messages are
+// redacted/normalized inside the log service; callers must not pass tokens,
+// credentials, or env dumps.
+async function dlog(
+  projectId: string,
+  deploymentId: string,
+  source: LogSource,
+  level: LogLevel,
+  message: string,
+  metadata: Record<string, unknown> = {}
+): Promise<void> {
+  await safeAppendLog({ deploymentId, projectId, source, level, message, metadata });
+}
 
 export interface PipelineDependencies {
   buildExecutor?: BuildExecutor;
@@ -245,6 +266,13 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     if (row.trigger === "rollback") {
       return this.executeRollback(context, row);
     }
+    await dlog(
+      row.project_id as string,
+      context.deploymentId,
+      "worker",
+      "info",
+      `worker claimed deployment (attempt ${context.attempt}/${context.maxAttempts})`
+    );
     return this.executeBuild(context, row);
   }
 
@@ -288,6 +316,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       "deployment.rollback_started",
       "Rollback started from stored digest"
     );
+    await dlog(projectId, context.deploymentId, "system", "info", "rollback started from stored digest");
 
     await pool.query(
       `
@@ -388,10 +417,27 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     const registry = getOptionalRegistryConfig();
     try {
       await this.assertNotCancelled(context.deploymentId, context.signal);
+      await dlog(projectId, context.deploymentId, "git", "info", `cloning repository branch '${branch}'`);
       result = await this.checkout(
-        { repositoryUrl, branch, targetCommitSha: pinnedSha, authToken, signal: context.signal },
+        {
+          repositoryUrl,
+          branch,
+          targetCommitSha: pinnedSha,
+          authToken,
+          signal: context.signal,
+          onLog: (e) => {
+            void safeAppendLog({
+              deploymentId: context.deploymentId,
+              projectId,
+              source: "git",
+              level: e.level,
+              message: e.message,
+            });
+          },
+        },
         async ({ commitSha, workspace }) => {
           await this.assertNotCancelled(context.deploymentId, context.signal);
+          await dlog(projectId, context.deploymentId, "git", "info", `checkout complete at ${commitSha.slice(0, 12)}`);
           const policy = getBuildPolicy();
           const imageRepository = registry
             ? registryRepositoryForProject(registry, projectId)
@@ -408,6 +454,14 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
               "Build output will be pushed to the image registry"
             );
           }
+          await dlog(
+            projectId,
+            context.deploymentId,
+            "build",
+            "info",
+            `build started (${registry ? "push" : "load"} ${imageRepository}:${imageTag})`
+          );
+          const buildLines: string[] = [];
           let build;
           try {
             build = await this.buildExecutor.build({
@@ -418,16 +472,41 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
               policy,
               push: registry !== null,
               signal: context.signal,
+              onLog: (line) => {
+                if (buildLines.length < 500) buildLines.push(line);
+              },
             });
           } catch (error) {
+            // Persist bounded build output (and the typed error tail) before
+            // mapping to pipeline errors; logging is best-effort.
+            if (buildLines.length > 0) {
+              await appendOutput({
+                deploymentId: context.deploymentId,
+                projectId,
+                source: "build",
+                level: "info",
+                output: buildLines.join("\n"),
+              });
+            }
             if (error instanceof BuildExecutorError) {
               if (error.code === "BUILD_CANCELLED" || context.signal?.aborted) {
+                await dlog(projectId, context.deploymentId, "build", "warn", "build cancelled");
                 throw new PipelineError(
                   PIPELINE_ERROR_CODES.DEPLOYMENT_CANCELLED,
                   "Deployment was cancelled during build",
                   { retryable: false }
                 );
               }
+              if (error.details) {
+                await appendOutput({
+                  deploymentId: context.deploymentId,
+                  projectId,
+                  source: "build",
+                  level: "error",
+                  output: error.details.slice(0, 8000),
+                });
+              }
+              await dlog(projectId, context.deploymentId, "build", "error", `build failed: ${error.code}`);
               throw new PipelineError(
                 error.code === "BUILD_TIMEOUT"
                   ? PIPELINE_ERROR_CODES.BUILD_TIMEOUT
@@ -450,6 +529,22 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
           }
 
           await this.assertNotCancelled(context.deploymentId, context.signal);
+          if (buildLines.length > 0) {
+            await appendOutput({
+              deploymentId: context.deploymentId,
+              projectId,
+              source: "build",
+              level: "info",
+              output: buildLines.join("\n"),
+            });
+          }
+          await dlog(
+            projectId,
+            context.deploymentId,
+            "build",
+            "info",
+            `build complete: ${build.imageDigest.slice(0, 19)}`
+          );
 
           const cur = await getDeploymentRow(context.deploymentId);
           if (cur.status !== "verifying") {
@@ -514,12 +609,14 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     } catch (error) {
       if (error instanceof SourceCheckoutError) {
         if (error.code === "GIT_CANCELLED" || context.signal?.aborted) {
+          await dlog(projectId, context.deploymentId, "git", "warn", "checkout cancelled");
           throw new PipelineError(
             PIPELINE_ERROR_CODES.DEPLOYMENT_CANCELLED,
             "Deployment was cancelled during source checkout",
             { retryable: false }
           );
         }
+        await dlog(projectId, context.deploymentId, "git", "error", `checkout failed: ${error.message.slice(0, 500)}`);
         throw new PipelineError(
           PIPELINE_ERROR_CODES.CLONE_FAILED,
           error.message,
@@ -690,11 +787,13 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       storedStatus !== "healthy" && storedStatus !== "active";
 
     if (shouldPullImage(input.imageRepository)) {
+      await dlog(input.projectId, input.deploymentId, "registry", "info", `pulling ${input.imageRepository}@${input.imageDigest.slice(0, 19)}`);
       try {
         await this.runtimeManager.pull(
           digestReference(input.imageRepository, input.imageDigest),
           context.signal
         );
+        await dlog(input.projectId, input.deploymentId, "registry", "info", "image pull complete");
       } catch (error) {
         if (
           (error instanceof RuntimeManagerError && error.code === "RUNTIME_CANCELLED") ||
@@ -725,6 +824,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     await this.assertNotCancelled(input.deploymentId, context.signal);
 
     const containerPort = await discoverExposedPort(imageRef);
+    await dlog(input.projectId, input.deploymentId, "runtime", "info", `starting container ${containerName} on port ${containerPort}`);
 
     await this.runtimeManager.remove(containerName).catch(() => undefined);
 
@@ -782,6 +882,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
           this.healthTimeoutMs,
           context.signal
         );
+        await dlog(input.projectId, input.deploymentId, "healthcheck", "info", `health check passed on port ${runtime.containerPort}`);
       } catch (error) {
         if (
           (error instanceof RuntimeManagerError && error.code === "RUNTIME_CANCELLED") ||
@@ -801,6 +902,8 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
           { retryable: false }
         );
       }
+      // On health failure the bounded container tail is persisted for
+      // diagnostics (see catch below); success path needs no log copy.
 
       await pool.query(
         `
@@ -854,6 +957,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       try {
         await this.trafficRouter.sync(route);
         await this.trafficRouter.verifyRoute(route, this.routeTimeoutMs);
+        await dlog(input.projectId, input.deploymentId, "gateway", "info", "traffic switched to new release");
       } catch (error) {
         await this.trafficRouter.sync(route).catch(() => undefined);
         throw new PipelineError(
@@ -878,6 +982,28 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         imageDigest: input.imageDigest,
       };
     } catch (error) {
+      // Bounded runtime diagnostics: persist a tail of the failed container's
+      // logs (DeployKit-owned container only) plus the typed error. Live
+      // `docker logs` streaming is intentionally NOT copied unbounded into
+      // Postgres; only this bounded window is persisted.
+      if (runtime) {
+        try {
+          const tail = await this.runtimeManager.containerLogs?.(runtime.containerName, 100);
+          if (tail && tail.trim()) {
+            await appendOutput({
+              deploymentId: input.deploymentId,
+              projectId: input.projectId,
+              source: "runtime",
+              level: "error",
+              output: tail,
+            });
+          }
+        } catch {
+          // Diagnostics are best-effort.
+        }
+        const msg = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
+        await dlog(input.projectId, input.deploymentId, "runtime", "error", `runtime failed: ${msg}`);
+      }
       const releaseRow = await pool
         .query(`SELECT status FROM releases WHERE id = $1`, [input.releaseId])
         .catch(() => null);

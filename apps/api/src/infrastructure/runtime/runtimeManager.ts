@@ -46,6 +46,9 @@ export interface RuntimeManager {
 
   /** Pull repository@sha256:... so create never relies on local cache. */
   pull(reference: string, signal?: AbortSignal): Promise<void>;
+
+  /** Bounded tail of a DeployKit-owned container's logs (best-effort). */
+  containerLogs?(containerName: string, tailLines?: number): Promise<string>;
 }
 
 export class UnconfiguredRuntimeManager
@@ -94,5 +97,9 @@ export class UnconfiguredRuntimeManager
     throw new Error(
       "RUNTIME_MANAGER_NOT_CONFIGURED"
     );
+  }
+
+  async containerLogs(_containerName: string, _tailLines?: number): Promise<string> {
+    return "";
   }
 }

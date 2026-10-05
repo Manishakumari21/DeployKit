@@ -16,12 +16,18 @@ export interface ExecResult {
   aborted: boolean;
 }
 
+export interface StreamChunk {
+  stream: "stdout" | "stderr";
+  chunk: string;
+}
+
 export function runCommand(
   binary: string,
   args: string[],
   timeoutMs: number,
   env?: NodeJS.ProcessEnv,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onData?: (chunk: StreamChunk) => void
 ): Promise<ExecResult> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -53,9 +59,19 @@ export function runCommand(
     signal?.addEventListener("abort", onAbort, { once: true });
     child.stdout.on("data", (c: Buffer) => {
       stdout = appendTail(stdout, c);
+      try {
+        onData?.({ stream: "stdout", chunk: c.toString() });
+      } catch {
+        // Never let a log hook break process execution.
+      }
     });
     child.stderr.on("data", (c: Buffer) => {
       stderr = appendTail(stderr, c);
+      try {
+        onData?.({ stream: "stderr", chunk: c.toString() });
+      } catch {
+        // Never let a log hook break process execution.
+      }
     });
     child.on("error", (e) => {
       if (settled) return;

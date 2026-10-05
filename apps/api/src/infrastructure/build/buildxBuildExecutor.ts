@@ -204,14 +204,48 @@ async function assertBuildContext(
   );
 }
 
-async function runBuild(binary: string, args: string[], timeoutMs: number, signal?: AbortSignal) {
+async function runBuild(
+  binary: string,
+  args: string[],
+  timeoutMs: number,
+  signal?: AbortSignal,
+  onLog?: (line: string) => void
+) {
+  // Incremental chunk processing: forward normalized lines to the caller
+  // without buffering the entire build in memory beyond the 64KB tail kept
+  // by runCommand for error details.
+  let buffer = "";
+  const flush = (final = false) => {
+    const parts = buffer.split("\n");
+    buffer = final ? "" : (parts.pop() ?? "");
+    for (const part of parts) {
+      const line = part.trimEnd();
+      if (!line.trim()) continue;
+      try {
+        onLog?.(line.slice(0, 4000));
+      } catch {
+        // Never let a log hook break the build.
+      }
+    }
+    // Bound the pending partial line.
+    if (buffer.length > 16384) buffer = buffer.slice(-16384);
+  };
   try {
     return await runCommand(binary, args, timeoutMs, {
       ...process.env,
       DOCKER_BUILDKIT: "1",
       BUILDKIT_PROGRESS: "plain",
       BUILDX_METADATA_WARNINGS: "1",
-    }, signal);
+    }, signal, onLog ? ({ chunk }) => {
+      buffer += chunk;
+      if (buffer.length > 8192 || buffer.includes("\n")) flush();
+    } : undefined).finally(() => {
+      if (onLog && buffer.trim()) {
+        try {
+          onLog(buffer.trim().slice(0, 4000));
+        } catch { /* ignore */ }
+      }
+    });
   } catch (e) {
     if (signal?.aborted) {
       throw new BuildExecutorError("BUILD_CANCELLED", "Docker build was cancelled");
@@ -354,7 +388,7 @@ export class BuildxBuildExecutor
 
       args.push(request.workspace);
 
-      const result = await runBuild(this.dockerBinary, args, request.policy.timeoutMs, request.signal);
+      const result = await runBuild(this.dockerBinary, args, request.policy.timeoutMs, request.signal, request.onLog);
 
       if (result.aborted || request.signal?.aborted) {
         throw new BuildExecutorError("BUILD_CANCELLED", "Docker build was cancelled", result.stderr);

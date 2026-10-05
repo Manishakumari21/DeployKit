@@ -25,6 +25,8 @@ export interface SourceCheckoutOptions {
   targetCommitSha?: string | null;
   authToken?: string | null;
   signal?: AbortSignal;
+  /** Optional phase-tagged log hook. Never receives tokens, URLs with secrets, or env. */
+  onLog?: (event: { phase: "git"; message: string; level: "info" | "warn" | "error" }) => void;
 }
 
 export interface SourceCheckoutResult {
@@ -262,6 +264,7 @@ export async function withCheckedOutRepository<T>(
   if (authToken !== null) validateAuthToken(authToken);
 
   try {
+    options.onLog?.({ phase: "git", level: "info", message: `cloning branch '${branch}' (depth 1, no submodules)` });
     await runGit([
       ...gitBase,
       "clone",
@@ -275,10 +278,13 @@ export async function withCheckedOutRepository<T>(
       repositoryUrl.toString(),
       workspace,
     ], undefined, authToken, options.signal);
+    options.onLog?.({ phase: "git", level: "info", message: "clone complete" });
 
     if (targetSha) {
+      options.onLog?.({ phase: "git", level: "info", message: `fetching pinned commit ${targetSha.slice(0, 12)}` });
       await runGit([...gitBase, "fetch", "--depth", "1", "origin", targetSha], workspace, authToken, options.signal);
       await runGit([...gitBase, "checkout", "--detach", targetSha], workspace, authToken, options.signal);
+      options.onLog?.({ phase: "git", level: "info", message: "pinned commit checked out" });
     }
 
     const { stdout } = await runGit(

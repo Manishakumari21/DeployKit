@@ -1,3 +1,7 @@
+import { useState } from "react";
+import { timeAgo } from "../lib/format";
+import { useDeploymentLogs } from "../hooks/useDeploymentLogs";
+import type { ApiDeployment } from "../types";
 import { Panel, PanelHead } from "./ui";
 
 export function DomainsView() {
@@ -11,15 +15,102 @@ export function DomainsView() {
   );
 }
 
-export function LogsView() {
+const LEVEL_STYLE: Record<string, string> = {
+  debug: "text-zinc-500",
+  info: "text-zinc-300",
+  warn: "text-amber-300",
+  error: "text-red-300",
+};
+
+const SOURCES = ["", "system", "git", "build", "registry", "runtime", "healthcheck", "worker", "gateway"];
+const LEVELS = ["", "debug", "info", "warn", "error"];
+
+export function LogsView({
+  deployments,
+  selectedId,
+  onSelect,
+}: {
+  deployments: ApiDeployment[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  const [source, setSource] = useState("");
+  const [level, setLevel] = useState("");
+  const { logs, truncated, loading, error } = useDeploymentLogs(selectedId, {
+    ...(source ? { source } : {}),
+    ...(level ? { level } : {}),
+  });
+
   return (
-    <Panel className="overflow-hidden">
-      <PanelHead title="Logs" />
-      <p className="p-6 text-center text-[13px] text-zinc-500">
-        Container logs are not available in this version. Use <span className="font-mono">docker logs</span> on the
-        runtime host to inspect the active container.
-      </p>
-    </Panel>
+    <div className="flex flex-col gap-3">
+      <Panel>
+        <PanelHead
+          title="Logs"
+          right={
+            <span className="font-mono text-[11px] text-zinc-600">
+              {logs.length} lines{truncated ? " · truncated" : ""}
+            </span>
+          }
+        />
+        <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800 px-4 py-2.5 text-[12px]">
+          <select
+            aria-label="Deployment"
+            value={selectedId ?? ""}
+            onChange={(e) => onSelect(e.target.value)}
+            className="max-w-64 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 font-mono text-zinc-200 outline-none"
+          >
+            {deployments.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.id.slice(0, 8)} · {d.status} · {d.branch}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Source filter"
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+            className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-zinc-200 outline-none"
+          >
+            {SOURCES.map((s) => (
+              <option key={s} value={s}>{s || "all sources"}</option>
+            ))}
+          </select>
+          <select
+            aria-label="Level filter"
+            value={level}
+            onChange={(e) => setLevel(e.target.value)}
+            className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-zinc-200 outline-none"
+          >
+            {LEVELS.map((l) => (
+              <option key={l} value={l}>{l || "all levels"}</option>
+            ))}
+          </select>
+        </div>
+        {truncated && (
+          <p className="border-b border-amber-900/50 bg-amber-950/30 px-4 py-2 text-[12px] text-amber-200">
+            Logs truncated: retention or per-deployment limits were hit. See API for the truncation marker.
+          </p>
+        )}
+        {loading && <p className="p-6 text-center text-[13px] text-zinc-500">Loading logs…</p>}
+        {!loading && error && <p className="p-6 text-center text-[13px] text-red-300">{error}</p>}
+        {!loading && !error && logs.length === 0 && (
+          <p className="p-6 text-center text-[13px] text-zinc-500">
+            No operational logs yet for this deployment. Logs appear as git, build, runtime, and healthcheck output is captured.
+          </p>
+        )}
+        {!loading && !error && logs.length > 0 && (
+          <ul className="max-h-[480px] divide-y divide-zinc-800/70 overflow-y-auto font-mono text-[12px]">
+            {logs.map((l) => (
+              <li key={l.id} className="px-4 py-1.5">
+                <span className="text-zinc-600">{timeAgo(l.created_at)} </span>
+                <span className="text-sky-300">[{l.source}] </span>
+                <span className={LEVEL_STYLE[l.level] ?? "text-zinc-300"}>{l.message}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+    </div>
   );
 }
 

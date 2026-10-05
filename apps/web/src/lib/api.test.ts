@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { cancelDeployment, createDeployment, fetchDeployment, fetchDeploymentEvents, fetchDeployments } from "./api";
+import { cancelDeployment, createDeployment, fetchDeployment, fetchDeploymentEvents, fetchDeploymentLogs, fetchDeployments, fetchProjectMetrics } from "./api";
 import { isCancellableStatus, isTerminalStatus } from "../types";
 
 function mockFetchOnce(body: unknown, ok = true, status = 200) {
@@ -56,6 +56,21 @@ describe("deployment api client (HTTP boundary only)", () => {
       throw new TypeError("fetch failed");
     }) as typeof fetch;
     await expect(fetchDeployment("d6")).rejects.toThrow("Could not reach the API");
+  });
+
+  test("fetchDeploymentLogs uses cursor pagination query", async () => {
+    mockFetchOnce({ items: [], next_cursor: null, truncated: false });
+    await fetchDeploymentLogs("d7", { cursor: "42", limit: 50, source: "build", direction: "asc" });
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/api/deployments/d7/logs?");
+    expect(url).toContain("cursor=42");
+    expect(url).toContain("source=build");
+  });
+
+  test("fetchProjectMetrics hits the project-scoped route", async () => {
+    mockFetchOnce({ project_id: "p1" });
+    await fetchProjectMetrics("p1");
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/projects/p1/metrics", { signal: undefined });
   });
 });
 

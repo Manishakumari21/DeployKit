@@ -279,6 +279,34 @@ export class DockerRuntimeManager
     );
   }
 
+  /**
+   * Bounded tail of a DeployKit-owned container's logs.
+   * Only names matching the DeployKit runtime convention (dk-p<8hex>-d<8hex>)
+   * are queried; arbitrary user-provided container names are rejected.
+   * Returns at most `tailLines` lines / 32 KiB, never throws for missing
+   * containers (returns empty string) so diagnostics stay best-effort.
+   */
+  async containerLogs(containerName: string, tailLines = 100): Promise<string> {
+    const name = validateContainerName(containerName);
+    if (!/^dk-p[0-9a-f]{8}-d[0-9a-f]{8}$/.test(name)) {
+      throw new RuntimeManagerError("NOT_MANAGED_CONTAINER", "Refusing to read logs of a non-DeployKit container");
+    }
+    const tail = Number.isSafeInteger(tailLines) ? Math.min(Math.max(tailLines, 1), 200) : 100;
+    try {
+      const out = await runDocker(this.dockerBinary, [
+        "container",
+        "logs",
+        "--tail",
+        String(tail),
+        "--timestamps",
+        name,
+      ], 15_000);
+      return out.slice(0, 32 * 1024);
+    } catch {
+      return "";
+    }
+  }
+
   async pull(
     reference: string,
     signal?: AbortSignal

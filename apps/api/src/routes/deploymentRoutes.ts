@@ -10,6 +10,9 @@ import {
   rollbackDeploymentController,
 } from "../controllers/deploymentController.js";
 
+import { getDeploymentLogsController } from "../controllers/logController.js";
+import { getProjectMetricsController } from "../controllers/metricsController.js";
+
 const router = Router();
 
 router.post(
@@ -40,6 +43,16 @@ router.get(
 router.get(
   "/deployments/:id/events",
   getDeploymentEventsController
+);
+
+router.get(
+  "/deployments/:id/logs",
+  getDeploymentLogsController
+);
+
+router.get(
+  "/projects/:id/metrics",
+  getProjectMetricsController
 );
 
 router.post(

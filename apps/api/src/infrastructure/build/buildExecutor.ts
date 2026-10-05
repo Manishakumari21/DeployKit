@@ -16,6 +16,8 @@ export interface BuildRequest {
   push?: boolean;
   /** AbortSignal for cancellation; aborts the underlying build process. */
   signal?: AbortSignal;
+  /** Optional incremental build-output hook (plain-progress lines). Must never throw. */
+  onLog?: (line: string) => void;
 }
 
 export interface BuildResult {

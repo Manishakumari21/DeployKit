@@ -444,3 +444,91 @@ Git tokens, `GIT_CONFIG_*` secret content, private URLs with secrets,
 and env dumps are never logged. `redactSecrets` + metadata key
 allowlist mirror the `deploymentEvents` policy; command lines that
 could contain secrets are not persisted (phase tags instead).
+
+## Phase 10 — Identity, sessions & security boundary
+
+Browser
+  ↓
+Authentication (login/register → opaque session)
+  ↓
+HttpOnly cookie (`deploykit_session`, SameSite=Lax)
+  ↓
+CORS allowlist + Origin check on unsafe methods
+  ↓
+Rate-limited auth endpoints
+  ↓
+authorizationService (project membership, role `owner`)
+  ↓
+Projects / Deployments / Releases / Logs / Metrics / GitHub
+
+### Migrations
+
+* `011_users.sql` — `users(id, email, password_hash, created_at, updated_at)`;
+  email stored normalized, unique on `lower(email)`; bcrypt `$2b$` cost 12
+  (12–72 char passwords); `PublicUser` never exposes the hash.
+* `012_project_members.sql` — `project_members(project_id, user_id, role,
+  created_at)`, PK `(project_id, user_id)`, both FKs `ON DELETE CASCADE`,
+  `role CHECK IN ('owner')`. Legacy projects have zero rows = explicitly
+  unowned = denied (fail closed, never public, never guessed).
+* `013_sessions.sql` — `sessions(id, token_hash, user_id, expires_at,
+  created_at, revoked_at)`; only the SHA-256 digest of the 256-bit token is
+  stored. User deletion cascades sessions.
+* `014_auth_rate_limits.sql` — `auth_rate_limits(key, window_start, count)`;
+  one row per bucket/window with lazy expiry.
+
+### Endpoints
+
+* `POST /api/auth/register` — gated: open only when
+  `DEPLOYKIT_ALLOW_PUBLIC_REGISTRATION=true` or no account exists yet
+  (first-user bootstrap, closes automatically). 201 `PublicUser`, no
+  session; 409 duplicate, 403 when closed, 429 when throttled.
+* `POST /api/auth/login` — `{email, password}` → 200 `PublicUser` +
+  `Set-Cookie`; 401 generic (`Invalid email or password`, identical for
+  unknown emails, with dummy bcrypt compare); 400 malformed; 429 throttled.
+* `POST /api/auth/logout` — revokes the session, clears the cookie, always
+  200 `{loggedOut: true}` even without a session.
+* `GET /api/auth/session` — 200 `{user}` on a valid cookie, else 401.
+  Frontend startup gate (see `web/src/hooks/useAuth.ts`).
+
+All project/deployment/release/log/metrics/GitHub routes require a valid
+session (401 otherwise) plus membership via `authorizationService`
+(403 `Access denied` for strangers and unowned projects; unknown
+deployment/release ids stay 404). `GET /api/health` stays public;
+`POST /api/webhooks/github` stays sessionless GitHub-HMAC machine auth.
+
+### Cookie/security model
+
+* `HttpOnly`, `SameSite=Lax`, `Path=/`, `Max-Age` = session lifetime
+  (default 7 days via `DEPLOYKIT_SESSION_DAYS`); `Secure` in production
+  (`NODE_ENV=production`) unless `DEPLOYKIT_COOKIE_SECURE` overrides.
+* CORS (`config/corsConfig.ts`): explicit `DEPLOYKIT_WEB_ORIGIN` list
+  (required in production, dev defaults to the vite ports); credentials
+  reflected only for allowlisted origins, never wildcard; non-browser
+  clients (no `Origin`) pass through without ACAO headers.
+* CSRF (`middleware/origin.ts`): unsafe methods require a trusted
+  `Origin`/`Referer` against the same allowlist; absent headers = non-
+  browser client, allowed. Applies to auth + project/deployment routers,
+  never to webhooks or safe methods. SameSite=Lax remains the first layer.
+* Rate limiting (`services/rateLimitService.ts`): PG fixed-window buckets
+  per IP (all attempts) and per account (consecutive failures; success
+  clears). 429 + `Retry-After`, generic message, checked before user
+  lookup. No unbounded in-memory state; safe across instances.
+* Never logged/returned: passwords, hashes, session tokens, cookies,
+  CSRF internals, GitHub credentials (extends the Phase 09 policy).
+
+### Local development accounts
+
+Fresh database: open the dashboard, create the first account via the
+register tab (bootstrap window), then sign in. To allow further open
+registration set `DEPLOYKIT_ALLOW_PUBLIC_REGISTRATION=true`; otherwise
+create accounts via `POST /api/auth/register` with the flag temporarily
+enabled, or directly through `userService.createUser`. New projects are
+owned atomically by their creator; legacy pre-auth projects stay
+inaccessible until an explicit `addProjectOwner(projectId, userId)` call.
+
+### Known limitations (not implemented)
+
+No SSO/OAuth, no MFA, no organizations/teams, no roles beyond `owner`,
+no login notifications or session listing/revocation UI, single-node
+rate-limit cleanup is lazy (no background sweeper), and the web origin
+must be configured explicitly in production.

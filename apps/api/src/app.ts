@@ -1,13 +1,17 @@
 import express from "express";
 import cors from "cors";
 import pool from "./db/database.js";
+import { buildCorsOptions } from "./config/corsConfig.js";
 import projectRoutes from "./routes/projectRoutes.js";
 import deploymentRoutes from "./routes/deploymentRoutes.js";
 import webhookRoutes from "./routes/webhookRoutes.js";
+import authRoutes from "./routes/authRoutes.js";
 
 const app = express();
 
-app.use(cors());
+// Explicit origins + credentials. Throws at startup on unsafe combinations
+// (wildcard with credentials, missing origin in production).
+app.use(cors(buildCorsOptions()));
 
 app.use(
   "/api/webhooks",
@@ -37,5 +41,6 @@ app.get("/api/health", async (_req, res) => {
 
 app.use("/api/projects", projectRoutes);
 app.use("/api", deploymentRoutes);
+app.use("/api/auth", authRoutes);
 
 export default app;

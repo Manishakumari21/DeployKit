@@ -28,11 +28,15 @@ export function CommandBar({
   setNav,
   counts,
   healthy,
+  userEmail,
+  onLogout,
 }: {
   nav: NavKey;
   setNav: (n: NavKey) => void;
   counts: Record<string, number>;
   healthy: boolean | null;
+  userEmail: string;
+  onLogout: () => void;
 }) {
   return (
     <div className="border-b border-edge bg-ink-950/90 backdrop-blur">
@@ -97,9 +101,19 @@ export function CommandBar({
           <span className="rounded-md border border-edge bg-ink-800 px-2 py-1 font-mono text-[10px] tracking-wider text-fog-500 uppercase">
             self-hosted
           </span>
-          <span className="grid size-7 place-items-center rounded-lg bg-ink-700 text-[11px] font-bold text-fog-200 ring-1 ring-edge">
-            M
+          <span
+            title={userEmail}
+            className="grid size-7 place-items-center rounded-lg bg-ink-700 text-[11px] font-bold text-fog-200 ring-1 ring-edge"
+          >
+            {userEmail.slice(0, 1).toUpperCase()}
           </span>
+          <button
+            onClick={onLogout}
+            title={`Sign out ${userEmail}`}
+            className="cursor-pointer rounded-lg border border-edge bg-ink-800 px-2.5 py-1.5 text-[12px] font-medium text-fog-400 transition hover:border-fog-500 hover:text-white"
+          >
+            Sign out
+          </button>
         </div>
       </div>
     </div>

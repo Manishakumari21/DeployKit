@@ -1,8 +1,17 @@
-import type { ApiDeployment, DeploymentEvent, Project } from "../types";
+import type { ApiDeployment, AuthUser, DeploymentEvent, Project } from "../types";
 
 export const API_URL =
   (import.meta.env.VITE_API_URL as string | undefined) ??
   "/api";
+
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
 
 async function json(res: Response) {
   return res.json().catch(() => ({}));
@@ -11,19 +20,47 @@ async function json(res: Response) {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(`${API_URL}${path}`, init);
+    // Cookies carry the session; always send them (same-origin by default,
+    // cross-origin when VITE_API_URL points at the API directly).
+    res = await fetch(`${API_URL}${path}`, { credentials: "include", ...init });
   } catch (e) {
     if (e instanceof DOMException && e.name === "AbortError") throw e;
     throw new Error("Could not reach the API", { cause: e });
   }
   const data = await json(res);
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok) throw new ApiError(data.error || `Request failed (${res.status})`, res.status);
   return data as T;
 }
 
+export async function fetchSession(): Promise<AuthUser> {
+  const data = await request<{ user: AuthUser }>("/auth/session");
+  return data.user;
+}
+
+export async function login(input: { email: string; password: string }): Promise<AuthUser> {
+  return request<AuthUser>("/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function register(input: { email: string; password: string }): Promise<AuthUser> {
+  return request<AuthUser>("/auth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function logout(): Promise<void> {
+  await request<{ loggedOut: boolean }>("/auth/logout", { method: "POST" });
+}
+
 export async function fetchProjects(): Promise<Project[]> {
-  const res = await fetch(`${API_URL}/projects`);
+  const res = await fetch(`${API_URL}/projects`, { credentials: "include" });
   const data = await json(res);
+  if (!res.ok) throw new ApiError(data.error || `Request failed (${res.status})`, res.status);
   return Array.isArray(data) ? data : [];
 }
 
@@ -43,16 +80,22 @@ export async function createProject(input: {
 }): Promise<Project> {
   const res = await fetch(`${API_URL}/projects`, {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
   const data = await json(res);
-  if (!res.ok) throw new Error(data.error || "Failed to create project");
+  if (!res.ok) throw new ApiError(data.error || "Failed to create project", res.status);
   return data as Project;
 }
 
 export async function deleteProject(id: string) {
-  await fetch(`${API_URL}/projects/${id}`, { method: "DELETE" });
+  const res = await fetch(`${API_URL}/projects/${id}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  const data = await json(res);
+  if (!res.ok) throw new ApiError(data.error || `Request failed (${res.status})`, res.status);
 }
 
 export function fetchDeployments(projectId: string): Promise<ApiDeployment[]> {

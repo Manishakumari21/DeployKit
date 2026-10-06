@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { cancelDeployment, createDeployment, fetchDeployment, fetchDeploymentEvents, fetchDeploymentLogs, fetchDeployments, fetchProjectMetrics } from "./api";
+import { ApiError, cancelDeployment, createDeployment, fetchDeployment, fetchDeploymentEvents, fetchDeploymentLogs, fetchDeployments, fetchProjectMetrics, fetchSession, login, logout, register } from "./api";
 import { isCancellableStatus, isTerminalStatus } from "../types";
 
 function mockFetchOnce(body: unknown, ok = true, status = 200) {
@@ -17,7 +17,7 @@ describe("deployment api client (HTTP boundary only)", () => {
     const rows = [{ id: "d1", status: "queued" }];
     mockFetchOnce(rows);
     const out = await fetchDeployments("p1");
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/projects/p1/deployments", undefined);
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/projects/p1/deployments", { credentials: "include" });
     expect(out).toEqual(rows);
   });
 
@@ -34,16 +34,16 @@ describe("deployment api client (HTTP boundary only)", () => {
   test("fetchDeployment + events use real routes", async () => {
     mockFetchOnce({ id: "d3", status: "active" });
     await fetchDeployment("d3");
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/deployments/d3", { signal: undefined });
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/deployments/d3", { credentials: "include", signal: undefined });
     mockFetchOnce([]);
     await fetchDeploymentEvents("d3");
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/deployments/d3/events", undefined);
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/deployments/d3/events", { credentials: "include" });
   });
 
   test("cancelDeployment posts to the real route", async () => {
     mockFetchOnce({ id: "d4", status: "cancelled" });
     await cancelDeployment("d4");
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/deployments/d4/cancel", { method: "POST" });
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/deployments/d4/cancel", { method: "POST", credentials: "include" });
   });
 
   test("non-2xx surfaces backend error, never silent success", async () => {
@@ -70,7 +70,7 @@ describe("deployment api client (HTTP boundary only)", () => {
   test("fetchProjectMetrics hits the project-scoped route", async () => {
     mockFetchOnce({ project_id: "p1" });
     await fetchProjectMetrics("p1");
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/projects/p1/metrics", { signal: undefined });
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/projects/p1/metrics", { credentials: "include", signal: undefined });
   });
 });
 
@@ -85,5 +85,42 @@ describe("status grouping matches backend state machine", () => {
     expect(isCancellableStatus("building")).toBe(true);
     expect(isCancellableStatus("active")).toBe(false);
     expect(isCancellableStatus("failed")).toBe(false);
+  });
+});
+
+describe("auth api client (session cookie only, never token state)", () => {
+  test("fetchSession probes the session endpoint with credentials", async () => {
+    const user = { id: "u1", email: "a@example.com" };
+    mockFetchOnce({ user });
+    const out = await fetchSession();
+    expect(out).toEqual(user);
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/auth/session", { credentials: "include" });
+  });
+
+  test("login posts credentials and returns the user", async () => {
+    mockFetchOnce({ id: "u1", email: "a@example.com" });
+    await login({ email: "a@example.com", password: "correct-horse-123" });
+    const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe("/api/auth/login");
+    expect(init.method).toBe("POST");
+    expect(init.credentials).toBe("include");
+    expect(JSON.parse(init.body)).toEqual({ email: "a@example.com", password: "correct-horse-123" });
+  });
+
+  test("register posts to the register route and logout posts with credentials", async () => {
+    mockFetchOnce({ id: "u2", email: "b@example.com" });
+    await register({ email: "b@example.com", password: "correct-horse-123" });
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe("/api/auth/register");
+    mockFetchOnce({ loggedOut: true });
+    await logout();
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/auth/logout", { method: "POST", credentials: "include" });
+  });
+
+  test("401 surfaces as ApiError with status for auth gating", async () => {
+    mockFetchOnce({ error: "Authentication required" }, false, 401);
+    const err = await fetchSession().catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(401);
   });
 });

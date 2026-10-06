@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { DeploymentDetails, DeploymentList } from "./components/deployments";
 import { CommandBar } from "./components/CommandBar";
 import { DomainsView, LogsView, SettingsView } from "./components/OpsViews";
+import { LoginView } from "./components/LoginView";
 import { MetricsPanel } from "./components/MetricsPanel";
 import { ProjectModal } from "./components/ProjectModal";
 import { ServiceHeader } from "./components/ServiceHeader";
@@ -9,13 +10,57 @@ import { ServicesGrid } from "./components/ServicesGrid";
 import { Toast } from "./components/Toast";
 import { Topbar } from "./components/Topbar";
 import { Eyebrow } from "./components/ui";
+import { useAuth } from "./hooks/useAuth";
 import { useDeployments } from "./hooks/useDeployments";
 import { useProjects, useToast } from "./hooks/useProjects";
-import type { ApiDeployment, NavKey } from "./types";
+import type { ApiDeployment, AuthUser, NavKey } from "./types";
 
 const SELECTED_KEY = "deploykit:selected-project";
 
+function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="dk-noise min-h-screen bg-ink-950 font-sans text-fog-100">
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[80] focus:rounded-lg focus:bg-signal-400 focus:px-3 focus:py-2 focus:text-sm focus:font-semibold focus:text-ink-950"
+      >
+        Skip to content
+      </a>
+      <div aria-hidden className="dk-grid-bg pointer-events-none fixed inset-0" />
+      {children}
+    </div>
+  );
+}
+
 export default function App() {
+  const auth = useAuth();
+
+  if (auth.status === "loading") {
+    return (
+      <Shell>
+        <main className="mx-auto flex min-h-[70vh] w-full max-w-6xl items-center justify-center px-4">
+          <p className="animate-pulse font-mono text-[13px] text-fog-500" role="status">
+            linking…
+          </p>
+        </main>
+      </Shell>
+    );
+  }
+
+  // Unauthenticated users never reach dashboard hooks or data: the session
+  // probe is the single gate, so stray 401s cannot cause redirect loops.
+  if (auth.status === "unauthenticated" || !auth.user) {
+    return (
+      <Shell>
+        <LoginView busy={auth.busy} error={auth.error} onLogin={auth.login} onRegister={auth.register} />
+      </Shell>
+    );
+  }
+
+  return <Dashboard user={auth.user} onLogout={() => void auth.logout()} />;
+}
+
+function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
   const [nav, setNav] = useState<NavKey>("overview");
   const [query, setQuery] = useState("");
   const [modal, setModal] = useState(false);
@@ -112,20 +157,15 @@ export default function App() {
   };
 
   return (
-    <div className="dk-noise min-h-screen bg-ink-950 font-sans text-fog-100">
-      <a
-        href="#main"
-        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[80] focus:rounded-lg focus:bg-signal-400 focus:px-3 focus:py-2 focus:text-sm focus:font-semibold focus:text-ink-950"
-      >
-        Skip to content
-      </a>
-      <div aria-hidden className="dk-grid-bg pointer-events-none fixed inset-0" />
+    <div className="min-h-screen">
       <div className="sticky top-0 z-40">
         <CommandBar
           nav={nav}
           setNav={setNav}
           counts={{ services: projects.length, deployments: deployments.length }}
           healthy={healthy}
+          userEmail={user.email}
+          onLogout={onLogout}
         />
         <Topbar
           query={query}
@@ -183,8 +223,12 @@ export default function App() {
               onNew={() => setModal(true)}
               onSelect={selectProject}
               onDelete={async (id) => {
-                await remove(id);
-                setToast("Service decommissioned");
+                try {
+                  await remove(id);
+                  setToast("Service decommissioned");
+                } catch (e) {
+                  setToast(e instanceof Error ? e.message : "Failed to delete service");
+                }
               }}
             />
           </div>

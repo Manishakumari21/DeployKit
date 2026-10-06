@@ -1,9 +1,10 @@
 import { Request, Response } from "express";
 import {
   createProject,
-  getProjects,
+  getProjectsForUser,
   getProjectById,
   deleteProject,
+  ProjectError,
 } from "../services/projectService.js";
 
 export async function createProjectController(
@@ -35,10 +36,15 @@ if (
       name,
       repositoryUrl,
       branch: branch || "main",
+      // authenticate middleware guarantees req.auth here.
+      ownerUserId: req.auth!.userId,
     });
 
     return res.status(201).json(project);
   } catch (error) {
+    if (error instanceof ProjectError) {
+      return res.status(error.status).json({ error: error.message });
+    }
     console.error("Create project error:", error);
 
     return res.status(500).json({
@@ -48,11 +54,13 @@ if (
 }
 
 export async function getProjectsController(
-  _req: Request,
+  req: Request,
   res: Response
 ) {
   try {
-    const projects = await getProjects();
+    // authenticate middleware guarantees req.auth here. Only member
+    // projects are listed; unowned legacy projects are never returned.
+    const projects = await getProjectsForUser(req.auth!.userId);
 
     return res.json(projects);
   } catch (error) {

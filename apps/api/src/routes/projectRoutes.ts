@@ -11,16 +11,29 @@ import {
   getProjectGithubLinkController,
   unlinkProjectGithubController,
 } from "../controllers/githubLinkController.js";
+import {
+  authenticate,
+  requireProjectAccess,
+} from "../middleware/auth.js";
+import { requireTrustedOrigin } from "../middleware/origin.js";
 
 const router = Router();
 
-router.post("/", createProjectController);
-router.get("/", getProjectsController);
-router.get("/:id", getProjectController);
-router.delete("/:id", deleteProjectController);
+// Browser state changers pass the origin check first (safe methods skip it
+// internally); webhooks stay exempt because they never reach this router.
+router.use(requireTrustedOrigin);
 
-router.post("/:id/github-link", linkProjectGithubController);
-router.get("/:id/github-link", getProjectGithubLinkController);
-router.delete("/:id/github-link", unlinkProjectGithubController);
+// Collection routes authenticate only; the controllers scope by identity
+// (creation assigns ownership, listing returns member projects).
+router.post("/", authenticate, createProjectController);
+router.get("/", authenticate, getProjectsController);
+
+// Item routes additionally require project membership (403 when unowned).
+router.get("/:id", requireProjectAccess, getProjectController);
+router.delete("/:id", requireProjectAccess, deleteProjectController);
+
+router.post("/:id/github-link", requireProjectAccess, linkProjectGithubController);
+router.get("/:id/github-link", requireProjectAccess, getProjectGithubLinkController);
+router.delete("/:id/github-link", requireProjectAccess, unlinkProjectGithubController);
 
 export default router;

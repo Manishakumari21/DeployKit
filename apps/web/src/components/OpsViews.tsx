@@ -1,18 +1,179 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { timeAgo } from "../lib/format";
 import { useDeploymentLogs } from "../hooks/useDeploymentLogs";
-import type { ApiDeployment } from "../types";
+import { createDomain, deleteDomain, fetchDomains, verifyDomain } from "../lib/api";
+import type { ApiDeployment, CustomDomain } from "../types";
 import { EmptyState, Eyebrow, Panel, PanelHead } from "./ui";
 import { cx } from "../lib/format";
 
-export function DomainsView() {
+export function DomainsView({ projectId }: { projectId: string | null }) {
+  const [domains, setDomains] = useState<CustomDomain[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async (id: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      setDomains(await fetchDomains(id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load domains");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Same deferred-load pattern as useAuth: no synchronous setState in the
+  // effect body, so no cascading render.
+  useEffect(() => {
+    if (!projectId) return;
+    queueMicrotask(() => {
+      void load(projectId);
+    });
+  }, [projectId, load]);
+
+  if (!projectId) {
+    return (
+      <Panel>
+        <PanelHead title="Domains" />
+        <EmptyState
+          title="No service selected"
+          body="Select a service to manage its custom domains."
+        />
+      </Panel>
+    );
+  }
+
+  const submit = async () => {
+    if (!input.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const created = await createDomain(projectId, input.trim());
+      setDomains((prev) => [...prev, created]);
+      setInput("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to add domain");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onVerify = async (id: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await verifyDomain(id);
+      setDomains((prev) => prev.map((d) => (d.id === id ? updated : d)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Verification failed");
+      try {
+        const rows = await fetchDomains(projectId);
+        setDomains(rows);
+      } catch {
+        // Keep stale list on refresh failure.
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onDelete = async (id: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteDomain(id);
+      setDomains((prev) => prev.filter((d) => d.id !== id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to remove domain");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Panel>
       <PanelHead title="Domains" />
-      <EmptyState
-        title="No custom domains on the scope"
-        body="Services answer on the runtime network through the gateway. Custom domains with TLS land here when configured."
-      />
+      <div className="flex flex-col gap-3 p-4">
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit();
+          }}
+        >
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="app.example.com"
+            aria-label="Custom domain"
+            className="w-full rounded-lg border border-edge bg-ink-950 px-3 py-2 text-[13px] text-fog-100 outline-none placeholder:text-fog-500 focus:border-signal-500"
+          />
+          <button
+            type="submit"
+            disabled={busy || !input.trim()}
+            className="shrink-0 cursor-pointer rounded-lg bg-signal-400 px-3 py-2 text-[13px] font-semibold text-ink-950 disabled:opacity-50"
+          >
+            {busy ? "Working…" : "Add"}
+          </button>
+        </form>
+        {loading && <p className="font-mono text-[12px] text-fog-500">loading…</p>}
+        {error && (
+          <p role="alert" className="text-[13px] text-red-300">
+            {error}
+          </p>
+        )}
+        {!loading && domains.length === 0 && !error && (
+          <EmptyState
+            title="No custom domains on the scope"
+            body="Services answer on the runtime network through the gateway. Add a domain, then add the DNS TXT record shown to verify ownership."
+          />
+        )}
+        <ul className="flex flex-col gap-2">
+          {domains.map((d) => (
+            <li key={d.id} className="rounded-lg border border-edge bg-ink-900 p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-[13px] text-fog-100">{d.domain}</span>
+                <span
+                  className={cx(
+                    "rounded-full border px-2 py-0.5 font-mono text-[11px]",
+                    d.status === "verified"
+                      ? "border-signal-500/50 bg-signal-950 text-signal-300"
+                      : "border-edge text-fog-500"
+                  )}
+                >
+                  {d.status}
+                </span>
+                <span className="ml-auto flex gap-2">
+                  {d.status !== "verified" && (
+                    <button
+                      onClick={() => void onVerify(d.id)}
+                      disabled={busy}
+                      className="cursor-pointer rounded-md border border-edge px-2 py-1 text-[12px] text-fog-200 hover:text-white disabled:opacity-50"
+                    >
+                      Verify
+                    </button>
+                  )}
+                  <button
+                    onClick={() => void onDelete(d.id)}
+                    disabled={busy}
+                    className="cursor-pointer rounded-md border border-red-900 px-2 py-1 text-[12px] text-red-200 disabled:opacity-50"
+                  >
+                    Remove
+                  </button>
+                </span>
+              </div>
+              {d.status !== "verified" && (
+                <p className="mt-2 font-mono text-[12px] leading-relaxed text-fog-400">
+                  TXT {d.verification.name} = {d.verification.value ?? "(created value — re-add if missing)"}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
     </Panel>
   );
 }

@@ -174,3 +174,38 @@ export type ProjectMetrics = {
 export function fetchProjectMetrics(projectId: string, signal?: AbortSignal): Promise<ProjectMetrics> {
   return request<ProjectMetrics>(`/projects/${projectId}/metrics`, { signal });
 }
+
+export type CustomDomain = {
+  id: string;
+  project_id: string;
+  domain: string;
+  status: "pending" | "verifying" | "verified" | "failed" | "removed";
+  verification: { type: "dns-txt"; name: string; value?: string };
+  verified_at: string | null;
+  tls_status: "none" | "pending" | "issued" | "renewing" | "failed" | "expired";
+  cert_expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export function fetchDomains(projectId: string): Promise<CustomDomain[]> {
+  return request<CustomDomain[]>(`/projects/${projectId}/domains`);
+}
+
+export function createDomain(projectId: string, domain: string): Promise<CustomDomain> {
+  return request<CustomDomain>(`/projects/${projectId}/domains`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ domain }),
+  });
+}
+
+export function verifyDomain(domainId: string): Promise<CustomDomain> {
+  return request<CustomDomain>(`/domains/${domainId}/verify`, { method: "POST" });
+}
+
+export function deleteDomain(domainId: string): Promise<{ removed: boolean; id: string }> {
+  return request<{ removed: boolean; id: string }>(`/domains/${domainId}`, {
+    method: "DELETE",
+  });
+}

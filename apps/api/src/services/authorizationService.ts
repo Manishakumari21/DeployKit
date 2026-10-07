@@ -128,3 +128,22 @@ export async function requireReleaseAccess(
   await requireProjectMembership({ userId, projectId: row.project_id });
   return { projectId: row.project_id };
 }
+
+// Domain routes carry only their own id, same pattern as deployments:
+// resolve the owning project first, then apply the membership decision.
+// Unknown ids stay 404; existing-but-forbidden stays 403.
+export async function requireDomainAccess(
+  userId: string,
+  domainId: string
+): Promise<{ projectId: string }> {
+  const row = (
+    await pool.query(`SELECT project_id FROM custom_domains WHERE id = $1`, [
+      domainId,
+    ])
+  ).rows[0] as { project_id: string } | undefined;
+  if (!row) {
+    throw new AuthorizationError("DOMAIN_NOT_FOUND", "Domain not found", 404);
+  }
+  await requireProjectMembership({ userId, projectId: row.project_id });
+  return { projectId: row.project_id };
+}

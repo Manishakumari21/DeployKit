@@ -9,7 +9,7 @@ export interface RouteTarget {
 }
 
 export interface TrafficRouter {
-  sync(target: RouteTarget): Promise<void>;
+  sync(target: RouteTarget, verifiedDomains?: string[]): Promise<void>;
   verifyRoute(target: RouteTarget, timeoutMs: number): Promise<void>;
   remove(projectId: string): Promise<void>;
   activeTarget(projectId: string): Promise<RouteTarget | null>;
@@ -67,7 +67,7 @@ export function routeServerName(projectId: string): string {
   return `dk-p${short}.deploykit.local`;
 }
 
-export class UnconfiguredTrafficRouter implements TrafficRouter {  async sync(_target: RouteTarget): Promise<void> {
+export class UnconfiguredTrafficRouter implements TrafficRouter {  async sync(_target: RouteTarget, _verifiedDomains?: string[]): Promise<void> {
     throw new Error("TRAFFIC_ROUTER_NOT_CONFIGURED");
   }
 

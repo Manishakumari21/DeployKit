@@ -954,12 +954,44 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         containerIp: runtime.ipAddress,
         containerPort: runtime.containerPort,
       };
+      // Custom domains follow the active release: the same verified aliases
+      // are rendered against the new target. Domains never carry their own
+      // runtime association.
+      let verifiedDomains: string[] = [];
       try {
-        await this.trafficRouter.sync(route);
+        const { getVerifiedDomains } = await import("../services/domainService.js");
+        verifiedDomains = await getVerifiedDomains(input.projectId);
+      } catch {
+        verifiedDomains = [];
+      }
+      // Capture the previous projection so a failed switch restores it
+      // instead of leaving a half-applied candidate in place.
+      let previousRaw: string | null = null;
+      const maybeRaw = this.trafficRouter as unknown as {
+        readRawConfig?: (id: string) => Promise<string | null>;
+      };
+      if (typeof maybeRaw.readRawConfig === "function") {
+        try {
+          previousRaw = await maybeRaw.readRawConfig(input.projectId);
+        } catch {
+          previousRaw = null;
+        }
+      }
+      try {
+        await this.trafficRouter.sync(route, verifiedDomains);
         await this.trafficRouter.verifyRoute(route, this.routeTimeoutMs);
         await dlog(input.projectId, input.deploymentId, "gateway", "info", "traffic switched to new release");
       } catch (error) {
-        await this.trafficRouter.sync(route).catch(() => undefined);
+        const restorable = this.trafficRouter as unknown as {
+          restoreRawConfig?: (id: string, prev: string | null) => Promise<void>;
+        };
+        if (typeof restorable.restoreRawConfig === "function") {
+          await restorable
+            .restoreRawConfig(input.projectId, previousRaw)
+            .catch(() => undefined);
+        } else {
+          await this.trafficRouter.sync(route).catch(() => undefined);
+        }
         throw new PipelineError(
           PIPELINE_ERROR_CODES.ACTIVATION_FAILED,
           error instanceof Error

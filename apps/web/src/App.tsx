@@ -247,7 +247,7 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
             {selectedId && <DeploymentDetails deploymentId={selectedId} onUpdate={handleListUpdate} />}
           </div>
         )}
-        {nav === "domains" && <DomainsView />}
+        {nav === "domains" && <DomainsView projectId={selectedProjectId} />}
         {nav === "logs" && (
           <LogsView
             deployments={deployments}

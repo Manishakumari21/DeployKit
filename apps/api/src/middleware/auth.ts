@@ -226,3 +226,42 @@ export async function requireReleaseRouteAccess(
     res.status(500).json({ error: "Authorization failed" });
   }
 }
+
+// Same shape for domain ids. Unknown ids stay 404.
+export async function requireDomainRouteAccess(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const auth = await authenticateRequest(req);
+    if (!auth) {
+      unauthorized(res);
+      return;
+    }
+    const domainId = deploymentParam(req);
+    if (!domainId) {
+      res.status(400).json({ error: "Invalid domain id" });
+      return;
+    }
+    let projectId: string;
+    try {
+      const { requireDomainAccess } = await import(
+        "../services/authorizationService.js"
+      );
+      ({ projectId } = await requireDomainAccess(auth.userId, domainId));
+    } catch (error) {
+      if (error instanceof AuthorizationError) {
+        res.status(error.status).json({ error: error.message });
+        return;
+      }
+      throw error;
+    }
+    req.auth = auth;
+    req.projectId = projectId;
+    next();
+  } catch (error) {
+    console.error("Authorization error");
+    res.status(500).json({ error: "Authorization failed" });
+  }
+}

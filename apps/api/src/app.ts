@@ -4,6 +4,7 @@ import pool from "./db/database.js";
 import { buildCorsOptions } from "./config/corsConfig.js";
 import projectRoutes from "./routes/projectRoutes.js";
 import deploymentRoutes from "./routes/deploymentRoutes.js";
+import domainRoutes from "./routes/domainRoutes.js";
 import webhookRoutes from "./routes/webhookRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
 
@@ -41,6 +42,7 @@ app.get("/api/health", async (_req, res) => {
 
 app.use("/api/projects", projectRoutes);
 app.use("/api", deploymentRoutes);
+app.use("/api", domainRoutes);
 app.use("/api/auth", authRoutes);
 
 export default app;

@@ -78,3 +78,16 @@ export type DeploymentEvent = {
   metadata: Record<string, unknown>;
   created_at: string;
 };
+
+export type CustomDomain = {
+  id: string;
+  project_id: string;
+  domain: string;
+  status: "pending" | "verifying" | "verified" | "failed" | "removed";
+  verification: { type: "dns-txt"; name: string; value?: string };
+  verified_at: string | null;
+  tls_status: "none" | "pending" | "issued" | "renewing" | "failed" | "expired";
+  cert_expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+};

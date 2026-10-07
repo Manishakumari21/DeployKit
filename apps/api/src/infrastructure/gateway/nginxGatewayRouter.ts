@@ -13,6 +13,7 @@ import {
   type RouteTarget,
   type TrafficRouter,
 } from "./trafficRouter.js";
+import { normalizeDomain } from "../../domains/domainName.js";
 
 export interface NginxGatewayRouterOptions {
   dockerBinary?: string;
@@ -25,10 +26,15 @@ function shortRef(projectId: string): string {
   return projectId.replace(/-/g, "").slice(0, 8).toLowerCase();
 }
 
-export function renderProjectRoute(target: RouteTarget): string {
+export function renderProjectRoute(
+  target: RouteTarget,
+  verifiedDomains: string[] = []
+): string {
   validateRouteTarget(target);
+  const domains = sanitizeVerifiedDomains(verifiedDomains);
   const ref = shortRef(target.projectId);
   const upstream = `dk_p${ref}`;
+  const serverNames = [routeServerName(target.projectId), ...domains].join(" ");
   const lines = [
     "# deploykit-managed: DO NOT EDIT",
     `# project: ${target.projectId}`,
@@ -40,7 +46,12 @@ export function renderProjectRoute(target: RouteTarget): string {
     "}",
     "server {",
     "    listen 80;",
-    `    server_name ${routeServerName(target.projectId)};`,
+    `    server_name ${serverNames};`,
+    "    # Phase 11: ACME HTTP-01 reserved for a later step.",
+    "    # No challenge is served yet; this block stays a 404.",
+    "    location ^~ /.well-known/acme-challenge/ {",
+    "        return 404;",
+    "    }",
     "    location / {",
     `        proxy_pass http://${upstream};`,
     "        proxy_http_version 1.1;",
@@ -53,6 +64,33 @@ export function renderProjectRoute(target: RouteTarget): string {
     "",
   ];
   return lines.join("\n");
+}
+
+// Single defensive gate for gateway input: only normalized DB hostnames
+// become server_name values. Invalid entries are rejected loudly so a
+// corrupt row can never silently enter nginx config.
+export function sanitizeVerifiedDomains(input: unknown): string[] {
+  if (!Array.isArray(input) || input.length === 0) return [];
+  const seen = new Set<string>();
+  for (const raw of (input as unknown[]).slice(0, 50)) {
+    if (typeof raw !== "string" || !raw) {
+      throw new TrafficRouterError("INVALID_DOMAIN", "Invalid custom domain");
+    }
+    let normalized: string;
+    try {
+      normalized = normalizeDomain(raw);
+    } catch {
+      throw new TrafficRouterError("INVALID_DOMAIN", "Invalid custom domain");
+    }
+    seen.add(normalized);
+  }
+  return [...seen].sort();
+}
+
+export function parseProjectDomains(content: string): string[] {
+  const line = /^\s*server_name\s+(.+?)\s*;/m.exec(content)?.[1];
+  if (!line) return [];
+  return line.split(/\s+/).filter(Boolean);
 }
 
 export function parseProjectRoute(
@@ -143,11 +181,46 @@ export class NginxGatewayRouter implements TrafficRouter {
     await this.execGateway(["nginx", "-s", "reload"]);
   }
 
-  async sync(target: RouteTarget): Promise<void> {
+  // Raw file content for backup/restore. Null when no route exists.
+  async readRawConfig(projectId: string): Promise<string | null> {
+    routeServerName(projectId);
+    try {
+      const content = await readFile(this.routePath(projectId), "utf8");
+      if (content.length > 64 * 1024) return null;
+      return content;
+    } catch {
+      return null;
+    }
+  }
+
+  // Restore a previous known-good file (or remove when null), then reload.
+  // Used only for rollback after a failed candidate projection.
+  async restoreRawConfig(projectId: string, previous: string | null): Promise<void> {
+    routeServerName(projectId);
+    const filePath = this.routePath(projectId);
+    if (previous === null) {
+      await rm(filePath, { force: true });
+    } else {
+      const tmpPath = `${filePath}.tmp`;
+      await mkdir(this.routesDir, { recursive: true });
+      await writeFile(tmpPath, previous, { mode: 0o644 });
+      await rename(tmpPath, filePath);
+    }
+    await this.reload();
+  }
+
+  async sync(target: RouteTarget, verifiedDomains: string[] = []): Promise<void> {
     validateRouteTarget(target);
-    const content = renderProjectRoute(target);
+    const content = renderProjectRoute(target, verifiedDomains);
     const filePath = this.routePath(target.projectId);
-    const tmpPath = `${filePath}.tmp-${Date.now()}`;
+    // Deterministic tmp name scoped to the gateway file (no timestamps).
+    const tmpPath = `${filePath}.tmp`;
+    let previous: string | null = null;
+    try {
+      previous = await this.readRawConfig(target.projectId);
+    } catch {
+      previous = null;
+    }
     try {
       await mkdir(this.routesDir, { recursive: true });
       await writeFile(tmpPath, content, { mode: 0o644 });
@@ -161,7 +234,24 @@ export class NginxGatewayRouter implements TrafficRouter {
           : "Gateway route write failed"
       );
     }
-    await this.reload();
+    // Validate before treating the candidate as live. On failure the
+    // previous known-good file is restored so the active route never breaks.
+    try {
+      await this.reload();
+    } catch (error) {
+      try {
+        await this.restoreRawConfig(target.projectId, previous);
+      } catch {
+        // Best-effort restore; the original error stays authoritative.
+      }
+      if (error instanceof TrafficRouterError) throw error;
+      throw new TrafficRouterError(
+        "GATEWAY_RELOAD_FAILED",
+        error instanceof Error
+          ? `Gateway reload failed: ${error.message.slice(0, 200)}`
+          : "Gateway reload failed"
+      );
+    }
   }
 
   async verifyRoute(target: RouteTarget, timeoutMs: number): Promise<void> {

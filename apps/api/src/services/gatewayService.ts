@@ -58,7 +58,39 @@ export async function syncProjectGateway(
   if (!target) {
     throw new TrafficRouterError("NO_ACTIVE_ROUTE", "Project has no healthy active runtime to route");
   }
-  await router.sync(target);
-  await router.verifyRoute(target, timeoutMs);
+  // WHY: custom domains follow the active release. One query fetches the
+  // verified aliases; the target (IP/port) still comes only from
+  // project_gateways/runtime — never from user input.
+  const { getVerifiedDomains } = await import("./domainService.js");
+  const domains = await getVerifiedDomains(projectId);
+  const previous =
+    typeof (router as unknown as { readRawConfig?: (id: string) => Promise<string | null> })
+      .readRawConfig === "function"
+      ? await (
+          router as unknown as { readRawConfig: (id: string) => Promise<string | null> }
+        ).readRawConfig(projectId)
+      : null;
+  try {
+    await router.sync(target, domains);
+  } catch (error) {
+    throw error;
+  }
+  try {
+    await router.verifyRoute(target, timeoutMs);
+  } catch (error) {
+    // Verification failed: restore the previous known-good projection so
+    // the existing active route keeps serving, then report the failure.
+    const restorable = router as unknown as {
+      restoreRawConfig?: (id: string, prev: string | null) => Promise<void>;
+    };
+    if (typeof restorable.restoreRawConfig === "function") {
+      try {
+        await restorable.restoreRawConfig(projectId, previous);
+      } catch {
+        // Best-effort restore; original verification error is authoritative.
+      }
+    }
+    throw error;
+  }
   return target;
 }

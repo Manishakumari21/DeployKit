@@ -1,9 +1,3 @@
-// Phase 11.1–11.3: custom-domain data operations (verification only, no TLS).
-// PostgreSQL is authoritative; gateway files are a derived projection built
-// elsewhere from getVerifiedDomains(). Raw verification tokens are returned
-// exactly once (creation / expiry rotation) and never logged or persisted:
-// only the SHA-256 digest is stored.
-
 import crypto from "node:crypto";
 import { promises as dns } from "node:dns";
 import pool from "../db/database.js";
@@ -86,7 +80,6 @@ export function toDomainRow(raw: Record<string, unknown>): DomainRow {
   };
 }
 
-// Single-query listing for a project (no N+1). Ordered by creation.
 export async function listDomains(projectId: string): Promise<DomainRow[]> {
   const result = await pool.query(
     `
@@ -100,7 +93,6 @@ export async function listDomains(projectId: string): Promise<DomainRow[]> {
   return result.rows.map(toDomainRow);
 }
 
-// Verified hostnames only, for the gateway renderer. One query, no N+1.
 export async function getVerifiedDomains(
   projectId: string
 ): Promise<string[]> {
@@ -126,8 +118,6 @@ export async function getDomainById(id: string): Promise<DomainRow | null> {
   return toDomainRow(result.rows[0]);
 }
 
-// Direct insert is authoritative for uniqueness: no SELECT-then-INSERT.
-// A 23505 conflict (including case variants via lower(domain)) maps to 409.
 export async function createDomain(input: {
   projectId: string;
   domain: string;
@@ -151,7 +141,6 @@ export async function createDomain(input: {
     if (isUniqueViolation(error)) {
       throw new DomainError("DOMAIN_TAKEN", "Domain already belongs to another project", 409);
     }
-    // Missing project FK surfaces as 23503 — report as not found, not 500.
     if (
       typeof error === "object" &&
       error !== null &&
@@ -184,10 +173,6 @@ function candidateMatches(candidate: string, storedHash: string): boolean {
   return crypto.timingSafeEqual(a, b);
 }
 
-// pending → verifying → verified | failed. Never marks verified from HTTP
-// reachability or CNAME alone — only an exact DNS TXT token match.
-// Expired verification rotates the token (invalidating the previous one)
-// and reports VERIFICATION_EXPIRED so the owner fetches the new challenge.
 export async function verifyDomain(
   domainId: string,
   options: { lookupTxt?: TxtLookup } = {}
@@ -202,8 +187,6 @@ export async function verifyDomain(
   if (current.status === "removed") {
     throw new DomainError("DOMAIN_NOT_FOUND", "Domain not found", 404);
   }
-  // Expiry check first: rotation invalidates the previous token. The new
-  // raw token is returned via `rotated` so the owner can update DNS.
   if (
     current.verification_expires_at &&
     Date.parse(current.verification_expires_at) <= Date.now()
@@ -250,7 +233,6 @@ export async function verifyDomain(
     );
     throw new DomainError("VERIFICATION_FAILED", "DNS verification failed", 422);
   }
-  // Each TXT record may arrive chunked — join chunks before comparing.
   const candidates: string[] = [];
   for (const record of records ?? []) {
     if (Array.isArray(record)) candidates.push(record.join(""));
@@ -276,9 +258,6 @@ export async function verifyDomain(
   return { row: toDomainRow(result.rows[0]) };
 }
 
-// Hard delete after the caller has converged the gateway projection.
-// Returns the deleted row, or null when already absent (idempotent check
-// lives in the controller: missing → 404, stable across retries).
 export async function deleteDomainRow(domainId: string): Promise<DomainRow | null> {
   const result = await pool.query(
     `DELETE FROM custom_domains WHERE id = $1 RETURNING *`,

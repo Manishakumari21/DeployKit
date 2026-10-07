@@ -1,8 +1,3 @@
-// Phase 11.9 REAL gateway E2E: rendered config against a live nginx:alpine
-// container (skipped when Docker or the required images are unavailable).
-// Proves: HTTPS serves the release, HTTP redirects only with a valid cert,
-// the ACME challenge path bypasses the redirect, and expired certificates
-// fall back to plain HTTP without redirecting at broken HTTPS.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -99,9 +94,6 @@ async function containerIp(network: string, name: string): Promise<string> {
   return ip as string;
 }
 
-// mkdtemp creates 0700 directories, which would hide mounted content from
-// the unprivileged nginx workers (master/root reads fine, workers get
-// EACCES). Make the fixture tree traversable like the production volume.
 async function makeServable(root: string): Promise<void> {
   const entries = await readdir(root, { withFileTypes: true });
   await chmod(root, 0o755);
@@ -136,7 +128,6 @@ test(
       const backIp = await backend(network, back, "hello-backend");
       created.push(back);
 
-      // Certificate material in worker-side layout, mounted at the gateway path.
       const certsDir = path.join(work, "certs");
       const domainDir = domainCertDir(tlsDomain, certsDir);
       await mkdir(domainDir, { recursive: true, mode: 0o700 });
@@ -145,7 +136,6 @@ test(
       await writeFile(fullchainPath(tlsDomain, certsDir), material.certificatePem, { mode: 0o644 });
       await writeFile(privateKeyPath(tlsDomain, certsDir), material.privateKeyPem, { mode: 0o600 });
 
-      // Challenge fixture proving the HTTP-01 bypass.
       const challengeFile = path.join(
         certsDir, "challenges", ".well-known", "acme-challenge", "ping"
       );
@@ -199,21 +189,16 @@ test(
       created.push(gw);
       await execFileAsync("docker", ["container", "start", gw], { timeout: 30_000 });
       const gwIp = await containerIp(network, gw);
-      // Test + reload inside the gateway (same mechanism as the worker).
       await execFileAsync("docker", ["container", "exec", gw, "nginx", "-t"], { timeout: 30_000 });
       await new Promise((r) => setTimeout(r, 2_000));
 
-      // HTTPS serves the release for the TLS name.
       const https = await requestViaTlsHost(gwIp, 443, tlsDomain);
       assert.ok(https.status >= 200 && https.status < 400, `HTTPS status ${https.status}`);
       assert.equal(https.body, "hello-backend");
 
-      // HTTP on the TLS name redirects to HTTPS (Let’s Encrypt validates
-      // port 80, so the check below runs first for challenge paths).
       const redir = await requestViaHost(gwIp, 80, tlsDomain);
       assert.equal(redir.status, 301);
 
-      // Challenge path bypasses the redirect and serves the file.
       const challenge = await new Promise<{ status: number; body: string }>((resolve, reject) => {
         import("node:net").then(({ Socket }) => {
           const socket = new Socket();
@@ -247,13 +232,10 @@ test(
       assert.equal(challenge.status, 200);
       assert.equal(challenge.body, "pong");
 
-      // Plain verified domain stays on HTTP with no redirect.
       const plain = await requestViaHost(gwIp, 80, plainDomain);
       assert.ok(plain.status >= 200 && plain.status < 400, `plain status ${plain.status}`);
       assert.equal(plain.body, "hello-backend");
 
-      // Expired/missing certificate: re-render without the TLS entry (the
-      // sweeper + reconverge path) and prove HTTP remains with no redirect.
       const downgraded = renderProjectRoute(target(backIp), [tlsDomain, plainDomain], []);
       await writeFile(path.join(routesDir, "dk-p12345678.conf"), downgraded);
       await execFileAsync("docker", ["container", "exec", gw, "nginx", "-t"], { timeout: 30_000 });
@@ -263,7 +245,6 @@ test(
       assert.ok(kept.status >= 200 && kept.status < 400, `kept status ${kept.status}`);
       assert.equal(kept.body, "hello-backend");
 
-      // Rendered material sanity: no key bytes in nginx config.
       const onDisk = await readFile(path.join(routesDir, "dk-p12345678.conf"), "utf8");
       assert.ok(!onDisk.includes("PRIVATE KEY"));
     } finally {

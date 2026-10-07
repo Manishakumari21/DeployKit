@@ -53,12 +53,6 @@ export async function resolveActiveRoute(projectId: string): Promise<RouteTarget
   }
 }
 
-// Valid TLS set for a project: verified domains whose tls_status is issued
-// (or renewing with a still-valid certificate) AND whose on-disk certificate
-// parses, covers the domain exactly, and is unexpired. One query for the
-// candidates, then bounded filesystem reads — never N+1 DB queries, never
-// client-supplied paths. Anything missing, failed, or expired is excluded so
-// HTTP stays available and no redirect points at dead HTTPS.
 export async function resolveValidTlsEntries(
   projectId: string,
   root: string = certsDir()
@@ -105,9 +99,6 @@ interface SyncTargetOptions {
   certsRoot?: string;
 }
 
-// Shared core: render target + verified aliases (minus exclusions) + valid
-// TLS entries, reload behind nginx -t, verify HTTP and every HTTPS route,
-// restoring the previous known-good projection on any failure.
 export async function syncProjectTarget(
   projectId: string,
   target: RouteTarget,
@@ -116,9 +107,6 @@ export async function syncProjectTarget(
   const router = options.router ?? new NginxGatewayRouter();
   const timeoutMs = options.timeoutMs ?? 30_000;
   const excluded = new Set((options.excludeDomains ?? []).map((d) => d.trim().toLowerCase()));
-  // WHY: custom domains follow the active release. One query fetches the
-  // verified aliases; the target (IP/port) still comes only from
-  // project_gateways/runtime — never from user input.
   const { getVerifiedDomains } = await import("./domainService.js");
   const domains = (await getVerifiedDomains(projectId)).filter((d) => !excluded.has(d));
   const tls = (await resolveValidTlsEntries(projectId, options.certsRoot)).filter(
@@ -139,23 +127,18 @@ export async function syncProjectTarget(
       try {
         await restorable.restoreRawConfig(projectId, previous);
       } catch {
-        // Best-effort restore; original verification error is authoritative.
       }
     }
   };
   await router.sync(target, domains, tls);
   try {
     await router.verifyRoute(target, timeoutMs);
-    // Bounded per-domain HTTPS checks sharing a 10s cap each so one slow
-    // domain cannot stall convergence of the rest.
     for (const entry of tls) {
       if (typeof router.verifyHttpsRoute === "function") {
         await router.verifyHttpsRoute(target, entry.domain, Math.min(timeoutMs, 10_000));
       }
     }
   } catch (error) {
-    // Verification failed: restore the previous known-good projection so
-    // the existing active route keeps serving, then report the failure.
     await restore();
     throw error;
   }

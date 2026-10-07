@@ -1,8 +1,3 @@
-// Phase 11.8: certificate validation using only Node standard library.
-// No custom crypto: parsing and SAN matching rely on node:crypto
-// X509Certificate. Only safe metadata (domain, expiry, fingerprint) ever
-// leaves these functions — PEM bytes are never logged or returned in errors.
-
 import { X509Certificate } from "node:crypto";
 
 export class CertValidationError extends Error {
@@ -39,8 +34,6 @@ export function parseCertificate(pem: string): ParsedCertificate {
   };
 }
 
-// Exact SAN match only. Wildcard SANs are rejected: Phase 11 issues one
-// certificate per verified domain and never broadens SANs silently.
 export function certificateCoversDomain(pem: string, domain: string): boolean {
   const parsed = parseCertificate(pem);
   const wanted = domain.trim().toLowerCase();
@@ -51,8 +44,6 @@ export function certificateExpiry(pem: string): Date {
   return parseCertificate(pem).expiresAt;
 }
 
-// Validity rule shared by the renderer gate and issuance: the certificate
-// must parse, cover the domain exactly, and be currently unexpired.
 export function validateCertificateForDomain(
   pem: string,
   domain: string,

@@ -1,7 +1,3 @@
-// Phase 11 E2E (real PostgreSQL + real API + real gateway files).
-// DNS uses a controlled fixture injected at the service boundary (the same
-// verifyDomain code path); no claim of public DNS is made. Gateway reloads
-// use a fake docker binary that records nginx -t/reload invocations.
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
@@ -59,7 +55,6 @@ test("domain follows active release; failed change keeps old route; delete remov
   const userIds: string[] = [];
   const projectIds: string[] = [];
   try {
-    // 1–2. Authenticated user creates a domain via the real HTTP API.
     server = app.listen(0);
     await new Promise<void>((r) => server!.once("listening", r));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -93,13 +88,11 @@ test("domain follows active release; failed change keeps old route; delete remov
     assert.equal(created.status, "pending");
     assert.ok(created.verification.value);
 
-    // 3–4. Controlled DNS fixture through the real verification path.
     const verified = await verifyDomain(created.id, {
       lookupTxt: async () => [[created.verification.value]],
     });
     assert.equal(verified.row.status, "verified");
 
-    // 5–6. Gateway projection contains the verified hostname; reload logged.
     const router = new NginxGatewayRouter({
       dockerBinary: path.join(binDir, "docker"),
       gatewayContainer: "dk-gateway",
@@ -117,12 +110,10 @@ test("domain follows active release; failed change keeps old route; delete remov
     const log = await readFile(logPath, "utf8");
     assert.ok(log.includes("nginx -t") && log.includes("nginx -s reload"));
 
-    // 7. Host-specific rendering shares the same upstream target.
     const withAlias = content;
     assert.match(withAlias, /server_name dk-p12345678\.deploykit\.local/);
     assert.match(withAlias, new RegExp(domainName.replace(/\./g, "\\.")));
 
-    // 8. New release preserves the hostname.
     await router.sync(targetFor(RELEASE_B), domains);
     const contentB = await readFile(
       path.join(work, "routes", routeFileName(PROJECT)),
@@ -131,7 +122,6 @@ test("domain follows active release; failed change keeps old route; delete remov
     assert.ok(contentB.includes(domainName));
     assert.ok(contentB.includes(RELEASE_B));
 
-    // 9. Failed change restores the previous route (simulated reload failure).
     const failDir = await mkdtemp(path.join(os.tmpdir(), "deploykit-e2e-fail-"));
     await writeFile(
       path.join(failDir, "docker"),
@@ -148,13 +138,10 @@ test("domain follows active release; failed change keeps old route; delete remov
     assert.equal(kept, contentB);
     await rm(failDir, { recursive: true, force: true }).catch(() => undefined);
 
-    // 10. Deleting the domain removes the alias via the real API.
     const delRes = await fetch(`${base}/api/domains/${created.id}`, {
       method: "DELETE",
       headers: { Cookie: cookie },
     });
-    // No active runtime exists for this project, so convergence is a no-op
-    // and deletion proceeds directly.
     assert.equal(delRes.status, 200);
     assert.equal((await listDomains(project.id)).length, 0);
     await deleteDomainRow(created.id).catch(() => null);

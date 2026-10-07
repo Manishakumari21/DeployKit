@@ -1,16 +1,3 @@
-// Phase 11.6: certificate lifecycle state in PostgreSQL (metadata only).
-// tls_status is independent from domain verification: verified proves
-// ownership, tls_status tracks certificate reality. Private keys, account
-// keys, and PEM material never enter this table — only status, timestamps,
-// path references, and safe error codes/messages.
-//
-// States: none → pending → issued ⇄ renewing → issued
-//         pending/renewing → failed (manual retry re-arms to pending)
-//         issued/renewing/failed (+expired cert) → expired (sweeper)
-//         expired → pending (manual retry)
-// A failed renewal with a still-valid certificate reverts to issued so
-// working HTTPS is never torn down by a bad renewal.
-
 import pool from "../db/database.js";
 import { DomainError } from "../domains/domainName.js";
 import {
@@ -31,12 +18,7 @@ export class CertError extends Error {
   }
 }
 
-// Renew while this much validity remains. LE recommends 30 days; matching
-// it keeps one knob for both the claim query and lego's renew window.
 export const RENEW_BEFORE_SECONDS = 30 * 24 * 60 * 60;
-// A renewing row with a recent attempt is work in progress owned by a live
-// worker. Older than this, the worker is presumed dead and the row becomes
-// claimable again (stuck-work recovery without a second job system).
 export const STUCK_RENEWING_SECONDS = 60 * 60;
 export const MAX_ERROR_LENGTH = 500;
 
@@ -44,9 +26,6 @@ function boundError(message: string): string {
   return message.slice(0, MAX_ERROR_LENGTH);
 }
 
-// Manual trigger (API): verified domains only. Idempotent while work is
-// already queued; re-arms terminal states. The state machine itself is the
-// rate guard — there is no path to unbounded ACME requests.
 export async function requestCertificate(domainId: string): Promise<DomainRow> {
   const current = await getDomainById(domainId);
   if (!current) {
@@ -75,11 +54,6 @@ export async function requestCertificate(domainId: string): Promise<DomainRow> {
 }
 
 
-// Worker claim: serialize sweeps on an advisory lock, select due rows,
-// destructively move issued→renewing so concurrent workers cannot double-
-// process the same renewal. Pending rows are returned as-is; the per-sweep
-// advisory lock plus the post-ACME compare-and-set in markCertificateIssued
-// keeps duplicate first-issuance benign and idempotent.
 export async function claimDueCertificates(limit = 5): Promise<DomainRow[]> {
   const client = await pool.connect();
   try {
@@ -145,9 +119,6 @@ export async function claimDueCertificates(limit = 5): Promise<DomainRow[]> {
   }
 }
 
-// Success path, called only after the new certificate files are installed,
-// the gateway reloaded, and HTTPS verified: compare-and-set on the expected
-// pre-state so a concurrent claim cannot mark a stale result issued.
 export async function markCertificateIssued(input: {
   domainId: string;
   expectedTls: TlsStatus[];
@@ -173,10 +144,6 @@ export async function markCertificateIssued(input: {
   return toDomainRow(result.rows[0]);
 }
 
-// Failure path. revertToIssued keeps serving the previous valid certificate
-// (renewal failure): the caller restores the old files first, then flips the
-// row back to issued with the error recorded. First-issuance failures land
-// on failed for manual retry. Either way only safe error text is persisted.
 export async function markCertificateFailed(input: {
   domainId: string;
   code: string;
@@ -202,10 +169,6 @@ export async function markCertificateFailed(input: {
   return toDomainRow(result.rows[0]);
 }
 
-// Expiry sweeper: issued/renewing/failed rows whose certificate is past
-// expiry become expired. Returns affected project ids so the caller can
-// re-converge their gateways (dropping HTTPS + redirect). HTTP stays
-// available throughout; no redirect points at dead HTTPS afterwards.
 export async function markExpiredCertificates(): Promise<string[]> {
   const result = await pool.query(
     `
@@ -220,8 +183,6 @@ export async function markExpiredCertificates(): Promise<string[]> {
   return [...new Set((result.rows as Array<{ project_id: string }>).map((r) => r.project_id))];
 }
 
-// Due-date-driven renewal scan for the worker (one query, indexed via
-// custom_domains_tls_expiry_idx; no polling of unrelated rows).
 export async function countRenewalDue(): Promise<number> {
   const result = await pool.query(
     `

@@ -1,20 +1,3 @@
-// Phase 11.8: ACME issuance via the maintained lego binary (no custom
-// ACME/crypto code). One certificate per verified domain over HTTP-01.
-//
-// Lego contract (stable CLI across v4/v5): account + certificate state lives
-// under --path; HTTP-01 webroot mode writes challenge files to
-// <webroot>/.well-known/acme-challenge/<token>, which the gateway serves on
-// port 80. Unit tests pin the exact argv so flag drift is caught in review.
-//
-//   lego --email E --domains D --server S --path P --accept-tos \
-//       --http --http.webroot W run
-//   lego --email E --domains D --server S --path P --accept-tos \
-//       --http --http.webroot W renew --days N
-//
-// Secrets discipline: email/domain/server are not secrets and travel as argv;
-// account keys and certificate keys never appear in argv, env, logs, or the
-// database — lego keeps them under --path inside the certs volume.
-
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { runCommand } from "../infrastructure/process/dockerExec.js";
@@ -65,8 +48,6 @@ export interface AcmeConfig {
   timeoutMs: number;
 }
 
-// Staging is the fail-safe default: production issuance requires explicitly
-// setting DEPLOYKIT_ACME_SERVER to the production directory URL.
 export function getAcmeConfig(overrides: Partial<AcmeConfig> = {}): AcmeConfig {
   const email = (process.env.DEPLOYKIT_ACME_EMAIL ?? "").trim();
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -83,7 +64,6 @@ export function getAcmeConfig(overrides: Partial<AcmeConfig> = {}): AcmeConfig {
   };
 }
 
-// Pure argv builder (unit-tested): the only place lego flags are spelled.
 export function legoArgsFor(request: AcmeRequest): string[] {
   const domain = normalizeDomain(request.domain);
   const base = [
@@ -137,14 +117,9 @@ export class LegoAcmeClient implements AcmeClient {
       throw new AcmeError("ACME_REQUEST_FAILED", "ACME request timed out");
     }
     if (result.code !== 0) {
-      // Lego echoes the failing challenge/authorization on stderr. It never
-      // contains key material, but bound it anyway and never log the domain's
-      // private key (which this client never prints).
       const detail = (result.stderr || `exit ${result.code}`).slice(0, 500);
       throw new AcmeError("ACME_REQUEST_FAILED", `Certificate order failed: ${detail}`);
     }
-    // Read back exactly the files lego wrote for this domain — never any
-    // other domain's material, never via shell expansion.
     let certificatePem: string;
     let privateKeyPem: string;
     try {
@@ -166,9 +141,6 @@ export class LegoAcmeClient implements AcmeClient {
   }
 }
 
-// Local development/testing only: openssl-generated self-signed certificate
-// with a proper SAN. Refuses production outright. Never represents an ACME
-// issuance: callers must keep tls provenance separate (docs + issuedCTV).
 export class SelfSignedAcmeClient implements AcmeClient {
   constructor(
     private readonly opensslBinary = "openssl",
@@ -214,8 +186,6 @@ export class SelfSignedAcmeClient implements AcmeClient {
   }
 }
 
-// Deterministic in-memory client for unit tests. Never touches the network,
-// the filesystem, or real crypto.
 export class FakeAcmeClient implements AcmeClient {
   public requests: Array<{ domain: string }> = [];
   constructor(

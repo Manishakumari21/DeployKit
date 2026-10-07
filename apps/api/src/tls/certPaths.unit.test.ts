@@ -1,4 +1,3 @@
-// Phase 11.7: certificate path determinism + traversal safety (no DB/fs).
 import test from "node:test";
 import assert from "node:assert/strict";
 import {

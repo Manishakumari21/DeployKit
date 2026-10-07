@@ -1,4 +1,3 @@
-// Phase 11.8: ACME client contract (no network, no filesystem).
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -42,7 +41,6 @@ test("lego argv pins the documented HTTP-01 webroot contract", () => {
   assert.ok(renew.includes("renew"));
   assert.ok(renew.includes("45"));
   assert.ok(!renew.includes("run"));
-  // No secrets travel as argv: only email/domain/server/paths.
   assert.ok(!run.join(" ").includes("PRIVATE"));
 });
 

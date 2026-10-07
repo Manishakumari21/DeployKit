@@ -1,19 +1,3 @@
-// Phase 11.7: deterministic certificate filesystem layout.
-// Certificates are a derived projection like gateway routes: PostgreSQL holds
-// only metadata (tls_status, expiry, relative dir), never key material.
-// Layout under DEPLOYKIT_CERTS_DIR (default /certs, the deploykit-certs
-// volume: read/write in the worker, read-only in the gateway):
-//
-//   <certs>/accounts/                      ACME account data (lego-managed)
-//   <certs>/challenges/                    HTTP-01 webroot (lego writes,
-//     .well-known/acme-challenge/<token>   gateway serves on port 80)
-//   <certs>/domains/<domain>/              one certificate per domain
-//     fullchain.pem          (0644) nginx ssl_certificate
-//     private-key.pem        (0600) nginx ssl_certificate_key
-//
-// The gateway sees the same volume at /etc/nginx/certs, so renderer paths
-// are derived from the same relative layout (see gatewayCertPaths).
-
 import path from "node:path";
 import { normalizeDomain } from "../domains/domainName.js";
 
@@ -41,9 +25,6 @@ export function certsDir(): string {
   return raw;
 }
 
-// Worker-side absolute paths. The domain is re-normalized so a corrupt DB
-// row can never escape into a filesystem path (no traversal possible:
-// normalized hostnames contain only [a-z0-9.-] with no ".." segments).
 export function domainCertDir(domain: string, root: string = certsDir()): string {
   const normalized = normalizeDomain(domain);
   return path.join(root, "domains", normalized);
@@ -57,8 +38,6 @@ export function privateKeyPath(domain: string, root: string = certsDir()): strin
   return path.join(domainCertDir(domain, root), "private-key.pem");
 }
 
-// Gateway-side paths for nginx ssl_certificate directives. Same relative
-// layout under the volume's gateway mount point; never user-supplied.
 export function gatewayCertPaths(domain: string): { certificate: string; key: string } {
   const normalized = normalizeDomain(domain);
   const dir = `${GATEWAY_CERTS_ROOT}/domains/${normalized}`;
@@ -68,22 +47,14 @@ export function gatewayCertPaths(domain: string): { certificate: string; key: st
   };
 }
 
-// Gateway-side HTTP-01 webroot for the nginx challenge location.
-// Same volume as certsDir, seen from the gateway mount point.
 export function gatewayChallengeRoot(): string {
   return `${GATEWAY_CERTS_ROOT}/challenges`;
 }
 
-// Lego working state (ACME accounts + staging downloads). Kept inside the
-// certs volume so account keys survive worker recreation without ever
-// entering PostgreSQL or logs.
 export function acmeWorkDir(root: string = certsDir()): string {
   return path.join(root, "acme");
 }
 
-// HTTP-01 webroot shared with the gateway. Lego writes challenge files to
-// <webroot>/.well-known/acme-challenge/<token>; nginx serves exactly that
-// subtree on port 80 and never redirects it to HTTPS.
 export function challengeWebroot(root: string = certsDir()): string {
   return path.join(root, "challenges");
 }
@@ -92,8 +63,6 @@ export function challengeDir(root: string = certsDir()): string {
   return path.join(challengeWebroot(root), ".well-known", "acme-challenge");
 }
 
-// Relative cert dir persisted in custom_domains.cert_path
-// (e.g. "domains/example.com"). Absolute paths stay host-specific.
 export function certPathRef(domain: string): string {
   return `domains/${normalizeDomain(domain)}`;
 }

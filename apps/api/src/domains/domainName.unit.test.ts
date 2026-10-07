@@ -1,4 +1,3 @@
-// Phase 11: domain normalization unit tests (no DB required).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { normalizeDomain, challengeRecordName, DomainError } from "./domainName.js";

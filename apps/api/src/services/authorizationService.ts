@@ -129,9 +129,6 @@ export async function requireReleaseAccess(
   return { projectId: row.project_id };
 }
 
-// Domain routes carry only their own id, same pattern as deployments:
-// resolve the owning project first, then apply the membership decision.
-// Unknown ids stay 404; existing-but-forbidden stays 403.
 export async function requireDomainAccess(
   userId: string,
   domainId: string

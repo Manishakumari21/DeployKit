@@ -1,7 +1,3 @@
-// Phase 11.8–11.10: issuance orchestration over real PG + temp filesystem.
-// ACME is faked (delegating to openssl self-signed material); gateway Docker
-// calls use a fake binary; HTTPS verification uses injected stubs so no live
-// gateway is needed. Real-E2E against nginx lives in gatewayHttps tests.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { chmod, mkdtemp, readFile, rm, writeFile, stat } from "node:fs/promises";
@@ -116,7 +112,6 @@ async function cleanupEnv(env: TempEnv): Promise<void> {
   await rm(binDir, { recursive: true, force: true }).catch(() => undefined);
 }
 
-// Stub router: real file behavior, injected verification outcomes.
 function stubRouter(
   real: NginxGatewayRouter,
   outcomes: { https?: "ok" | "fail"; http?: "ok" | "fail" } = {}
@@ -144,8 +139,6 @@ function stubRouter(
   return stub;
 }
 
-// Fake ACME backed by real openssl-generated PEMs (pre-generated because the
-// fake's handler contract is synchronous). Deterministic per domain.
 async function fakeAcmeWithRealMaterial(domain: string): Promise<FakeAcmeClient> {
   const selfSigned = new SelfSignedAcmeClient("openssl", 90);
   const material = await selfSigned.requestCertificate(domain);
@@ -191,8 +184,6 @@ test("successful issuance installs files atomically and marks issued", async () 
     assert.ok(!flat.includes("BEGIN RSA"));
     const flatRow = JSON.stringify(done);
     assert.ok(!flatRow.includes("PRIVATE KEY"));
-    // verification_token_hash lives on the internal row by design; the API
-    // boundary (toPublicDomain) strips it — covered by domainAuth tests.
   } finally {
     await teardown();
     await cleanupEnv(env);
@@ -233,7 +224,6 @@ test("gateway HTTPS failure restores previous files and keeps serving", async ()
   const { row } = await makeVerifiedDomain("gwfail");
   try {
     const acme = await fakeAcmeWithRealMaterial(row.domain);
-    // First issuance succeeds (no active runtime, so no gateway involved).
     await requestCertificate(row.id);
     let claimed = await claimDueCertificates(5);
     await processCertificateClaim(claimed.find((r) => r.id === row.id)!, {
@@ -243,15 +233,11 @@ test("gateway HTTPS failure restores previous files and keeps serving", async ()
     });
     const beforeCert = await readFile(fullchainPath(row.domain, env.certsRoot), "utf8");
     const beforeKey = await readFile(privateKeyPath(row.domain, env.certsRoot), "utf8");
-    // Renewal attempt whose gateway activation fails. The row is already
-    // in-flight (renewing), so it is not re-claimable — pass it directly,
-    // exactly as the worker does with the claim it already holds.
     await requestCertificate(row.id);
     const { getDomainById: getById } = await import("./domainService.js");
     const renewalRow = await getById(row.id);
     assert.equal(renewalRow?.tls_status, "renewing");
     const router = stubRouter(env.real, { https: "fail" });
-    // Give the claim an active runtime so gateway convergence is attempted.
     const deployment = await pool.query(
       `INSERT INTO deployments (project_id, status, trigger, branch) VALUES ($1, 'active', 'manual', 'main') RETURNING id`,
       [row.project_id]
@@ -274,7 +260,6 @@ test("gateway HTTPS failure restores previous files and keeps serving", async ()
         certsRoot: env.certsRoot,
       })
     );
-    // Previous valid files restored byte-for-byte; row reverted to issued.
     assert.equal(await readFile(fullchainPath(row.domain, env.certsRoot), "utf8"), beforeCert);
     assert.equal(await readFile(privateKeyPath(row.domain, env.certsRoot), "utf8"), beforeKey);
     const { getDomainById } = await import("./domainService.js");

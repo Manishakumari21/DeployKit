@@ -48,12 +48,6 @@ test("bootstrap never uses shell pipelines", async () => {
 });
 
 test("embedded buildkitd base is the canonical config used by bootstrap", () => {
-  // BASE_BUILDKITD_TOML is the single source of truth written to the
-  // deterministic builder (see desiredBuildkitdToml/bootstrapWorker).
-  // The repo mirror ops/buildkit/buildkitd.toml is intentionally not copied
-  // into the API image (/app), so this test pins the canonical shape
-  // directly instead of reading a host absolute path that cannot exist in
-  // the container. It fails closed if the base drifts.
   assert.equal(desiredBuildkitdToml(null), BASE_BUILDKITD_TOML);
   for (const required of [
     "debug = false",

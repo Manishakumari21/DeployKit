@@ -1,5 +1,3 @@
-// Phase 11: custom-domain DB tests over real PostgreSQL (no fakes).
-// Pure normalization is covered separately; these tests require migration 015.
 import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
@@ -99,12 +97,10 @@ test("global uniqueness prevents cross-project hijacking", async () => {
     await assert.rejects(createDomain({ projectId: b, domain }), (e: unknown) => {
       return e instanceof DomainError && (e as DomainError).code === "DOMAIN_TAKEN";
     });
-    // Case variant collides via lower(domain) unique index.
     await assert.rejects(
       createDomain({ projectId: b, domain: domain.toUpperCase() }),
       (e: unknown) => e instanceof DomainError && (e as DomainError).code === "DOMAIN_TAKEN"
     );
-    // Same-project duplicate also collides.
     await assert.rejects(createDomain({ projectId: a, domain }), (e: unknown) => {
       return e instanceof DomainError && (e as DomainError).code === "DOMAIN_TAKEN";
     });
@@ -168,7 +164,6 @@ test("correct TXT token verifies; wrong/missing/expired fail; rotation invalidat
       (e: unknown) => e instanceof DomainError
     );
 
-    // Expired verification rotates the token: the old token no longer works.
     const domain4 = uniqueDomain("expired");
     const exp = await createDomain({ projectId, domain: domain4 });
     await pool.query(
@@ -183,7 +178,6 @@ test("correct TXT token verifies; wrong/missing/expired fail; rotation invalidat
     const rotated = await getDomainById(exp.row.id);
     assert.equal(rotated?.status, "pending");
     assert.notEqual(rotated?.verification_token_hash, hashVerificationToken(oldToken));
-    // Old token must not verify even if DNS still serves it.
     await assert.rejects(
       verifyDomain(exp.row.id, { lookupTxt: async () => [[oldToken]] }),
       (e: unknown) => e instanceof DomainError
@@ -221,7 +215,6 @@ test("project deletion cascades domains; invalid status rejected; indexes exist"
     await pool.query(`DELETE FROM projects WHERE id = $1`, [projectId]);
     projectIds.splice(projectIds.indexOf(projectId), 1);
     assert.equal(await getDomainById(created.row.id), null);
-    // Invalid lifecycle rejected at DB level.
     const p2 = await makeProject();
     const d2 = await createDomain({ projectId: p2, domain: uniqueDomain("badstate") });
     await assert.rejects(

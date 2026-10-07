@@ -1,10 +1,3 @@
-// Phase 11.8 REAL ACME staging path (opt-in, never part of normal tests).
-// Requires a publicly reachable host with DNS pointed at it plus:
-//   DEPLOYKIT_TEST_ACME_DOMAIN=<real domain>
-//   DEPLOYKIT_TEST_ACME_EMAIL=<valid email>
-//   lego binary installed (worker image or DEPLOYKIT_LEGO_BINARY)
-// Without all three this test reports a skip and passes. It targets the
-// staging CA only — production issuance is never attempted here.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";

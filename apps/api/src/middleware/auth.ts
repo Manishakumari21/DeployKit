@@ -227,7 +227,6 @@ export async function requireReleaseRouteAccess(
   }
 }
 
-// Same shape for domain ids. Unknown ids stay 404.
 export async function requireDomainRouteAccess(
   req: Request,
   res: Response,

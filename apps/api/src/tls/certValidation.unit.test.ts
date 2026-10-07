@@ -1,5 +1,3 @@
-// Phase 11.8: certificate validation against real openssl-generated
-// certificates (skipped only when openssl is unavailable).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { SelfSignedAcmeClient } from "./acmeClient.js";
@@ -45,7 +43,6 @@ test("wrong-domain, expired, and malformed certificates are rejected", async () 
   );
   const expired = new SelfSignedAcmeClient("openssl", 90);
   const old = await expired.requestCertificate("a.example.com");
-  // A 90-day certificate validated a year from now is expired.
   assert.throws(
     () =>
       validateCertificateForDomain(
@@ -58,7 +55,6 @@ test("wrong-domain, expired, and malformed certificates are rejected", async () 
   assert.throws(() => parseCertificate("not-a-pem"), (e: unknown) => {
     return e instanceof CertValidationError;
   });
-  // Wildcard SANs never satisfy exact coverage.
   const { runCommand } = await import("../infrastructure/process/dockerExec.js");
   const { mkdtemp, readFile, rm } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");

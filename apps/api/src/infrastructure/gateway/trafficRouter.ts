@@ -12,17 +12,11 @@ export interface RouteTarget {
 export interface TrafficRouter {
   sync(target: RouteTarget, verifiedDomains?: string[], tlsEntries?: TlsRouteEntry[]): Promise<void>;
   verifyRoute(target: RouteTarget, timeoutMs: number): Promise<void>;
-  // Optional capability: routers backed by a TLS-capable gateway implement
-  // HTTPS verification; fakes and unconfigured routers omit it and callers
-  // must degrade gracefully (plain-HTTP verification only).
   verifyHttpsRoute?(target: RouteTarget, domain: string, timeoutMs: number): Promise<void>;
   remove(projectId: string): Promise<void>;
   activeTarget(projectId: string): Promise<RouteTarget | null>;
 }
 
-// One HTTPS route: a verified domain plus the gateway-side certificate
-// paths nginx will reference. Built only from normalized DB data plus
-// validated on-disk certificates — never from client input.
 export interface TlsRouteEntry {
   domain: string;
   certificateFile: string;
@@ -141,11 +135,6 @@ export async function requestViaHost(
   });
 }
 
-// HTTPS counterpart of requestViaHost: TLS handshake with SNI, then a plain
-// HTTP/1.1 request inside the tunnel. rejectUnauthorized is false on purpose:
-// this checks gateway *routing* (right vhost serves the release), while CA
-// trust is established separately by validating the installed certificate
-// bytes (see tls/certValidation) issued by the configured ACME CA.
 export async function requestViaTlsHost(
   host: string,
   port: number,

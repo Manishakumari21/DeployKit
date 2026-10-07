@@ -1,4 +1,3 @@
-// Phase 11: domain authorization over real HTTP + PostgreSQL.
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
@@ -139,14 +138,11 @@ test("owner can manage domains; stranger, anonymous, and legacy are denied", asy
     assert.equal(created.status, 201);
     const id = (created.json as { id: string }).id;
     assert.ok(id);
-    // No secrets leak.
     const flat = JSON.stringify(created.json);
     assert.ok(!flat.includes("password_hash"));
     assert.ok(!flat.includes("verification_token_hash"));
-    // Stranger cannot read the domain by id; owner can.
     assert.equal((await api(fx.base, `/api/domains/${id}`, { cookie: fx.bob })).status, 403);
     assert.equal((await api(fx.base, `/api/domains/${id}`, { cookie: fx.alice })).status, 200);
-    // Invalid hostname rejected; collision across projects rejected.
     assert.equal(
       (
         await api(fx.base, `/api/projects/${fx.owned}/domains`, {
@@ -157,7 +153,6 @@ test("owner can manage domains; stranger, anonymous, and legacy are denied", asy
       ).status,
       400
     );
-    // Deletion is owner-only and second deletion is stable 404.
     assert.equal(
       (await api(fx.base, `/api/domains/${id}`, { method: "DELETE", cookie: fx.bob })).status,
       403
@@ -187,16 +182,13 @@ test("certificate trigger is owner-only and gated on verification", async () => 
     assert.equal(created.status, 201);
     const id = (created.json as { id: string }).id;
     const trigger = `/api/domains/${id}/certificate`;
-    // Anonymous and stranger are denied before any state is touched.
     assert.equal((await api(fx.base, trigger, { method: "POST" })).status, 401);
     assert.equal(
       (await api(fx.base, trigger, { method: "POST", cookie: fx.bob })).status,
       403
     );
-    // Unverified domains cannot start ACME (no uncontrolled issuance).
     const pending = await api(fx.base, trigger, { method: "POST", cookie: fx.alice });
     assert.equal(pending.status, 422);
-    // Unknown ids stay 404.
     assert.equal(
       (
         await api(fx.base, `/api/domains/00000000-0000-0000-0000-000000000000/certificate`, {
@@ -206,7 +198,6 @@ test("certificate trigger is owner-only and gated on verification", async () => 
       ).status,
       404
     );
-    // No key material ever appears in domain responses.
     const fetched = await api(fx.base, `/api/domains/${id}`, { cookie: fx.alice });
     assert.equal(fetched.status, 200);
     const flat = JSON.stringify(fetched.json);

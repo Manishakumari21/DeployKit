@@ -954,9 +954,6 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         containerIp: runtime.ipAddress,
         containerPort: runtime.containerPort,
       };
-      // Custom domains follow the active release: the same verified aliases
-      // and valid TLS entries are rendered against the new target. Domains
-      // never carry their own runtime association.
       let verifiedDomains: string[] = [];
       try {
         const { getVerifiedDomains } = await import("../services/domainService.js");
@@ -971,8 +968,6 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       } catch {
         tlsEntries = [];
       }
-      // Capture the previous projection so a failed switch restores it
-      // instead of leaving a half-applied candidate in place.
       let previousRaw: string | null = null;
       const maybeRaw = this.trafficRouter as unknown as {
         readRawConfig?: (id: string) => Promise<string | null>;
@@ -987,9 +982,6 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       try {
         await this.trafficRouter.sync(route, verifiedDomains, tlsEntries);
         await this.trafficRouter.verifyRoute(route, this.routeTimeoutMs);
-        // HTTPS routes ride along only where certificates are currently
-        // valid; a failed HTTPS check fails the switch and restores the old
-        // projection, leaving the previous release serving.
         if (typeof this.trafficRouter.verifyHttpsRoute === "function") {
           for (const entry of tlsEntries) {
             await this.trafficRouter.verifyHttpsRoute(

@@ -1,16 +1,3 @@
-// Phase 11.8–11.10: certificate issuance orchestration (worker side).
-// The API only flips tls_status; all Docker/nginx/ACME/filesystem work
-// happens here. Ordering guarantee per domain:
-//
-//   obtain → validate → install atomically → render HTTPS → nginx -t →
-//   reload → verify HTTPS → mark issued → redirect enabled
-//
-// Any step failing before "mark issued" leaves the previous working route
-// intact: previous files are restored when they existed, the previous
-// gateway config is reloaded, and the DB row keeps or regains a safe state.
-// Structured logs carry domain/project/expiry/fingerprint only — never keys,
-// tokens, or challenge secrets.
-
 import { mkdir, readFile, rename, rm, writeFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import pool from "../db/database.js";
@@ -75,8 +62,6 @@ async function readIfExists(file: string): Promise<string | null> {
   }
 }
 
-// Previous files are valid only if they parse, cover the domain, and are
-// unexpired right now. Anything else is treated as absent.
 async function previousIsValid(domain: string, root: string): Promise<boolean> {
   const pem = await readIfExists(fullchainPath(domain, root));
   if (!pem) return false;
@@ -98,10 +83,6 @@ async function installAtomically(
   const certFile = fullchainPath(domain, root);
   const keyFile = privateKeyPath(domain, root);
   await mkdir(dir, { recursive: true, mode: DOMAIN_DIR_MODE });
-  // Challenge files are served by unprivileged nginx workers, so the
-  // webroot tree is explicitly world-traversable/readable (tokens are
-  // unguessable single-use values; nothing secret lives here). Domain dirs
-  // above stay 0700: only the root master reads keys at config load.
   await mkdir(challengeDir(root), { recursive: true, mode: CHALLENGE_DIR_MODE });
   const previousCert = await readIfExists(certFile);
   const previousKey = await readIfExists(keyFile);
@@ -160,7 +141,6 @@ export async function processCertificateClaim(
     renewal: wasRenewal,
   });
 
-  // 1–2. Obtain (lego HTTP-01 against the gateway's port 80) and validate.
   let obtained: Awaited<ReturnType<AcmeClient["requestCertificate"]>>;
   try {
     obtained = await deps.acmeClient.requestCertificate(fresh.domain, wasRenewal);
@@ -196,14 +176,11 @@ export async function processCertificateClaim(
     throw error;
   }
 
-  // 3. Atomic install (both files renamed before any reload observes them).
   const fullchainPem = obtained.issuerPem
     ? `${obtained.certificatePem.trim()}\n${obtained.issuerPem.trim()}\n`
     : obtained.certificatePem;
   const installed = await installAtomically(fresh.domain, root, fullchainPem, obtained.privateKeyPem);
 
-  // 4–7. Render HTTPS, test, reload, verify. Without an active runtime
-  // there is nothing to converge yet: the files wait for the next deploy.
   const target = await resolveActiveRoute(fresh.project_id);
   if (target) {
     try {
@@ -214,9 +191,6 @@ export async function processCertificateClaim(
         certsRoot: root,
       });
     } catch (error) {
-      // Restore previous files when they carried working HTTPS; otherwise
-      // keep the new (valid) files for the next retry while the gateway
-      // projection stays on the previous known-good config.
       if (hadPrevious) {
         await restorePrevious(fresh.domain, root, installed).catch(() => undefined);
       }
@@ -235,8 +209,6 @@ export async function processCertificateClaim(
     }
   }
 
-  // 8. Only now record the active TLS metadata; the redirect follows from
-  // the files + this status on every subsequent render.
   const done = await markCertificateIssued({
     domainId: fresh.id,
     expectedTls: wasRenewal ? ["renewing", "pending"] : ["pending", "renewing"],
@@ -253,9 +225,6 @@ export async function processCertificateClaim(
   return done;
 }
 
-// Remove certificate directories with no corresponding domain row (e.g.
-// after domain deletion). Bounded per sweep; never touches rows that exist,
-// including pending ones mid-issuance.
 export async function gcOrphanCertificates(root: string = certsDir(), cap = 10): Promise<number> {
   let names: string[];
   try {
@@ -273,7 +242,6 @@ export async function gcOrphanCertificates(root: string = certsDir(), cap = 10):
   for (const name of names) {
     if (removed >= cap) break;
     if (live.has(name)) continue;
-    // Re-normalize before deleting: only exact normalized dir names go.
     if (!/^[a-z0-9.-]{1,253}$/.test(name) || name.includes("..")) continue;
     await rm(path.join(root, "domains", name), { recursive: true, force: true }).catch(() => undefined);
     removed++;
@@ -289,18 +257,12 @@ export interface MaintenanceSummary {
   orphansRemoved: number;
 }
 
-// Due-date-driven worker sweep: expire, claim, process sequentially,
-// clean orphans. Sequential processing bounds ACME concurrency and nginx
-// reloads; each claim is idempotent and crash-safe (pending rows are simply
-// re-claimed next sweep).
 export async function runCertificateMaintenance(deps: IssuanceDeps): Promise<MaintenanceSummary> {
   const summary: MaintenanceSummary = { expired: 0, claimed: 0, issued: 0, failed: 0, orphansRemoved: 0 };
   const expiredProjects = await markExpiredCertificates();
   summary.expired = expiredProjects.length;
   if (expiredProjects.length > 0) {
     tlsLog("certificate.expired_sweep", { projects: expiredProjects.length });
-    // Drop HTTPS + redirect for newly expired domains. Best-effort per
-    // project: failures are logged and retried on a later sweep or deploy.
     const { syncProjectGateway } = await import("./gatewayService.js");
     const { NginxGatewayRouter } = await import(
       "../infrastructure/gateway/nginxGatewayRouter.js"
@@ -331,9 +293,6 @@ export async function runCertificateMaintenance(deps: IssuanceDeps): Promise<Mai
       summary.failed++;
     }
   }
-  // Keep the gateway honest: expiry flips tls_status, and the render gate
-  // (resolveValidTlsEntries) drops expired domains from HTTPS on the next
-  // convergence. Orphan files never route without a DB row.
   summary.orphansRemoved = await gcOrphanCertificates(deps.certsRoot ?? certsDir());
   return summary;
 }

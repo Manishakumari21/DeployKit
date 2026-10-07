@@ -1,4 +1,3 @@
-// Phase 11.6: certificate state machine over real PostgreSQL.
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -81,7 +80,6 @@ test("request arms pending, rejects unverified, refuses duplicate work", async (
     await assert.rejects(requestCertificate(domainId), (e: unknown) => {
       return e instanceof CertError && e.code === "CERT_REQUEST_ACTIVE";
     });
-    // Unverified domains cannot start ACME.
     const other = await makeVerifiedDomain("other");
     await pool.query(`UPDATE custom_domains SET status = 'pending' WHERE id = $1`, [other.domainId]);
     await assert.rejects(requestCertificate(other.domainId), (e: unknown) => {
@@ -157,7 +155,6 @@ test("issued marking is compare-and-set; failures revert or record", async () =>
     });
     assert.equal(issued.tls_status, "issued");
     assert.ok(issued.cert_expires_at);
-    // Renewal failure with a valid cert reverts to issued with error kept.
     const reverted = await markCertificateFailed({
       domainId,
       code: "ACME_REQUEST_FAILED",
@@ -166,7 +163,6 @@ test("issued marking is compare-and-set; failures revert or record", async () =>
     });
     assert.equal(reverted.tls_status, "issued");
     assert.equal(reverted.tls_last_error_code, "ACME_REQUEST_FAILED");
-    // First-issuance failure records failed.
     const { domainId: second } = await makeVerifiedDomain("mark2");
     await requestCertificate(second);
     const failed = await markCertificateFailed({

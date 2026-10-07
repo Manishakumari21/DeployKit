@@ -1,9 +1,3 @@
-// Phase 11.9: HTTPS rendering policy (no DB, no docker).
-// Policy under test:
-// - valid TLS entry → HTTP redirects to HTTPS + 443 block serves the app.
-// - no/expired/failed TLS → HTTP proxies, no redirect, no 443 block.
-// - ACME challenge path always serves files on port 80, never redirects.
-// - unverified or removed domains never become HTTPS routes.
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -41,17 +35,12 @@ test("valid certificate renders redirect plus terminating HTTPS block", () => {
     [tlsEntry("tls.example.com")],
     "/tmp/challenges"
   );
-  // Redirecting block covers only the TLS name.
   assert.match(content, /server_name tls\.example\.com;/);
-  // The redirect must sit inside `location /`: a server-level `return`
-  // would run before location selection and shadow the ACME location.
   assert.match(content, /location \/ \{\s+return 301 https:\/\/\$host\$request_uri;\s+\}/);
-  // Application block keeps the derived host and the plain domain.
   assert.match(
     content,
     /server_name dk-p12345678\.deploykit\.local plain\.example\.com;/
   );
-  // HTTPS block terminates with the deterministic paths.
   assert.match(content, /listen 443 ssl;/);
   assert.match(
     content,
@@ -62,7 +51,6 @@ test("valid certificate renders redirect plus terminating HTTPS block", () => {
     /ssl_certificate_key \/etc\/nginx\/certs\/domains\/tls\.example\.com\/private-key\.pem;/
   );
   assert.match(content, /ssl_protocols TLSv1\.2 TLSv1\.3;/);
-  // Challenge bypass exists in every port-80 block and never redirects.
   const challengeBlocks = content.match(/acme-challenge/g) ?? [];
   assert.ok(challengeBlocks.length >= 2);
   assert.match(content, /root \/tmp\/challenges;/);

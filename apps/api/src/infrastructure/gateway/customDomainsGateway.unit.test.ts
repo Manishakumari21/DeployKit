@@ -1,5 +1,3 @@
-// Phase 11: multi-domain gateway routing + safe rollback (no Docker needed
-// except via fake docker binaries; route verification uses injected fakes).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -51,7 +49,6 @@ test("one project renders multiple verified domains on one upstream", () => {
   assert.match(content, /server_name dk-p12345678\.deploykit\.local example\.com www\.example\.com/);
   assert.match(content, /upstream dk_p12345678/);
   assert.match(content, /proxy_pass http:\/\/dk_p12345678/);
-  // HTTP-01 reserved, no TLS yet.
   assert.match(content, /acme-challenge/);
   assert.ok(!content.includes("listen 443"));
   assert.ok(!content.includes("ssl_certificate"));
@@ -77,7 +74,6 @@ test("reload failure restores the previous known-good config", async () => {
   const work = await mkdtemp(path.join(os.tmpdir(), "deploykit-gw-dom-"));
   const logPath = path.join(work, "docker.log");
   await writeFile(logPath, "");
-  // Fail the second reload: first sync succeeds, second fails on nginx -t.
   const binOk = await fakeDockerBin(logPath, []);
   const binFail = await fakeDockerBin(logPath, ["nginx -t"]);
   try {
@@ -100,7 +96,6 @@ test("reload failure restores the previous known-good config", async () => {
     assert.equal(after, before);
     assert.ok(after.includes("old.example.com"));
     assert.ok(!after.includes("new.example.com"));
-    // No timestamped tmp files leak.
     const { readdir } = await import("node:fs/promises");
     const files = await readdir(path.join(work, "routes"));
     assert.ok(!files.some((f) => f.includes(".tmp-")), `tmp leak: ${files}`);
@@ -124,11 +119,9 @@ test("project target stays shared across domain changes", async () => {
     });
     await router.sync(target(), ["a.example.com", "b.example.com"]);
     const content = await readFile(path.join(work, "routes", routeFileName(PROJECT)), "utf8");
-    // Single upstream shared by all server names.
     const upstreams = content.match(/upstream dk_p12345678/g) ?? [];
     assert.equal(upstreams.length, 1);
     assert.match(content, /server 172\.20\.0\.5:3000/);
-    // Restore helper round-trips.
     const prev = await router.readRawConfig(PROJECT);
     await router.restoreRawConfig(PROJECT, null);
     assert.equal(await router.readRawConfig(PROJECT), null);

@@ -23,8 +23,6 @@ export interface NginxGatewayRouterOptions {
   gatewayContainer?: string;
   gatewayHost?: string;
   routesDir?: string;
-  // Gateway-side HTTP-01 webroot served on port 80. Defaults to the shared
-  // certs volume path; tests point it at a temp dir.
   challengeRoot?: string;
 }
 
@@ -40,8 +38,6 @@ export function renderProjectRoute(
 ): string {
   validateRouteTarget(target);
   const domains = sanitizeVerifiedDomains(verifiedDomains);
-  // Defense in depth: TLS blocks are rendered only for verified domains, so
-  // a stale or foreign entry can never become an HTTPS route.
   const verifiedSet = new Set(domains);
   const tls = sanitizeTlsEntries(tlsEntries).filter((entry) =>
     verifiedSet.has(entry.domain)
@@ -83,10 +79,6 @@ export function renderProjectRoute(
     "}",
   ];
   if (tls.length > 0) {
-    // Redirecting block: only domains with a currently valid certificate.
-    // The return lives inside `location /` on purpose: a server-level
-    // `return` runs in nginx's rewrite phase BEFORE location selection and
-    // would shadow the challenge location below, breaking ACME HTTP-01.
     lines.push(
       "server {",
       "    listen 80;",
@@ -98,9 +90,6 @@ export function renderProjectRoute(
       "}"
     );
   }
-  // Application block: derived hostname plus verified domains WITHOUT a
-  // valid certificate. These stay on HTTP by design — never redirect to a
-  // missing, failed, or expired certificate.
   lines.push(
     "server {",
     "    listen 80;",
@@ -109,8 +98,6 @@ export function renderProjectRoute(
     ...proxyLocation,
     "}"
   );
-  // One HTTPS block per domain (one certificate per domain keeps SAN scope
-  // explicit and avoids silently broadening coverage).
   for (const entry of tls) {
     lines.push(
       "server {",
@@ -127,9 +114,6 @@ export function renderProjectRoute(
   return lines.join("\n");
 }
 
-// Second defensive gate: TLS entries reference exact gateway-side files.
-// Domains are re-normalized; paths must be absolute .pem paths without
-// traversal so API input can never steer nginx at arbitrary files.
 export function sanitizeTlsEntries(input: unknown): TlsRouteEntry[] {
   if (!Array.isArray(input) || input.length === 0) return [];
   const seen = new Set<string>();
@@ -168,9 +152,6 @@ export function sanitizeTlsEntries(input: unknown): TlsRouteEntry[] {
   return out.sort((a, b) => (a.domain < b.domain ? -1 : 1));
 }
 
-// Single defensive gate for gateway input: only normalized DB hostnames
-// become server_name values. Invalid entries are rejected loudly so a
-// corrupt row can never silently enter nginx config.
 export function sanitizeVerifiedDomains(input: unknown): string[] {
   if (!Array.isArray(input) || input.length === 0) return [];
   const seen = new Set<string>();
@@ -295,7 +276,6 @@ export class NginxGatewayRouter implements TrafficRouter {
     await this.execGateway(["nginx", "-s", "reload"]);
   }
 
-  // Raw file content for backup/restore. Null when no route exists.
   async readRawConfig(projectId: string): Promise<string | null> {
     routeServerName(projectId);
     try {
@@ -307,8 +287,6 @@ export class NginxGatewayRouter implements TrafficRouter {
     }
   }
 
-  // Restore a previous known-good file (or remove when null), then reload.
-  // Used only for rollback after a failed candidate projection.
   async restoreRawConfig(projectId: string, previous: string | null): Promise<void> {
     routeServerName(projectId);
     const filePath = this.routePath(projectId);
@@ -331,7 +309,6 @@ export class NginxGatewayRouter implements TrafficRouter {
     validateRouteTarget(target);
     const content = renderProjectRoute(target, verifiedDomains, tlsEntries, this.challengeRoot);
     const filePath = this.routePath(target.projectId);
-    // Deterministic tmp name scoped to the gateway file (no timestamps).
     const tmpPath = `${filePath}.tmp`;
     let previous: string | null = null;
     try {
@@ -352,15 +329,12 @@ export class NginxGatewayRouter implements TrafficRouter {
           : "Gateway route write failed"
       );
     }
-    // Validate before treating the candidate as live. On failure the
-    // previous known-good file is restored so the active route never breaks.
     try {
       await this.reload();
     } catch (error) {
       try {
         await this.restoreRawConfig(target.projectId, previous);
       } catch {
-        // Best-effort restore; the original error stays authoritative.
       }
       if (error instanceof TrafficRouterError) throw error;
       throw new TrafficRouterError(

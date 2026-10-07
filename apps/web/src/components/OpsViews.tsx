@@ -25,8 +25,6 @@ export function DomainsView({ projectId }: { projectId: string | null }) {
     }
   }, []);
 
-  // Same deferred-load pattern as useAuth: no synchronous setState in the
-  // effect body, so no cascading render.
   useEffect(() => {
     if (!projectId) return;
     queueMicrotask(() => {
@@ -73,7 +71,6 @@ export function DomainsView({ projectId }: { projectId: string | null }) {
         const rows = await fetchDomains(projectId);
         setDomains(rows);
       } catch {
-        // Keep stale list on refresh failure.
       }
     } finally {
       setBusy(false);

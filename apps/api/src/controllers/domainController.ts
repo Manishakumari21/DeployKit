@@ -11,11 +11,11 @@ import {
   createDomain,
   deleteDomainRow,
   getDomainById,
-  getVerifiedDomains,
   listDomains,
   verifyDomain,
   type DomainRow,
 } from "../services/domainService.js";
+import { requestCertificate, CertError } from "../services/certService.js";
 import { TrafficRouterError } from "../infrastructure/gateway/trafficRouter.js";
 
 const domainBody = z.object({ domain: z.string().min(1).max(253) });
@@ -34,6 +34,10 @@ function toPublicDomain(row: DomainRow, token?: string) {
     verified_at: row.verified_at,
     tls_status: row.tls_status,
     cert_expires_at: row.cert_expires_at,
+    tls_requested_at: row.tls_requested_at,
+    tls_last_attempt_at: row.tls_last_attempt_at,
+    tls_last_error_code: row.tls_last_error_code,
+    tls_last_error: row.tls_last_error,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -42,6 +46,10 @@ function toPublicDomain(row: DomainRow, token?: string) {
 
 function domainError(res: Response, error: unknown): void {
   if (error instanceof DomainError) {
+    res.status(error.status).json({ error: error.message, code: error.code });
+    return;
+  }
+  if (error instanceof CertError) {
     res.status(error.status).json({ error: error.message, code: error.code });
     return;
   }
@@ -175,28 +183,18 @@ export async function deleteDomainController(req: Request, res: Response): Promi
     }
     // When an active runtime exists, rewrite the projection without this
     // domain and verify before deleting. Without an active route there is
-    // no file to converge, so deletion proceeds directly.
-    const remaining = (await getVerifiedDomains(projectId)).filter(
-      (d) => d !== existing.domain
-    );
+    // no file to converge, so deletion proceeds directly. Certificate files
+    // are reclaimed later by the worker's orphan sweep (the API has no
+    // access to the certificate volume by design).
     try {
-      const { resolveActiveRoute } = await import("../services/gatewayService.js");
+      const { resolveActiveRoute, syncProjectTarget } = await import(
+        "../services/gatewayService.js"
+      );
       const target = await resolveActiveRoute(projectId);
       if (target) {
-        const { NginxGatewayRouter } = await import(
-          "../infrastructure/gateway/nginxGatewayRouter.js"
-        );
-        const router = new NginxGatewayRouter();
-        const previous = await router.readRawConfig(projectId);
         try {
-          await router.sync(target, remaining);
-          await router.verifyRoute(target, 10_000);
+          await syncProjectTarget(projectId, target, { excludeDomains: [existing.domain] });
         } catch (error) {
-          try {
-            await router.restoreRawConfig(projectId, previous);
-          } catch {
-            // Best-effort restore.
-          }
           console.error("Domain removal gateway error");
           res.status(502).json({
             error: "Gateway update failed; domain was kept",
@@ -206,7 +204,6 @@ export async function deleteDomainController(req: Request, res: Response): Promi
         }
       }
     } catch (error) {
-      if (error instanceof Response) throw error;
       // resolveActiveRoute returning null is handled above (no target);
       // unexpected DB errors fall through to 500 below.
       if (error instanceof TrafficRouterError) {
@@ -228,5 +225,21 @@ export async function deleteDomainController(req: Request, res: Response): Promi
   } catch (error) {
     console.error("Domain deletion error");
     res.status(500).json({ error: "Failed to delete domain" });
+  }
+}
+
+// POST /api/domains/:id/certificate — manual issuance/renewal trigger.
+// Protected by project membership + origin checks like all domain routes.
+// Only arms the state machine (tls pending/renewing); the worker performs
+// ACME asynchronously, so this request never blocks on the CA and cannot
+// trigger uncontrolled ACME traffic (re-arms only from rest states).
+export async function requestCertificateController(req: Request, res: Response): Promise<void> {
+  const domainId = uuidParam(req, res, "Invalid domain id");
+  if (!domainId) return;
+  try {
+    const row = await requestCertificate(domainId);
+    res.status(202).json(toPublicDomain(row));
+  } catch (error) {
+    domainError(res, error);
   }
 }

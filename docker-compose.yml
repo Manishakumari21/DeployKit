@@ -102,12 +102,21 @@ services:
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
       GITHUB_API_BASE_URL: ${GITHUB_API_BASE_URL:-https://api.github.com}
+      DEPLOYKIT_CERTS_DIR: /certs
+      DEPLOYKIT_ACME_EMAIL: ${DEPLOYKIT_ACME_EMAIL:-}
+      DEPLOYKIT_ACME_SERVER: ${DEPLOYKIT_ACME_SERVER:-https://acme-staging-v02.api.letsencrypt.org/directory}
+      DEPLOYKIT_TLS_MODE: ${DEPLOYKIT_TLS_MODE:-acme}
+      DEPLOYKIT_CERT_POLL_INTERVAL_MS: ${DEPLOYKIT_CERT_POLL_INTERVAL_MS:-60000}
 
     volumes:
       # Worker only: Buildx and runtime need Docker access.
       # Never mount the socket into api/web (public surface).
       - /var/run/docker.sock:/var/run/docker.sock
       - deploykit-gateway-routes:/gateway-routes
+      # Certificate filesystem (Phase 11 TLS): worker read/write for ACME
+      # accounts, HTTP-01 challenges, and per-domain material. The gateway
+      # mounts the same volume read-only. Never in PostgreSQL or logs.
+      - deploykit-certs:/certs
       # Persist only worker-controlled Buildx state so the deterministic
       # builder is reused across worker recreation (no host ~/.docker mount).
       - deploykit-buildx-state:/tmp/deploykit-buildx
@@ -161,8 +170,20 @@ services:
 
     container_name: dk-gateway
 
+    # Production HTTPS prerequisite: the gateway must be reachable on 80
+    # (ACME HTTP-01 validation) and 443 (TLS) from the public internet, with
+    # DNS A/AAAA records pointing at this host. Local development keeps these
+    # unbound by overriding or ignoring the mapping.
+    ports:
+      - "80:80"
+      - "443:443"
+
     volumes:
       - deploykit-gateway-routes:/etc/nginx/routes
+      # Read-only view of the certificate volume: routes reference
+      # /etc/nginx/certs/domains/<domain>/{fullchain,private-key}.pem and the
+      # HTTP-01 webroot at /etc/nginx/certs/challenges.
+      - deploykit-certs:/etc/nginx/certs:ro
 
     networks:
       - runtime
@@ -180,3 +201,7 @@ volumes:
   deploykit-gateway-routes:
   deploykit-registry-data:
   deploykit-buildx-state:
+  # Phase 11 TLS: ACME accounts, HTTP-01 challenges, per-domain certificates.
+  # Worker read/write, gateway read-only. Back this volume up encrypted;
+  # it holds private keys that never belong in PostgreSQL or logs.
+  deploykit-certs:

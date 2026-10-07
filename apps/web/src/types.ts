@@ -88,6 +88,10 @@ export type CustomDomain = {
   verified_at: string | null;
   tls_status: "none" | "pending" | "issued" | "renewing" | "failed" | "expired";
   cert_expires_at: string | null;
+  tls_requested_at: string | null;
+  tls_last_attempt_at: string | null;
+  tls_last_error_code: string | null;
+  tls_last_error: string | null;
   created_at: string;
   updated_at: string;
 };

@@ -4,6 +4,7 @@ import {
   deleteDomainController,
   getDomainController,
   listDomainsController,
+  requestCertificateController,
   verifyDomainController,
 } from "../controllers/domainController.js";
 import {
@@ -25,6 +26,7 @@ router.get("/projects/:id/domains", requireProjectAccess, listDomainsController)
 // Domain-scoped routes: middleware resolves the owning project first.
 router.get("/domains/:id", requireDomainRouteAccess, getDomainController);
 router.post("/domains/:id/verify", requireDomainRouteAccess, verifyDomainController);
+router.post("/domains/:id/certificate", requireDomainRouteAccess, requestCertificateController);
 router.delete("/domains/:id", requireDomainRouteAccess, deleteDomainController);
 
 export default router;

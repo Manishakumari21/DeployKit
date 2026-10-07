@@ -9,17 +9,23 @@ import {
   routeServerName,
   validateRouteTarget,
   requestViaHost,
+  requestViaTlsHost,
   TrafficRouterError,
   type RouteTarget,
+  type TlsRouteEntry,
   type TrafficRouter,
 } from "./trafficRouter.js";
 import { normalizeDomain } from "../../domains/domainName.js";
+import { gatewayChallengeRoot } from "../../tls/certPaths.js";
 
 export interface NginxGatewayRouterOptions {
   dockerBinary?: string;
   gatewayContainer?: string;
   gatewayHost?: string;
   routesDir?: string;
+  // Gateway-side HTTP-01 webroot served on port 80. Defaults to the shared
+  // certs volume path; tests point it at a temp dir.
+  challengeRoot?: string;
 }
 
 function shortRef(projectId: string): string {
@@ -28,13 +34,44 @@ function shortRef(projectId: string): string {
 
 export function renderProjectRoute(
   target: RouteTarget,
-  verifiedDomains: string[] = []
+  verifiedDomains: string[] = [],
+  tlsEntries: TlsRouteEntry[] = [],
+  challengeRoot: string = gatewayChallengeRoot()
 ): string {
   validateRouteTarget(target);
   const domains = sanitizeVerifiedDomains(verifiedDomains);
+  // Defense in depth: TLS blocks are rendered only for verified domains, so
+  // a stale or foreign entry can never become an HTTPS route.
+  const verifiedSet = new Set(domains);
+  const tls = sanitizeTlsEntries(tlsEntries).filter((entry) =>
+    verifiedSet.has(entry.domain)
+  );
+  const tlsSet = new Set(tls.map((entry) => entry.domain));
+  const plain = domains.filter((domain) => !tlsSet.has(domain));
+  if (challengeRoot.includes("\0") || /["'\r\n]/.test(challengeRoot)) {
+    throw new TrafficRouterError("INVALID_GATEWAY", "Invalid challenge root");
+  }
   const ref = shortRef(target.projectId);
   const upstream = `dk_p${ref}`;
-  const serverNames = [routeServerName(target.projectId), ...domains].join(" ");
+  const derived = routeServerName(target.projectId);
+  const challengeLocation = [
+    "    # ACME HTTP-01: served on port 80, never redirected to HTTPS.",
+    "    # Only exact challenge files resolve here; nothing else is served.",
+    "    location ^~ /.well-known/acme-challenge/ {",
+    `        root ${challengeRoot};`,
+    "        try_files $uri =404;",
+    "    }",
+  ];
+  const proxyLocation = [
+    "    location / {",
+    `        proxy_pass http://${upstream};`,
+    "        proxy_http_version 1.1;",
+    "        proxy_set_header Host $host;",
+    "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+    "        proxy_connect_timeout 5s;",
+    "        proxy_read_timeout 60s;",
+    "    }",
+  ];
   const lines = [
     "# deploykit-managed: DO NOT EDIT",
     `# project: ${target.projectId}`,
@@ -44,26 +81,91 @@ export function renderProjectRoute(
     `    server ${target.containerIp}:${target.containerPort} max_fails=3 fail_timeout=10s;`,
     "    keepalive 16;",
     "}",
+  ];
+  if (tls.length > 0) {
+    // Redirecting block: only domains with a currently valid certificate.
+    // The return lives inside `location /` on purpose: a server-level
+    // `return` runs in nginx's rewrite phase BEFORE location selection and
+    // would shadow the challenge location below, breaking ACME HTTP-01.
+    lines.push(
+      "server {",
+      "    listen 80;",
+      `    server_name ${tls.map((entry) => entry.domain).join(" ")};`,
+      ...challengeLocation,
+      "    location / {",
+      "        return 301 https://$host$request_uri;",
+      "    }",
+      "}"
+    );
+  }
+  // Application block: derived hostname plus verified domains WITHOUT a
+  // valid certificate. These stay on HTTP by design — never redirect to a
+  // missing, failed, or expired certificate.
+  lines.push(
     "server {",
     "    listen 80;",
-    `    server_name ${serverNames};`,
-    "    # Phase 11: ACME HTTP-01 reserved for a later step.",
-    "    # No challenge is served yet; this block stays a 404.",
-    "    location ^~ /.well-known/acme-challenge/ {",
-    "        return 404;",
-    "    }",
-    "    location / {",
-    `        proxy_pass http://${upstream};`,
-    "        proxy_http_version 1.1;",
-    "        proxy_set_header Host $host;",
-    "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
-    "        proxy_connect_timeout 5s;",
-    "        proxy_read_timeout 60s;",
-    "    }",
-    "}",
-    "",
-  ];
+    `    server_name ${[derived, ...plain].join(" ")};`,
+    ...challengeLocation,
+    ...proxyLocation,
+    "}"
+  );
+  // One HTTPS block per domain (one certificate per domain keeps SAN scope
+  // explicit and avoids silently broadening coverage).
+  for (const entry of tls) {
+    lines.push(
+      "server {",
+      "    listen 443 ssl;",
+      `    server_name ${entry.domain};`,
+      `    ssl_certificate ${entry.certificateFile};`,
+      `    ssl_certificate_key ${entry.keyFile};`,
+      "    ssl_protocols TLSv1.2 TLSv1.3;",
+      ...proxyLocation,
+      "}"
+    );
+  }
+  lines.push("");
   return lines.join("\n");
+}
+
+// Second defensive gate: TLS entries reference exact gateway-side files.
+// Domains are re-normalized; paths must be absolute .pem paths without
+// traversal so API input can never steer nginx at arbitrary files.
+export function sanitizeTlsEntries(input: unknown): TlsRouteEntry[] {
+  if (!Array.isArray(input) || input.length === 0) return [];
+  const seen = new Set<string>();
+  const out: TlsRouteEntry[] = [];
+  for (const raw of (input as unknown[]).slice(0, 50)) {
+    const entry = raw as Partial<TlsRouteEntry>;
+    if (
+      typeof entry?.domain !== "string" ||
+      typeof entry?.certificateFile !== "string" ||
+      typeof entry?.keyFile !== "string"
+    ) {
+      throw new TrafficRouterError("INVALID_TLS_ENTRY", "Invalid TLS route entry");
+    }
+    let domain: string;
+    try {
+      domain = normalizeDomain(entry.domain);
+    } catch {
+      throw new TrafficRouterError("INVALID_TLS_ENTRY", "Invalid TLS route entry");
+    }
+    for (const file of [entry.certificateFile, entry.keyFile]) {
+      if (
+        !path.posix.isAbsolute(file) ||
+        file.includes("\0") ||
+        /["'\r\n]/.test(file) ||
+        path.posix.normalize(file) !== file ||
+        file.includes("/../") ||
+        !file.endsWith(".pem")
+      ) {
+        throw new TrafficRouterError("INVALID_TLS_ENTRY", "Invalid TLS certificate path");
+      }
+    }
+    if (seen.has(domain)) continue;
+    seen.add(domain);
+    out.push({ domain, certificateFile: entry.certificateFile, keyFile: entry.keyFile });
+  }
+  return out.sort((a, b) => (a.domain < b.domain ? -1 : 1));
 }
 
 // Single defensive gate for gateway input: only normalized DB hostnames
@@ -88,9 +190,15 @@ export function sanitizeVerifiedDomains(input: unknown): string[] {
 }
 
 export function parseProjectDomains(content: string): string[] {
-  const line = /^\s*server_name\s+(.+?)\s*;/m.exec(content)?.[1];
-  if (!line) return [];
-  return line.split(/\s+/).filter(Boolean);
+  const seen = new Set<string>();
+  const pattern = /^\s*server_name\s+(.+?)\s*;/gm;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(content)) !== null) {
+    for (const name of match[1].split(/\s+/).filter(Boolean)) {
+      seen.add(name);
+    }
+  }
+  return [...seen];
 }
 
 export function parseProjectRoute(
@@ -126,6 +234,7 @@ export class NginxGatewayRouter implements TrafficRouter {
   private readonly gatewayContainer: string;
   private readonly gatewayHost: string;
   private readonly routesDir: string;
+  private readonly challengeRoot: string;
 
   constructor(options: NginxGatewayRouterOptions = {}) {
     const container = (
@@ -155,6 +264,11 @@ export class NginxGatewayRouter implements TrafficRouter {
       "dk-gateway"
     ).trim();
     this.routesDir = routesDir;
+    const challengeRoot = (options.challengeRoot ?? gatewayChallengeRoot()).trim();
+    if (!challengeRoot || /[\0]/.test(challengeRoot) || /["'\r\n]/.test(challengeRoot)) {
+      throw new TrafficRouterError("INVALID_GATEWAY", "Invalid gateway challenge root");
+    }
+    this.challengeRoot = challengeRoot;
   }
 
   private routePath(projectId: string): string {
@@ -209,9 +323,13 @@ export class NginxGatewayRouter implements TrafficRouter {
     await this.reload();
   }
 
-  async sync(target: RouteTarget, verifiedDomains: string[] = []): Promise<void> {
+  async sync(
+    target: RouteTarget,
+    verifiedDomains: string[] = [],
+    tlsEntries: TlsRouteEntry[] = []
+  ): Promise<void> {
     validateRouteTarget(target);
-    const content = renderProjectRoute(target, verifiedDomains);
+    const content = renderProjectRoute(target, verifiedDomains, tlsEntries, this.challengeRoot);
     const filePath = this.routePath(target.projectId);
     // Deterministic tmp name scoped to the gateway file (no timestamps).
     const tmpPath = `${filePath}.tmp`;
@@ -281,6 +399,37 @@ export class NginxGatewayRouter implements TrafficRouter {
     throw new TrafficRouterError(
       "ROUTE_NOT_READY",
       `Gateway does not serve the active release: ${lastError.slice(0, 200)}`
+    );
+  }
+
+  async verifyHttpsRoute(
+    target: RouteTarget,
+    domain: string,
+    timeoutMs: number
+  ): Promise<void> {
+    validateRouteTarget(target);
+    const serverName = normalizeDomain(domain);
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+      throw new TrafficRouterError("INVALID_TIMEOUT", "Route verification timeout must be positive");
+    }
+    const deadline = Date.now() + timeoutMs;
+    let lastError = "No response";
+    while (Date.now() < deadline) {
+      try {
+        const { status } = await requestViaTlsHost(this.gatewayHost, 443, serverName);
+        if (status >= 200 && status < 400) {
+          return;
+        }
+        lastError = `HTTP ${status}`;
+      } catch (error) {
+        lastError =
+          error instanceof Error ? error.message.slice(0, 200) : "Route check failed";
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+    throw new TrafficRouterError(
+      "TLS_ROUTE_NOT_READY",
+      `Gateway does not serve HTTPS for ${serverName}: ${lastError.slice(0, 200)}`
     );
   }
 

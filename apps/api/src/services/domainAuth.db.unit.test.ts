@@ -174,3 +174,45 @@ test("owner can manage domains; stranger, anonymous, and legacy are denied", asy
     await teardown();
   }
 });
+
+test("certificate trigger is owner-only and gated on verification", async () => {
+  const fx = await setup();
+  if (!fx) return;
+  try {
+    const created = await api(fx.base, `/api/projects/${fx.owned}/domains`, {
+      method: "POST",
+      cookie: fx.alice,
+      body: { domain: uniqueDomain("tls") },
+    });
+    assert.equal(created.status, 201);
+    const id = (created.json as { id: string }).id;
+    const trigger = `/api/domains/${id}/certificate`;
+    // Anonymous and stranger are denied before any state is touched.
+    assert.equal((await api(fx.base, trigger, { method: "POST" })).status, 401);
+    assert.equal(
+      (await api(fx.base, trigger, { method: "POST", cookie: fx.bob })).status,
+      403
+    );
+    // Unverified domains cannot start ACME (no uncontrolled issuance).
+    const pending = await api(fx.base, trigger, { method: "POST", cookie: fx.alice });
+    assert.equal(pending.status, 422);
+    // Unknown ids stay 404.
+    assert.equal(
+      (
+        await api(fx.base, `/api/domains/00000000-0000-0000-0000-000000000000/certificate`, {
+          method: "POST",
+          cookie: fx.alice,
+        })
+      ).status,
+      404
+    );
+    // No key material ever appears in domain responses.
+    const fetched = await api(fx.base, `/api/domains/${id}`, { cookie: fx.alice });
+    assert.equal(fetched.status, 200);
+    const flat = JSON.stringify(fetched.json);
+    assert.ok(!flat.includes("PRIVATE KEY"));
+    assert.ok(!flat.includes("BEGIN CERTIFICATE"));
+  } finally {
+    await teardown();
+  }
+});

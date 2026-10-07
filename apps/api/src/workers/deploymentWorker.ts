@@ -29,6 +29,51 @@ const LEASE_RENEWAL_MS = Math.max(
   Math.floor(LEASE_MS / 3)
 );
 
+// Certificate maintenance (Phase 11 TLS): due-date-driven sweep for ACME
+// issuance/renewal, expiry marking, and orphan cleanup. Runs only on the
+// worker (sole Docker/nginx/certs holder), at most every CERT_POLL_MS, never
+// concurrently with itself, and never fails deployment processing.
+const CERT_POLL_MS = Math.max(
+  10_000,
+  Number(process.env.DEPLOYKIT_CERT_POLL_INTERVAL_MS ?? 60_000)
+);
+
+let certSweepInProgress = false;
+let lastCertSweepAt = 0;
+
+async function runCertSweep(): Promise<void> {
+  const now = Date.now();
+  if (certSweepInProgress || now - lastCertSweepAt < CERT_POLL_MS) {
+    return;
+  }
+  certSweepInProgress = true;
+  lastCertSweepAt = now;
+  try {
+    const { runCertificateMaintenance } = await import("../services/certIssuanceService.js");
+    const { LegoAcmeClient, SelfSignedAcmeClient, getAcmeConfig } = await import(
+      "../tls/acmeClient.js"
+    );
+    const mode = (process.env.DEPLOYKIT_TLS_MODE ?? "acme").trim().toLowerCase();
+    const acmeClient =
+      mode === "self-signed"
+        ? new SelfSignedAcmeClient()
+        : new LegoAcmeClient(getAcmeConfig());
+    const summary = await runCertificateMaintenance({ acmeClient });
+    if (summary.claimed > 0 || summary.expired > 0 || summary.failed > 0) {
+      log("info", "certificate.maintenance", { ...summary });
+    }
+  } catch (error) {
+    // Missing ACME email/config is an operator setup state, not a crash:
+    // domains wait in pending until configured. Everything else is logged
+    // without touching deployment work.
+    log("error", "certificate.maintenance_failed", {
+      error: error instanceof Error ? error.message.slice(0, 300) : "Unknown error",
+    });
+  } finally {
+    certSweepInProgress = false;
+  }
+}
+
 let shuttingDown = false;
 let activeAbort: AbortController | null = null;
 
@@ -279,6 +324,9 @@ async function run() {
       const processed = await processJob();
 
       if (!processed) {
+        // Idle worker time doubles as the certificate sweep slot: no extra
+        // processes, no new job system, bounded by CERT_POLL_MS.
+        await runCertSweep();
         await sleep(POLL_INTERVAL_MS);
       }
     } catch (error) {

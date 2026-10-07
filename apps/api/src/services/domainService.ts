@@ -36,6 +36,10 @@ export interface DomainRow {
   tls_status: TlsStatus;
   cert_expires_at: string | null;
   cert_path: string | null;
+  tls_requested_at: string | null;
+  tls_last_attempt_at: string | null;
+  tls_last_error_code: string | null;
+  tls_last_error: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -60,7 +64,7 @@ function isUniqueViolation(error: unknown): boolean {
   );
 }
 
-function toDomainRow(raw: Record<string, unknown>): DomainRow {
+export function toDomainRow(raw: Record<string, unknown>): DomainRow {
   return {
     id: raw.id as string,
     project_id: raw.project_id as string,
@@ -73,6 +77,10 @@ function toDomainRow(raw: Record<string, unknown>): DomainRow {
     tls_status: (raw.tls_status as TlsStatus) ?? "none",
     cert_expires_at: (raw.cert_expires_at as string | null) ?? null,
     cert_path: (raw.cert_path as string | null) ?? null,
+    tls_requested_at: (raw.tls_requested_at as string | null) ?? null,
+    tls_last_attempt_at: (raw.tls_last_attempt_at as string | null) ?? null,
+    tls_last_error_code: (raw.tls_last_error_code as string | null) ?? null,
+    tls_last_error: (raw.tls_last_error as string | null) ?? null,
     created_at: raw.created_at as string,
     updated_at: raw.updated_at as string,
   };

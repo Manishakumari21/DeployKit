@@ -532,3 +532,45 @@ No SSO/OAuth, no MFA, no organizations/teams, no roles beyond `owner`,
 no login notifications or session listing/revocation UI, single-node
 rate-limit cleanup is lazy (no background sweeper), and the web origin
 must be configured explicitly in production.
+
+## Phase 11 — Custom domains + TLS/ACME
+
+Custom hostnames map to projects (`custom_domains`), verified by DNS TXT
+(`_deploykit-challenge.<domain>`), then served through the existing gateway
+with per-domain certificates issued over ACME HTTP-01 (lego v5.5.2 in the
+worker image). One certificate per domain; no wildcard/DNS-01 support.
+
+Flow: verify domain in the dashboard → `POST /api/domains/:id/certificate`
+(202 arms `tls_status=pending`) → worker claims it, lego validates over the
+gateway's port 80 (challenge path bypasses all redirects), installs
+`domains/<domain>/{fullchain,private-key}.pem` atomically, renders HTTPS,
+`nginx -t` + reload, verifies HTTPS, then marks `issued` — only then does
+HTTP redirect to HTTPS. Domains without a valid certificate stay on HTTP.
+
+Renewal is due-date-driven (30d window, serialized per domain via advisory
+locks); failed renewals keep the old certificate serving; expired rows flip
+to `expired` and the gateway drops HTTPS + redirect while HTTP continues.
+Any nginx/reload/verify failure restores the previous known-good config and
+previous files. Keys live only in the `deploykit-certs` volume (worker
+read/write, gateway read-only) — never in PostgreSQL, logs, or API output.
+ACME defaults to the staging CA; production needs `DEPLOYKIT_ACME_SERVER`
+plus a public DNS A/AAAA record and reachable ports 80/443.
+
+### Environment variables (new)
+
+| Var | Default | Purpose |
+| --- | ------- | ------- |
+| `DEPLOYKIT_ACME_EMAIL` | unset (issuance waits) | ACME account email (required) |
+| `DEPLOYKIT_ACME_SERVER` | staging CA | production CA URL for real certs |
+| `DEPLOYKIT_TLS_MODE` | `acme` | `self-signed` is local-dev only, refused in production |
+| `DEPLOYKIT_CERTS_DIR` | `/certs` | certificate filesystem root |
+| `DEPLOYKIT_CERT_POLL_INTERVAL_MS` | `60000` | worker cert sweep interval (min 10s) |
+| `DEPLOYKIT_LEGO_BINARY` | `lego` | lego binary override (tests) |
+
+### Production prerequisites
+
+Public DNS A/AAAA to the gateway host, TCP 80 reachable (HTTP-01),
+TCP 443 reachable (HTTPS), valid `DEPLOYKIT_ACME_EMAIL`, production CA URL.
+Respect Let's Encrypt rate limits (failed orders are NOT auto-retried —
+re-arm via the dashboard). Localhost is never publicly ACME-valid; use
+`DEPLOYKIT_TLS_MODE=self-signed` for local HTTPS testing only.

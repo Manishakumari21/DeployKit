@@ -955,14 +955,21 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         containerPort: runtime.containerPort,
       };
       // Custom domains follow the active release: the same verified aliases
-      // are rendered against the new target. Domains never carry their own
-      // runtime association.
+      // and valid TLS entries are rendered against the new target. Domains
+      // never carry their own runtime association.
       let verifiedDomains: string[] = [];
       try {
         const { getVerifiedDomains } = await import("../services/domainService.js");
         verifiedDomains = await getVerifiedDomains(input.projectId);
       } catch {
         verifiedDomains = [];
+      }
+      let tlsEntries: import("../infrastructure/gateway/trafficRouter.js").TlsRouteEntry[] = [];
+      try {
+        const { resolveValidTlsEntries } = await import("../services/gatewayService.js");
+        tlsEntries = await resolveValidTlsEntries(input.projectId);
+      } catch {
+        tlsEntries = [];
       }
       // Capture the previous projection so a failed switch restores it
       // instead of leaving a half-applied candidate in place.
@@ -978,8 +985,20 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         }
       }
       try {
-        await this.trafficRouter.sync(route, verifiedDomains);
+        await this.trafficRouter.sync(route, verifiedDomains, tlsEntries);
         await this.trafficRouter.verifyRoute(route, this.routeTimeoutMs);
+        // HTTPS routes ride along only where certificates are currently
+        // valid; a failed HTTPS check fails the switch and restores the old
+        // projection, leaving the previous release serving.
+        if (typeof this.trafficRouter.verifyHttpsRoute === "function") {
+          for (const entry of tlsEntries) {
+            await this.trafficRouter.verifyHttpsRoute(
+              route,
+              entry.domain,
+              Math.min(this.routeTimeoutMs, 10_000)
+            );
+          }
+        }
         await dlog(input.projectId, input.deploymentId, "gateway", "info", "traffic switched to new release");
       } catch (error) {
         const restorable = this.trafficRouter as unknown as {

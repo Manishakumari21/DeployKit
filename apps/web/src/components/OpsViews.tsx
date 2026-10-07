@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { timeAgo } from "../lib/format";
 import { useDeploymentLogs } from "../hooks/useDeploymentLogs";
-import { createDomain, deleteDomain, fetchDomains, verifyDomain } from "../lib/api";
+import { createDomain, deleteDomain, fetchDomains, requestDomainCertificate, verifyDomain } from "../lib/api";
 import type { ApiDeployment, CustomDomain } from "../types";
 import { EmptyState, Eyebrow, Panel, PanelHead } from "./ui";
 import { cx } from "../lib/format";
@@ -93,6 +93,19 @@ export function DomainsView({ projectId }: { projectId: string | null }) {
     }
   };
 
+  const onRequestCertificate = async (id: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await requestDomainCertificate(id);
+      setDomains((prev) => prev.map((d) => (d.id === id ? updated : d)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Certificate request failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Panel>
       <PanelHead title="Domains" />
@@ -146,6 +159,25 @@ export function DomainsView({ projectId }: { projectId: string | null }) {
                 >
                   {d.status}
                 </span>
+                <span
+                  className={cx(
+                    "rounded-full border px-2 py-0.5 font-mono text-[11px]",
+                    d.tls_status === "issued"
+                      ? "border-signal-500/50 bg-signal-950 text-signal-300"
+                      : d.tls_status === "failed" || d.tls_status === "expired"
+                        ? "border-red-900 text-red-200"
+                        : "border-edge text-fog-500"
+                  )}
+                  title={
+                    d.cert_expires_at
+                      ? `Certificate expires ${d.cert_expires_at}`
+                      : d.tls_last_error
+                        ? `${d.tls_last_error_code ?? "TLS error"}: ${d.tls_last_error}`
+                        : undefined
+                  }
+                >
+                  tls:{d.tls_status}
+                </span>
                 <span className="ml-auto flex gap-2">
                   {d.status !== "verified" && (
                     <button
@@ -156,6 +188,18 @@ export function DomainsView({ projectId }: { projectId: string | null }) {
                       Verify
                     </button>
                   )}
+                  {d.status === "verified" &&
+                    (d.tls_status === "none" ||
+                      d.tls_status === "failed" ||
+                      d.tls_status === "expired") && (
+                      <button
+                        onClick={() => void onRequestCertificate(d.id)}
+                        disabled={busy}
+                        className="cursor-pointer rounded-md border border-edge px-2 py-1 text-[12px] text-fog-200 hover:text-white disabled:opacity-50"
+                      >
+                        Enable HTTPS
+                      </button>
+                    )}
                   <button
                     onClick={() => void onDelete(d.id)}
                     disabled={busy}
@@ -168,6 +212,16 @@ export function DomainsView({ projectId }: { projectId: string | null }) {
               {d.status !== "verified" && (
                 <p className="mt-2 font-mono text-[12px] leading-relaxed text-fog-400">
                   TXT {d.verification.name} = {d.verification.value ?? "(created value — re-add if missing)"}
+                </p>
+              )}
+              {d.status === "verified" && d.tls_status === "issued" && d.cert_expires_at && (
+                <p className="mt-2 font-mono text-[12px] leading-relaxed text-fog-400">
+                  https://{d.domain} · cert expires {timeAgo(d.cert_expires_at)}
+                </p>
+              )}
+              {d.tls_last_error && (d.tls_status === "failed" || d.tls_status === "expired") && (
+                <p className="mt-2 font-mono text-[12px] leading-relaxed text-red-300">
+                  {d.tls_last_error_code ?? "TLS error"}: {d.tls_last_error}
                 </p>
               )}
             </li>

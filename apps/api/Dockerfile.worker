@@ -16,10 +16,30 @@ RUN wget -q -O /usr/libexec/docker/cli-plugins/docker-buildx \
     && chmod +x /usr/libexec/docker/cli-plugins/docker-buildx \
     && docker buildx version
 
+# lego ACME client (Phase 11 TLS): official release binary with pinned
+# version + checksum, same pattern as Buildx above. Verified 2026-10-08 as
+# the latest go-acme/lego release (v5.5.2, linux_amd64).
+ARG LEGO_VERSION=v5.5.2
+ARG LEGO_SHA256=2a35505089e7772c92e1e9ac144df91151ef2eca8568630db0ff91fca06d9bef
+RUN wget -q -O /tmp/lego.tar.gz \
+      https://github.com/go-acme/lego/releases/download/${LEGO_VERSION}/lego_${LEGO_VERSION}_linux_amd64.tar.gz \
+    && echo "${LEGO_SHA256}  /tmp/lego.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/lego.tar.gz -C /tmp \
+    && mv /tmp/lego /usr/local/bin/lego \
+    && chmod +x /usr/local/bin/lego \
+    && rm /tmp/lego.tar.gz \
+    && lego --version
+
 # Controlled Buildx state location (worker-only). Bootstrap ensures the
 # deterministic builder exists here; no host ~/.docker data is mounted.
 ENV BUILDX_CONFIG=/tmp/deploykit-buildx
 RUN mkdir -p /tmp/deploykit-buildx
+
+# Certificate filesystem root (deploykit-certs volume). Worker-only
+# read/write: ACME accounts, HTTP-01 challenges, and per-domain material.
+# The gateway mounts the same volume read-only. No key material ever enters
+# PostgreSQL, logs, or API responses.
+RUN mkdir -p /certs
 
 COPY package*.json ./
 

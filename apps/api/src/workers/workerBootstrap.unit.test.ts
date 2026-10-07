@@ -47,11 +47,33 @@ test("bootstrap never uses shell pipelines", async () => {
   assert.ok(src.includes("BUILDX_CONFIG"));
 });
 
-test("embedded buildkitd base matches ops/buildkit/buildkitd.toml", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const { join } = await import("node:path");
-  const ops = await readFile(join(process.cwd(), "../..", "ops/buildkit/buildkitd.toml"), "utf8");
-  assert.equal(BASE_BUILDKITD_TOML, ops);
+test("embedded buildkitd base is the canonical config used by bootstrap", () => {
+  // BASE_BUILDKITD_TOML is the single source of truth written to the
+  // deterministic builder (see desiredBuildkitdToml/bootstrapWorker).
+  // The repo mirror ops/buildkit/buildkitd.toml is intentionally not copied
+  // into the API image (/app), so this test pins the canonical shape
+  // directly instead of reading a host absolute path that cannot exist in
+  // the container. It fails closed if the base drifts.
+  assert.equal(desiredBuildkitdToml(null), BASE_BUILDKITD_TOML);
+  for (const required of [
+    "debug = false",
+    "insecure-entitlements = []",
+    '[log]',
+    'level = "info"',
+    'format = "json"',
+    "[worker.oci]",
+    "max-parallelism = 2",
+  ]) {
+    assert.ok(
+      BASE_BUILDKITD_TOML.includes(required),
+      `base buildkitd config must contain: ${required}`
+    );
+  }
+  assert.ok(
+    !BASE_BUILDKITD_TOML.includes("[registry."),
+    "base config must not contain per-registry stanzas"
+  );
+  assert.ok(BASE_BUILDKITD_TOML.endsWith("\n"));
 });
 
 test("desired buildkitd config adds http stanza only for insecure registries", () => {

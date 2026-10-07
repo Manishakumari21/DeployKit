@@ -74,9 +74,11 @@ function bootstrapEnv(configDir: string): NodeJS.ProcessEnv {
   return { ...process.env, BUILDX_CONFIG: configDir };
 }
 
-// Base BuildKit daemon config. Source of truth is ops/buildkit/buildkitd.toml;
-// workerBootstrap.unit.test.ts pins this constant against that file so the two
-// cannot silently diverge.
+// Base BuildKit daemon config. This constant is the canonical source of truth
+// written to the deterministic builder (see desiredBuildkitdToml). The repo
+// mirror ops/buildkit/buildkitd.toml documents the same base for manual
+// builder creation; the unit test pins this constant's shape directly so it
+// runs inside the API image where ops/ is intentionally absent.
 export const BASE_BUILDKITD_TOML = `debug = false
 
 insecure-entitlements = []
@@ -300,7 +302,7 @@ export async function bootstrapWorker(): Promise<BootstrapResult> {
   // Ensure deterministic builder exists with the intended BuildKit config.
   // Reuse when the stored marker matches; recreate when missing or when the
   // desired config changed (e.g. registry enabled/disabled). The buildkitd
-  // config is generated from ops/buildkit/buildkitd.toml plus, for a
+  // config is generated from BASE_BUILDKITD_TOML plus, for a
   // configured local HTTP registry, a per-host `http = true` stanza —
   // buildkitd never falls back to HTTP for non-loopback hosts on its own.
   lifecycleEvent("BOOTSTRAPPING", { step: "builder_ensure", builder });

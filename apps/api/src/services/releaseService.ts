@@ -18,7 +18,7 @@ export interface CreateReleaseInput {
   supersedesReleaseId: string | null;
 }
 
-const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/i;
+export const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/i;
 
 export async function createRelease(input: CreateReleaseInput) {
   if (!DIGEST_PATTERN.test(input.imageDigest)) {

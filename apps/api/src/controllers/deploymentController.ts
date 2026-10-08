@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import { uuidParam } from "./http.js";
+import { AgentError } from "../agents/agentService.js";
 import {
   cancelDeployment,
   createDeployment,
@@ -64,19 +65,39 @@ export async function createDeploymentController(
       });
     }
 
-    const deployment = await createDeployment({
-      projectId: projectIdResult.data,
-      trigger: triggerResult.data,
-      idempotencyKey,
-    });
-
-    if (!deployment) {
-      return res.status(404).json({
-        error: "Project not found",
-      });
+    const rawTarget = req.body?.targetAgentId;
+    let targetAgentId: string | null = null;
+    if (rawTarget !== undefined && rawTarget !== null) {
+      const targetResult = uuidSchema.safeParse(rawTarget);
+      if (!targetResult.success) {
+        return res.status(400).json({
+          error: "Invalid target agent id",
+        });
+      }
+      targetAgentId = targetResult.data;
     }
 
-    return res.status(201).json(deployment);
+    try {
+      const deployment = await createDeployment({
+        projectId: projectIdResult.data,
+        trigger: triggerResult.data,
+        idempotencyKey,
+        targetAgentId,
+      });
+
+      if (!deployment) {
+        return res.status(404).json({
+          error: "Project not found",
+        });
+      }
+
+      return res.status(201).json(deployment);
+    } catch (error) {
+      if (error instanceof AgentError) {
+        return res.status(error.status).json({ error: error.message });
+      }
+      throw error;
+    }
   } catch (error) {
     console.error("Create deployment error:", error);
 

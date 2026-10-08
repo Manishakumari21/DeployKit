@@ -4,11 +4,15 @@ import {
   type DeploymentStatus,
 } from "../deployments/deploymentStateMachine.js";
 import { recordDeploymentEvent } from "../deployments/deploymentEvents.js";
+import { AgentError, getAgentById } from "../agents/agentService.js";
 
 export type DeploymentTrigger =
   | "manual"
   | "github_push"
   | "rollback";
+
+// Single source for commit-SHA shape wherever deployments accept one.
+export const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
 
 export interface CreateDeploymentInput {
   projectId: string;
@@ -16,6 +20,10 @@ export interface CreateDeploymentInput {
   idempotencyKey: string | null;
   rollbackReleaseId?: string | null;
   commitSha?: string | null;
+  // Optional edge-agent destination. NULL preserves the legacy
+  // central-worker deployment. Ownership is verified server-side against
+  // the agent row; a client-supplied project id never establishes it.
+  targetAgentId?: string | null;
 }
 
 export async function createDeployment(
@@ -72,10 +80,40 @@ export async function createDeployment(
       throw new Error("rollback_release_id is only valid for rollback trigger");
     }
 
+    let targetAgentId: string | null = null;
+    if (input.targetAgentId !== undefined && input.targetAgentId !== null) {
+      const agent = await getAgentById(input.targetAgentId);
+      if (!agent) {
+        await client.query("ROLLBACK");
+        throw new AgentError(
+          "TARGET_AGENT_NOT_FOUND",
+          "Target agent not found",
+          404
+        );
+      }
+      if (agent.projectId !== input.projectId) {
+        await client.query("ROLLBACK");
+        throw new AgentError(
+          "TARGET_AGENT_PROJECT_MISMATCH",
+          "Target agent belongs to another project",
+          400
+        );
+      }
+      if (agent.status === "revoked") {
+        await client.query("ROLLBACK");
+        throw new AgentError(
+          "TARGET_AGENT_REVOKED",
+          "Target agent is revoked",
+          422
+        );
+      }
+      targetAgentId = agent.id;
+    }
+
     let commitSha: string | null = null;
     if (input.commitSha !== undefined && input.commitSha !== null) {
       const normalized = input.commitSha.trim().toLowerCase();
-      if (!/^[0-9a-f]{40}$/.test(normalized)) {
+      if (!COMMIT_SHA_PATTERN.test(normalized)) {
         await client.query("ROLLBACK");
         throw new Error("commit_sha must be a 40-char hex SHA");
       }
@@ -94,9 +132,10 @@ export async function createDeployment(
           branch,
           commit_sha,
           idempotency_key,
-          rollback_release_id
+          rollback_release_id,
+          target_agent_id
         )
-        VALUES ($1, 'queued', $2, $3, $5, $4, $6)
+        VALUES ($1, 'queued', $2, $3, $5, $4, $6, $7)
         ON CONFLICT (
           project_id,
           idempotency_key
@@ -112,6 +151,7 @@ export async function createDeployment(
           input.idempotencyKey,
           commitSha,
           input.rollbackReleaseId ?? null,
+          targetAgentId,
         ]
       );
 
@@ -140,9 +180,10 @@ export async function createDeployment(
           trigger,
           branch,
           commit_sha,
-          rollback_release_id
+          rollback_release_id,
+          target_agent_id
         )
-        VALUES ($1, 'queued', $2, $3, $4, $5)
+        VALUES ($1, 'queued', $2, $3, $4, $5, $6)
         RETURNING *
         `,
         [
@@ -151,6 +192,7 @@ export async function createDeployment(
           project.branch,
           commitSha,
           input.rollbackReleaseId ?? null,
+          targetAgentId,
         ]
       );
 

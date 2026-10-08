@@ -3,6 +3,8 @@ import { canTransition } from "../deployments/deploymentStateMachine.js";
 
 const DEFAULT_LEASE_MS = 30_000;
 
+export { DEFAULT_LEASE_MS };
+
 export interface ClaimedJob {
   id: string;
   deploymentId: string;

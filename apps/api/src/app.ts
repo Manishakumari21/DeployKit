@@ -7,11 +7,10 @@ import deploymentRoutes from "./routes/deploymentRoutes.js";
 import domainRoutes from "./routes/domainRoutes.js";
 import webhookRoutes from "./routes/webhookRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
+import agentRoutes from "./routes/agentRoutes.js";
 
 const app = express();
 
-// Explicit origins + credentials. Throws at startup on unsafe combinations
-// (wildcard with credentials, missing origin in production).
 app.use(cors(buildCorsOptions()));
 
 app.use(
@@ -44,5 +43,6 @@ app.use("/api/projects", projectRoutes);
 app.use("/api", deploymentRoutes);
 app.use("/api", domainRoutes);
 app.use("/api/auth", authRoutes);
+app.use("/api/agent", agentRoutes);
 
 export default app;

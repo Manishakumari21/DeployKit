@@ -1,4 +1,5 @@
 import pool from "../db/database.js";
+import { withTransaction } from "../db/transaction.js";
 import {
   withCheckedOutRepository,
   SourceCheckoutError,
@@ -99,6 +100,29 @@ const RUNTIME_DEFAULTS = {
 
 function shortId(id: string): string {
   return id.replace(/-/g, "").slice(0, 8).toLowerCase();
+}
+
+// Advisory-lock namespace for the runtime-record critical section. Deliberately
+// distinct from the activation lock key (810971722, project-scoped in
+// releaseService.activateRelease): this one serializes only recorders of the
+// SAME physical container (second key is hashtext(container_id)), never whole
+// projects, so normal deployments for a project keep full parallelism.
+const RUNTIME_CONTAINER_RECORD_LOCK = 810971723;
+
+interface DeployReleaseRequest {
+  projectId: string;
+  deploymentId: string;
+  releaseId: string;
+  imageRepository: string;
+  imageDigest: string;
+  commitSha: string;
+  branch: string;
+  previousActiveId: string | null;
+}
+
+interface RuntimeRecordOutcome {
+  duplicate: boolean;
+  adoptedReleaseId: string | null;
 }
 
 export function shouldPullImage(
@@ -756,18 +780,127 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     );
   }
 
+  // Records this execution's runtime under a container-scoped advisory lock.
+  // Duplicate executions converge here instead of violating the UNIQUE on
+  // container_id: the lock serializes the check-then-record so the second
+  // recorder observes the winner's row. Same-release re-records (crash
+  // resume) take the normal upsert path; only a row owned by ANOTHER
+  // release reports a duplicate. The container_name upsert is unchanged.
+  private async recordRuntimeInstance(
+    input: DeployReleaseRequest,
+    runtime: RuntimeInfo
+  ): Promise<RuntimeRecordOutcome> {
+    return withTransaction(async (client) => {
+      if (runtime.containerId) {
+        await client.query(
+          `SELECT pg_advisory_xact_lock($1, hashtext($2))`,
+          [RUNTIME_CONTAINER_RECORD_LOCK, runtime.containerId]
+        );
+        const existing = await client.query(
+          `SELECT id, release_id FROM runtime_instances WHERE container_id = $1`,
+          [runtime.containerId]
+        );
+        const winner = existing.rows[0] as
+          | { id: string; release_id: string }
+          | undefined;
+        if (winner && winner.release_id !== input.releaseId) {
+          return {
+            duplicate: true,
+            adoptedReleaseId: winner.release_id,
+          };
+        }
+      }
+      await client.query(
+        `
+        INSERT INTO runtime_instances (
+          release_id, status, container_name, container_id,
+          container_port, host_port, ip_address, health_path, started_at
+        )
+        VALUES ($1,'starting',$2,$3,$4,$4,$6,$5, CURRENT_TIMESTAMP)
+        ON CONFLICT (container_name)
+        DO UPDATE SET release_id = EXCLUDED.release_id,
+                      container_id = EXCLUDED.container_id,
+                      status = 'starting',
+                      ip_address = EXCLUDED.ip_address,
+                      started_at = CURRENT_TIMESTAMP
+        `,
+        [
+          input.releaseId,
+          runtime.containerName,
+          runtime.containerId,
+          runtime.containerPort,
+          RUNTIME_DEFAULTS.healthPath,
+          runtime.ipAddress,
+        ]
+      );
+      return { duplicate: false, adoptedReleaseId: null };
+    });
+  }
+
+  // Yields a duplicate execution onto the winner's runtime. Writes nothing to
+  // runtime_instances (the winner's row is never overwritten) and never
+  // activates: the loser's own release/deployment reach existing legal
+  // terminal states, and the typed outcome lets the worker finish the job
+  // terminally instead of retrying a duplicate.
+  private async convergeDuplicateExecution(
+    input: DeployReleaseRequest,
+    runtime: RuntimeInfo,
+    adoptedReleaseId: string
+  ): Promise<DeploymentExecutionResult> {
+    await dlog(
+      input.projectId,
+      input.deploymentId,
+      "runtime",
+      "info",
+      `duplicate execution converged onto release ${adoptedReleaseId}; yielding`
+    );
+    // This execution's container was never recorded; remove it best-effort
+    // so it cannot leak (mirrors the failure-path cleanup below).
+    await this.runtimeManager.remove(runtime.containerName).catch(() => undefined);
+    const releaseRow = await pool.query(
+      `SELECT status FROM releases WHERE id = $1`,
+      [input.releaseId]
+    );
+    const releaseStatus = releaseRow.rows[0]?.status as string | undefined;
+    if (
+      releaseStatus === "pending" ||
+      releaseStatus === "starting" ||
+      releaseStatus === "healthy"
+    ) {
+      await markRelease(input.releaseId, "failed", {
+        code: "DUPLICATE_EXECUTION_CONVERGED",
+        message: `Duplicate execution converged onto release ${adoptedReleaseId}`,
+      });
+    }
+    const depRow = await getDeploymentRow(input.deploymentId);
+    if (
+      depRow &&
+      canTransition(depRow.status as DeploymentStatus, "failed")
+    ) {
+      await setDeploymentStatus(
+        input.deploymentId,
+        depRow.status as string,
+        "failed",
+        "deployment.duplicate_converged",
+        "Duplicate execution converged onto an existing runtime",
+        { adoptedReleaseId },
+        {
+          error_code: "DUPLICATE_EXECUTION_CONVERGED",
+          error_message: `Duplicate execution converged onto release ${adoptedReleaseId}`,
+        }
+      );
+    }
+    return {
+      commitSha: input.commitSha.toLowerCase(),
+      imageRepository: input.imageRepository,
+      imageDigest: input.imageDigest,
+      duplicateConverged: { adoptedReleaseId },
+    };
+  }
+
   private async deployRelease(
     context: DeploymentExecutionContext,
-    input: {
-      projectId: string;
-      deploymentId: string;
-      releaseId: string;
-      imageRepository: string;
-      imageDigest: string;
-      commitSha: string;
-      branch: string;
-      previousActiveId: string | null;
-    }
+    input: DeployReleaseRequest
   ): Promise<DeploymentExecutionResult> {
     await this.assertNotCancelled(input.deploymentId, context.signal);
     const containerName =
@@ -849,29 +982,14 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         runtime.containerName,
         this.runtimeNetwork
       );
-      await pool.query(
-        `
-        INSERT INTO runtime_instances (
-          release_id, status, container_name, container_id,
-          container_port, host_port, ip_address, health_path, started_at
-        )
-        VALUES ($1,'starting',$2,$3,$4,$4,$6,$5, CURRENT_TIMESTAMP)
-        ON CONFLICT (container_name)
-        DO UPDATE SET release_id = EXCLUDED.release_id,
-                      container_id = EXCLUDED.container_id,
-                      status = 'starting',
-                      ip_address = EXCLUDED.ip_address,
-                      started_at = CURRENT_TIMESTAMP
-        `,
-        [
-          input.releaseId,
-          runtime.containerName,
-          runtime.containerId,
-          runtime.containerPort,
-          RUNTIME_DEFAULTS.healthPath,
-          runtime.ipAddress,
-        ]
-      );
+      const record = await this.recordRuntimeInstance(input, runtime);
+      if (record.duplicate && record.adoptedReleaseId) {
+        return this.convergeDuplicateExecution(
+          input,
+          runtime,
+          record.adoptedReleaseId
+        );
+      }
       if (needsMarking) {
         await markRelease(input.releaseId, "starting");
       }

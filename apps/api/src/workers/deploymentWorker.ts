@@ -186,6 +186,27 @@ async function processJob() {
       imageDigest: result.imageDigest,
     });
 
+    // Duplicate executions converge inside the pipeline (typed outcome, own
+    // release/deployment already terminal there): finish the job terminally
+    // instead of completing it, so a duplicate is never retried or reported
+    // as a genuine success.
+    if (result.duplicateConverged) {
+      const adopted = result.duplicateConverged.adoptedReleaseId;
+      log("info", "deployment.duplicate_converged", {
+        jobId: job.id,
+        deploymentId: job.deploymentId,
+        adoptedReleaseId: adopted,
+      });
+      await failJobTerminal(
+        job.id,
+        job.deploymentId,
+        WORKER_ID,
+        `DUPLICATE_EXECUTION_CONVERGED: duplicate execution converged onto release ${adopted}`,
+        "DUPLICATE_EXECUTION_CONVERGED"
+      );
+      return true;
+    }
+
     await completeJob(job.id, job.deploymentId, WORKER_ID);
 
     log("info", "deployment.job_completed", {

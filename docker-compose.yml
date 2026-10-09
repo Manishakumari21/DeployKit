@@ -133,6 +133,48 @@ services:
       - default
       - runtime
 
+  # Phase 12.5 edge agent (opt-in profile; excluded from the default
+  # stack). Standalone executor: polls the control-plane API and runs
+  # edge-targeted deployments on this host's Docker Engine. Not started by
+  # a plain `docker compose up`; enable with
+  # `docker compose --profile edge up edge-agent`.
+  edge-agent:
+    profiles: ["edge"]
+
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile.agent
+
+    container_name: deploykit-edge-agent
+
+    environment:
+      DEPLOYKIT_CONTROL_PLANE_URL: ${DEPLOYKIT_EDGE_CONTROL_PLANE_URL:-http://api:3000}
+      # Compose-internal hostname is not loopback: local-dev HTTP requires
+      # the explicit opt-in below. Production must use https:// instead.
+      DEPLOYKIT_EDGE_ALLOW_HTTP: ${DEPLOYKIT_EDGE_ALLOW_HTTP:-true}
+      DEPLOYKIT_AGENT_TOKEN: ${DEPLOYKIT_AGENT_TOKEN:-}
+      DEPLOYKIT_AGENT_ID: ${DEPLOYKIT_AGENT_ID:-}
+      DEPLOYKIT_EDGE_POLL_INTERVAL_MS: 5000
+      DEPLOYKIT_EDGE_REQUEST_TIMEOUT_MS: 15000
+      DEPLOYKIT_EDGE_NETWORK: deploykit-runtime
+      DEPLOYKIT_LOG_LEVEL: ${DEPLOYKIT_LOG_LEVEL:-info}
+
+    volumes:
+      # Edge-agent only: local Docker Engine access for pull/create/start
+      # of its own deployment containers. Socket access grants substantial
+      # host control; see docs/edge-agent.md. Never mount this into api/web.
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    depends_on:
+      api:
+        condition: service_healthy
+
+    networks:
+      - default
+      - runtime
+
+    # No ports published: the agent makes outbound connections only.
+
   registry:
     # Pinned to registry:2.8.3 (2.x line): mature, stable /v2/ API,
     # OCI-compatible, minimal surface. Pinned by patch to avoid

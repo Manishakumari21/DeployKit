@@ -94,18 +94,18 @@ export class EdgeAgentClient {
   // Raw claim envelope ({ job: ... | null }) as unknown. Validate with
   // parseClaimedJobResponse before use. Returns null body content as null.
   async claimJob(signal?: AbortSignal): Promise<unknown> {
-    const body = await this.post("/api/agents/jobs/claim", undefined, signal);
+    const body = await this.post("/api/agent/jobs/claim", undefined, signal);
     return body;
   }
 
   // Raw heartbeat state as unknown. Validate with parseHeartbeatState.
   // Success also renews the lease server-side (extendJobLease semantics).
   async heartbeatJob(jobId: string, signal?: AbortSignal): Promise<unknown> {
-    return this.post(`/api/agents/jobs/${encodeURIComponent(jobId)}/heartbeat`, undefined, signal);
+    return this.post(`/api/agent/jobs/${encodeURIComponent(jobId)}/heartbeat`, undefined, signal);
   }
 
   async completeJob(jobId: string, payload: EdgeCompletionPayload, signal?: AbortSignal): Promise<unknown> {
-    return this.post(`/api/agents/jobs/${encodeURIComponent(jobId)}/complete`, {
+    return this.post(`/api/agent/jobs/${encodeURIComponent(jobId)}/complete`, {
       outcome: "succeeded",
       ...(payload.imageDigest !== undefined ? { imageDigest: payload.imageDigest } : {}),
       ...(payload.commitSha !== undefined ? { commitSha: payload.commitSha } : {}),
@@ -113,7 +113,7 @@ export class EdgeAgentClient {
   }
 
   async failJob(jobId: string, errorCode: string, errorMessage: string, signal?: AbortSignal): Promise<unknown> {
-    return this.post(`/api/agents/jobs/${encodeURIComponent(jobId)}/fail`, {
+    return this.post(`/api/agent/jobs/${encodeURIComponent(jobId)}/fail`, {
       errorCode,
       errorMessage,
     }, signal);

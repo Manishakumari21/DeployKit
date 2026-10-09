@@ -36,7 +36,7 @@ test("claim posts with bearer auth and returns the envelope", async () => {
   const body = await client.claimJob();
   assert.deepEqual(body, { job: null });
   assert.equal(seen.length, 1);
-  assert.equal(seen[0].url, "http://cp:3000/api/agents/jobs/claim");
+  assert.equal(seen[0].url, "http://cp:3000/api/agent/jobs/claim");
   const headers = seen[0].init.headers as Record<string, string>;
   assert.equal(headers.authorization, "Bearer agent-token-xyz");
 });
@@ -106,12 +106,12 @@ test("complete/fail payloads match the server contract", async () => {
   });
   await client.completeJob("job-1", { imageDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", commitSha: "b".repeat(40) });
   await client.failJob("job-1", "EDGE_X", "broken");
-  assert.equal(seen[0].url, "http://cp:3000/api/agents/jobs/job-1/complete");
+  assert.equal(seen[0].url, "http://cp:3000/api/agent/jobs/job-1/complete");
   assert.deepEqual(seen[0].body, {
     outcome: "succeeded",
     imageDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     commitSha: "b".repeat(40),
   });
-  assert.equal(seen[1].url, "http://cp:3000/api/agents/jobs/job-1/fail");
+  assert.equal(seen[1].url, "http://cp:3000/api/agent/jobs/job-1/fail");
   assert.deepEqual(seen[1].body, { errorCode: "EDGE_X", errorMessage: "broken" });
 });

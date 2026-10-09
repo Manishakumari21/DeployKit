@@ -9,6 +9,9 @@
     "start": "node dist/server.js",
     "test": "tsx --test --test-concurrency=1 \"src/**/*.unit.test.ts\"",
     "worker": "node dist/workers/deploymentWorker.js",
+    "agent": "node dist/edgeAgent.js",
+    "agent:dev": "tsx watch src/edgeAgent.ts",
+    "agent:enroll": "tsx scripts/enroll-agent.ts",
     "test:integration": "tsx --test \"src/**/*.integration.test.ts\"",
     "test:build": "tsx --test src/infrastructure/build/buildxBuildExecutor.integration.test.ts",
     "test:registry": "bash scripts/test-registry.sh"

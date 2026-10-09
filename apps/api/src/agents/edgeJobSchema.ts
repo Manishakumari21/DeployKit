@@ -180,7 +180,7 @@ function parseJobRecord(record: Record<string, unknown>): ClaimedEdgeJob {
   };
 }
 
-// Strictly parses the POST /api/agents/jobs/claim response body
+// Strictly parses the POST /api/agent/jobs/claim response body
 // ({ job: ClaimedAgentJob | null }). Returns null when no work is available.
 // Throws EdgeJobSchemaError on any shape deviation. Unknown extra fields are
 // ignored (forward compatibility); missing or mistyped required fields fail.
@@ -212,7 +212,7 @@ function parseHeartbeatJob(record: unknown): EdgeJobHeartbeatState["job"] {
   };
 }
 
-// Strictly parses the POST /api/agents/jobs/:jobId/heartbeat response body.
+// Strictly parses the POST /api/agent/jobs/:jobId/heartbeat response body.
 export function parseHeartbeatState(body: unknown): EdgeJobHeartbeatState {
   if (!isRecord(body)) {
     throw new EdgeJobSchemaError("Invalid heartbeat state: expected object");

@@ -9,7 +9,7 @@ export default defineConfig({
   // mirroring apps/web/nginx.conf which proxies /api/ to the API in prod.
   server: {
     proxy: {
-      '/api': 'http://localhost:3000',
+      '/api': 'http://localhost:3001',
     },
   },
 })

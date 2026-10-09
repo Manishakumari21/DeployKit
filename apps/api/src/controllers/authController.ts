@@ -39,6 +39,11 @@ const loginSchema = z.object({
   password: z.string().min(1).max(72),
 });
 
+const registerSchema = z.object({
+  email: z.string().min(1).max(254),
+  password: z.string().min(12, "Password must be at least 12 characters").max(72, "Password must be at most 72 characters"),
+});
+
 function clientIp(req: Request): string {
   // Proxy-aware without global trust-proxy: XFF is honored only when the
   // direct peer is our own private proxy layer (see config/clientIp.ts).
@@ -109,9 +114,10 @@ export async function logoutController(req: Request, res: Response): Promise<voi
 // no account exists yet (first-user bootstrap, closes automatically).
 // Creates the account only — no session, no project, no membership.
 export async function registerController(req: Request, res: Response): Promise<void> {
-  const parsed = loginSchema.safeParse(req.body);
+  const parsed = registerSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "Invalid registration request" });
+    const issue = parsed.error.issues.find((i) => i.path[0] === "password");
+    res.status(400).json({ error: issue ? issue.message : "Invalid registration request" });
     return;
   }
   const email = parsed.data.email.trim().toLowerCase();
@@ -144,7 +150,13 @@ export async function registerController(req: Request, res: Response): Promise<v
       res.status(201).json(user);
     } catch (error) {
       if (error instanceof UserError) {
-        res.status(error.status).json({ error: error.message });
+        // Surface a professional, actionable message for weak passwords so
+        // the UI can show it directly instead of a generic policy string.
+        const message =
+          error.code === "WEAK_PASSWORD"
+            ? "Password must be 12–72 characters."
+            : error.message;
+        res.status(error.status).json({ error: message });
         return;
       }
       throw error;

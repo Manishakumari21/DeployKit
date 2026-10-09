@@ -2,6 +2,8 @@ import pool from "../db/database.js";
 import { withTransaction } from "../db/transaction.js";
 import type { DeploymentStatus } from "../deployments/deploymentStateMachine.js";
 import { recordDeploymentEvent } from "../deployments/deploymentEvents.js";
+import { DIGEST_PATTERN } from "../services/releaseService.js";
+import { validateRegistryRepository } from "../infrastructure/registry/registryConfig.js";
 import {
   DEFAULT_LEASE_MS,
   extendJobLease,
@@ -33,6 +35,21 @@ export interface ClaimedAgentJob {
   leaseExpiresAt: string | null;
   branch: string;
   commitSha: string | null;
+  // Trusted execution image resolved server-side from release/deployment
+  // records (see resolveTrustedJobImage). Null when no trustworthy
+  // digest-pinned reference exists yet; the agent must then fail closed and
+  // never substitute its own image reference.
+  image: AgentJobImage | null;
+}
+
+// Smallest explicit server-to-agent image contract: an immutable,
+// registry-pullable reference plus the source release (if any). Only these
+// fields reach the authenticated agent; nothing else about the release,
+// registry, or environment is disclosed.
+export interface AgentJobImage {
+  repository: string;
+  digest: string;
+  releaseId: string | null;
 }
 
 export interface AgentJobState {
@@ -91,6 +108,171 @@ function validateId(id: unknown, code: string): string {
     throw new AgentJobError(code, "Invalid id");
   }
   return id;
+}
+
+interface DbQuery {
+  query(
+    queryText: string,
+    values?: unknown[]
+  ): Promise<{ rows: Record<string, unknown>[] }>;
+}
+
+// Validates one candidate (repository, digest) pair from a trusted record.
+// Returns null for anything that is not an immutable, registry-pullable
+// `repository@sha256:<64 hex>` reference: malformed digests, non-registry
+// repositories, and non-string values all fail closed.
+function toTrustedImage(
+  repository: unknown,
+  digest: unknown,
+  releaseId: unknown
+): AgentJobImage | null {
+  if (typeof repository !== "string" || typeof digest !== "string") {
+    return null;
+  }
+  let repo: string;
+  try {
+    // Lowercase, registry-host-prefixed, no credentials or schemes: the
+    // reference must be remotely pullable by the edge agent, so local-only
+    // names (e.g. `deploykit/project-xxxx`) do not qualify.
+    repo = validateRegistryRepository(repository);
+  } catch {
+    return null;
+  }
+  if (!isRegistryQualified(repo)) {
+    return null;
+  }
+  const normalizedDigest = digest.trim().toLowerCase();
+  if (!DIGEST_PATTERN.test(normalizedDigest)) {
+    return null;
+  }
+  return {
+    repository: repo,
+    digest: normalizedDigest,
+    releaseId: typeof releaseId === "string" && UUID_PATTERN.test(releaseId) ? releaseId : null,
+  };
+}
+
+// Docker's own registry-host rule: the first path component names a
+// registry (not a Docker Hub namespace) when it contains a `.` or `:` or is
+// `localhost`. Without this, a local-only build name would make the agent
+// pull from the default public registry. Digest pinning would still protect
+// integrity, but the reference is not one this control plane can vouch for,
+// so it fails closed here.
+function isRegistryQualified(repository: string): boolean {
+  const host = repository.split("/")[0].toLowerCase();
+  return host === "localhost" || host.includes(".") || host.includes(":");
+}
+// Resolves the trusted execution image for an edge-targeted deployment from
+// server-side records only. Agent request payloads (claim parameters,
+// completion bodies) are never consulted. Sources, in order:
+//
+//  1. The deployment's own release row (releases.deployment_id is UNIQUE,
+//     project-scoped, digest-validated at creation).
+//  2. For rollback deployments, the rollback target release row
+//     (project-scoped at creation; failed targets rejected at creation).
+//  3. The deployment row's image columns (written only by the trusted
+//     central build path) for non-rollback deployments.
+//
+// Failed releases are never executable. Cross-project rows never match.
+// Returns null when no trustworthy reference exists; callers fail closed.
+export async function resolveTrustedJobImage(
+  db: DbQuery,
+  deploymentId: string,
+  projectId: string
+): Promise<AgentJobImage | null> {
+  const dep = (
+    await db.query(
+      `
+      SELECT project_id, trigger, image_repository, image_digest,
+             release_id, rollback_release_id
+      FROM deployments
+      WHERE id = $1
+      `,
+      [deploymentId]
+    )
+  ).rows[0] as
+    | {
+        project_id: string;
+        trigger: string;
+        image_repository: string | null;
+        image_digest: string | null;
+        release_id: string | null;
+        rollback_release_id: string | null;
+      }
+    | undefined;
+  if (dep === undefined || dep.project_id !== projectId) {
+    return null;
+  }
+
+  const ownRelease = (
+    await db.query(
+      `
+      SELECT id, project_id, image_repository, image_digest, status
+      FROM releases
+      WHERE deployment_id = $1
+      `,
+      [deploymentId]
+    )
+  ).rows[0] as
+    | {
+        id: string;
+        project_id: string;
+        image_repository: string;
+        image_digest: string;
+        status: string;
+      }
+    | undefined;
+  if (
+    ownRelease !== undefined &&
+    ownRelease.project_id === projectId &&
+    ownRelease.status !== "failed"
+  ) {
+    const image = toTrustedImage(
+      ownRelease.image_repository,
+      ownRelease.image_digest,
+      ownRelease.id
+    );
+    if (image !== null) {
+      return image;
+    }
+  }
+
+  if (dep.trigger === "rollback") {
+    // A rollback must execute its target release's digest. If the target is
+    // missing, cross-project, failed, or malformed, fail closed: deployment
+    // columns cannot speak for rollback intent.
+    if (dep.rollback_release_id === null) {
+      return null;
+    }
+    const target = (
+      await db.query(
+        `
+        SELECT id, project_id, image_repository, image_digest, status
+        FROM releases
+        WHERE id = $1
+        `,
+        [dep.rollback_release_id]
+      )
+    ).rows[0] as
+      | {
+          id: string;
+          project_id: string;
+          image_repository: string;
+          image_digest: string;
+          status: string;
+        }
+      | undefined;
+    if (
+      target === undefined ||
+      target.project_id !== projectId ||
+      target.status === "failed"
+    ) {
+      return null;
+    }
+    return toTrustedImage(target.image_repository, target.image_digest, target.id);
+  }
+
+  return toTrustedImage(dep.image_repository, dep.image_digest, dep.release_id);
 }
 
 async function requireLiveAgent(agentId: string) {
@@ -306,6 +488,14 @@ async function claimAgentJobAttempt(
       commit_sha: string | null;
     };
 
+    // Resolve the trusted execution image inside the claim transaction so
+    // the returned reference reflects the claimed deployment's records.
+    const image = await resolveTrustedJobImage(
+      client,
+      updated.deployment_id,
+      projectId
+    );
+
     const previousStatus = deployment.status;
     const nextStatus = previousStatus === "queued" ? "cloning" : previousStatus;
     if (nextStatus !== previousStatus) {
@@ -378,6 +568,7 @@ async function claimAgentJobAttempt(
       leaseExpiresAt: updated.lease_expires_at,
       branch: deployment.branch,
       commitSha: deployment.commit_sha,
+      image,
     };
   } catch (error) {
     await client.query("ROLLBACK");
@@ -480,6 +671,27 @@ export async function completeAgentJob(
     throw new AgentJobError("LEASE_STALE", "Job lease is no longer active", 409);
   }
   requireRunningLease(owned, validAgent);
+  if (input.outcome === "succeeded" && input.imageDigest != null) {
+    // The agent-reported digest is informational only and never establishes
+    // the execution image. But when a trusted record exists, an explicit
+    // mismatch means the agent did not run the claimed image (bug or
+    // substitution): refuse success rather than record a false completion.
+    const trusted = await resolveTrustedJobImage(
+      pool,
+      owned.deploymentId,
+      agent.projectId
+    );
+    if (
+      trusted !== null &&
+      trusted.digest !== input.imageDigest.trim().toLowerCase()
+    ) {
+      throw new AgentJobError(
+        "IMAGE_MISMATCH",
+        "Reported image digest does not match the trusted deployment image",
+        409
+      );
+    }
+  }
   if (input.outcome === "failed") {
     const message =
       input.errorCode != null

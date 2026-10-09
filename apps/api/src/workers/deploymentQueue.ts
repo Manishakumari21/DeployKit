@@ -51,26 +51,34 @@ async function claimNextJobAttempt(
     const result = await client.query(
       `
       SELECT
-        id,
-        deployment_id,
-        attempts,
-        max_attempts
-      FROM deployment_jobs
+        j.id,
+        j.deployment_id,
+        j.attempts,
+        j.max_attempts
+      FROM deployment_jobs j
+      JOIN deployments d ON d.id = j.deployment_id
       WHERE
-        (
-          status = 'queued'
-          AND available_at <= CURRENT_TIMESTAMP
-          AND attempts < max_attempts
+        -- Central workers own only untargeted deployments. Jobs whose
+        -- deployment names an edge agent (target_agent_id IS NOT NULL) are
+        -- claimed exclusively through the agent API; without this filter a
+        -- central worker would race (and build for) edge-targeted work.
+        d.target_agent_id IS NULL
+        AND (
+          (
+            j.status = 'queued'
+            AND j.available_at <= CURRENT_TIMESTAMP
+            AND j.attempts < j.max_attempts
+          )
+          OR
+          (
+            j.status = 'running'
+            AND j.lease_expires_at IS NOT NULL
+            AND j.lease_expires_at <= CURRENT_TIMESTAMP
+            AND j.attempts < j.max_attempts
+          )
         )
-        OR
-        (
-          status = 'running'
-          AND lease_expires_at IS NOT NULL
-          AND lease_expires_at <= CURRENT_TIMESTAMP
-          AND attempts < max_attempts
-        )
-      ORDER BY created_at ASC
-      FOR UPDATE SKIP LOCKED
+      ORDER BY j.created_at ASC
+      FOR UPDATE OF j SKIP LOCKED
       LIMIT 1
       `
     );

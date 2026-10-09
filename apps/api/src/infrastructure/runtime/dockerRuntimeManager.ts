@@ -60,6 +60,40 @@ function validateEnvironment(env: Record<string, string>): void {
     if (/[\r\n\0]/.test(v)) fail("INVALID_ENV_VALUE", `Environment variable contains invalid characters: ${k}`);
   }
 }
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Ownership-linkage labels an edge agent may attach so a container can be
+// proven DeployKit-owned before any destructive operation. Closed key set;
+// values are UUIDs only (never credentials, tokens, or free-form text), so
+// nothing secret can reach command lines or logs through this path.
+const EDGE_LINK_LABEL_KEYS: ReadonlySet<string> = new Set([
+  "io.deploykit.deployment",
+  "io.deploykit.project",
+  "io.deploykit.agent",
+  "io.deploykit.release",
+]);
+
+function validateSpecLabels(
+  labels: Record<string, string> | undefined
+): Array<[string, string]> {
+  if (labels === undefined) return [];
+  if (typeof labels !== "object" || labels === null || Array.isArray(labels)) {
+    fail("INVALID_LABELS", "Runtime labels must be an object");
+  }
+  const entries = Object.entries(labels);
+  if (entries.length > 4) fail("INVALID_LABELS", "Too many runtime labels");
+  const out: Array<[string, string]> = [];
+  for (const [key, value] of entries) {
+    if (!EDGE_LINK_LABEL_KEYS.has(key)) fail("INVALID_LABEL_NAME", `Unsupported runtime label: ${key}`);
+    if (typeof value !== "string" || !UUID_PATTERN.test(value)) {
+      fail("INVALID_LABEL_VALUE", `Runtime label value must be a UUID: ${key}`);
+    }
+    out.push([key, value]);
+  }
+  return out;
+}
 export async function runDocker(binary: string, args: string[], timeoutMs = 30_000, signal?: AbortSignal): Promise<string> {
   let result;
   try {
@@ -189,6 +223,10 @@ export class DockerRuntimeManager
       "--label",
       `io.deploykit.container-port=${validateContainerPort(spec.containerPort)}`,
     ];
+
+    for (const [labelKey, labelValue] of validateSpecLabels(spec.labels)) {
+      args.push("--label", `${labelKey}=${labelValue}`);
+    }
 
     for (
       const [key, value]

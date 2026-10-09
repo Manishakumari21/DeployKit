@@ -13,6 +13,12 @@ export interface RuntimeSpec {
   memoryBytes: number;
   cpuLimit: number;
   pidsLimit: number;
+
+  // Optional ownership-linkage labels (edge agents). Only the
+  // io.deploykit.{deployment,project,agent,release} keys are accepted and
+  // values must be UUIDs. Omitted entirely for central-worker runtimes, so
+  // existing behavior is unchanged when absent.
+  labels?: Record<string, string>;
 }
 
 export interface RuntimeInfo {

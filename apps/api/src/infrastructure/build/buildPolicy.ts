@@ -12,6 +12,8 @@ export const DEFAULT_BUILD_POLICY: BuildPolicy = {
   networkEnabled: true,
 
   maxBuildContextBytes: 2 * 1024 * 1024 * 1024,
+
+  cacheEnabled: true,
 };
 
 export function getBuildPolicy(): BuildPolicy {
@@ -37,6 +39,11 @@ export function getBuildPolicy(): BuildPolicy {
       "DEPLOYKIT_MAX_BUILD_CONTEXT_BYTES",
       DEFAULT_BUILD_POLICY.maxBuildContextBytes
     ),
+
+    cacheEnabled: readFlag(
+      "DEPLOYKIT_BUILD_CACHE_ENABLED",
+      DEFAULT_BUILD_POLICY.cacheEnabled ?? true
+    ),
   };
 
   if (policy.timeoutMs > 60 * 60 * 1000) {
@@ -56,6 +63,31 @@ export function getBuildPolicy(): BuildPolicy {
   }
 
   return policy;
+}
+
+function readFlag(
+  name: string,
+  fallback: boolean
+): boolean {
+  const raw = process.env[name];
+
+  if (raw === undefined) {
+    return fallback;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+
+  throw new Error(
+    `${name} must be a boolean (true/false)`
+  );
 }
 
 function readPositiveInteger(

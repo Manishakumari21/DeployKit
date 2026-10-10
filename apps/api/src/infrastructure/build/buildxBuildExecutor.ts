@@ -76,6 +76,56 @@ export interface BuildxBuildArgsInput {
   commitSha: string;
   policy: BuildPolicy;
   push?: boolean;
+  cacheRef?: string | null;
+}
+
+export const BUILD_CACHE_TAG = "buildcache";
+
+export function selectCacheRef(input: {
+  push: boolean;
+  cacheEnabled?: boolean;
+  imageRepository: string;
+  cacheTag?: string | null;
+}): string | null {
+  if (!input.push || input.cacheEnabled === false || !input.cacheTag) {
+    return null;
+  }
+  const repository = validateImageRepository(input.imageRepository);
+  const tag = validateImageTag(input.cacheTag);
+  return `${repository}:${tag}`;
+}
+
+function appendCacheArgs(args: string[], cacheRef: string | null): void {
+  if (!cacheRef) {
+    return;
+  }
+  const separator = cacheRef.lastIndexOf(":");
+  if (separator <= 0) {
+    throw new BuildExecutorError("INVALID_IMAGE_REPOSITORY", "Build cache reference must be repository:tag");
+  }
+  validateImageRepository(cacheRef.slice(0, separator));
+  validateImageTag(cacheRef.slice(separator + 1));
+  args.push(
+    "--cache-from",
+    `type=registry,ref=${cacheRef}`,
+    "--cache-to",
+    `type=registry,ref=${cacheRef},mode=max`
+  );
+}
+
+export function shouldRetryWithoutCache(
+  error: unknown,
+  cacheUsed: boolean,
+  signalAborted: boolean
+): boolean {
+  if (!cacheUsed || signalAborted) {
+    return false;
+  }
+  return (
+    error instanceof BuildExecutorError &&
+    (error.code === "BUILD_FAILED" ||
+      error.code === "BUILD_EXECUTION_FAILED")
+  );
 }
 
 export function buildBuildxArgs(input: BuildxBuildArgsInput): string[] {
@@ -126,6 +176,10 @@ export function buildBuildxArgs(input: BuildxBuildArgsInput): string[] {
     "--network",
     input.policy.networkEnabled ? "default" : "none"
   );
+
+  if (input.push ?? false) {
+    appendCacheArgs(args, input.cacheRef ?? null);
+  }
 
   return args;
 }
@@ -351,8 +405,6 @@ export class BuildxBuildExecutor
       request.policy.maxBuildContextBytes
     );
 
-    const imageReference = `${repository}:${tag}`;
-
     const metadataDirectory = await mkdtemp(
       path.join(
         os.tmpdir(),
@@ -367,41 +419,41 @@ export class BuildxBuildExecutor
 
     try {
       const push = request.push ?? false;
-
-      const args = buildBuildxArgs({
-        builder: this.builder,
-        imageReference,
-        commitSha: request.commitSha,
-        policy: request.policy,
+      const cacheRef = selectCacheRef({
         push,
-      }).map((arg) =>
-        arg === "<metadata-file>" ? metadataFile : arg
-      );
+        cacheEnabled: request.policy.cacheEnabled,
+        imageRepository: repository,
+        cacheTag: request.cacheTag ?? null,
+      });
 
-      args.push(request.workspace);
-
-      const result = await runBuild(this.dockerBinary, args, request.policy.timeoutMs, request.signal, request.onLog);
-
-      if (result.aborted || request.signal?.aborted) {
-        throw new BuildExecutorError("BUILD_CANCELLED", "Docker build was cancelled", result.stderr);
+      try {
+        return await this.runBuildOnce(
+          repository,
+          tag,
+          request,
+          metadataFile,
+          push,
+          cacheRef
+        );
+      } catch (error) {
+        if (
+          shouldRetryWithoutCache(error, cacheRef !== null, request.signal?.aborted ?? false)
+        ) {
+          try {
+            request.onLog?.("build cache unavailable; retrying without cache");
+          } catch {
+          }
+          return await this.runBuildOnce(
+            repository,
+            tag,
+            request,
+            metadataFile,
+            push,
+            null
+          );
+        }
+        throw error;
       }
-
-      if (result.timedOut) {
-        throw new BuildExecutorError("BUILD_TIMEOUT", `Docker build exceeded timeout of ${request.policy.timeoutMs}ms`, result.stderr);
-      }
-
-      if (result.code !== 0) {
-        throw new BuildExecutorError("BUILD_FAILED", "Docker Buildx build failed", result.stderr);
-      }
-
-      const imageDigest = await readDigest(
-        metadataFile
-      );
-
-      return {
-        imageReference,
-        imageDigest,
-      };
     } catch (error) {
       if (error instanceof BuildExecutorError) {
         throw error;
@@ -422,5 +474,52 @@ export class BuildxBuildExecutor
         retryDelay: 100,
       });
     }
+  }
+
+  private async runBuildOnce(
+    repository: string,
+    tag: string,
+    request: BuildRequest,
+    metadataFile: string,
+    push: boolean,
+    cacheRef: string | null
+  ): Promise<BuildResult> {
+    const imageReference = `${repository}:${tag}`;
+
+    const args = buildBuildxArgs({
+      builder: this.builder,
+      imageReference,
+      commitSha: request.commitSha,
+      policy: request.policy,
+      push,
+      cacheRef,
+    }).map((arg) =>
+      arg === "<metadata-file>" ? metadataFile : arg
+    );
+
+    args.push(request.workspace);
+
+    const result = await runBuild(this.dockerBinary, args, request.policy.timeoutMs, request.signal, request.onLog);
+
+    if (result.aborted || request.signal?.aborted) {
+      throw new BuildExecutorError("BUILD_CANCELLED", "Docker build was cancelled", result.stderr);
+    }
+
+    if (result.timedOut) {
+      throw new BuildExecutorError("BUILD_TIMEOUT", `Docker build exceeded timeout of ${request.policy.timeoutMs}ms`, result.stderr);
+    }
+
+    if (result.code !== 0) {
+      throw new BuildExecutorError("BUILD_FAILED", "Docker Buildx build failed", result.stderr);
+    }
+
+    const imageDigest = await readDigest(
+      metadataFile
+    );
+
+    return {
+      imageReference,
+      imageDigest,
+    };
   }
 }

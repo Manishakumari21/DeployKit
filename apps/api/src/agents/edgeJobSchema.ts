@@ -279,5 +279,12 @@ export function redactForLog(text: string): string {
     "[redacted-private-key]"
   );
   out = out.replace(/password\s*[:=]\s*\S+/gi, "password: [redacted]");
+  out = out.replace(/postgres(?:ql)?:\/\/[^\s'"]+/gi, "postgres://[redacted]");
+  out = out.replace(
+    /\b(api[_-]?key|auth[_-]?token|access[_-]?token|refresh[_-]?token|installation[_-]?token|deploy[_-]?token|npm[_-]?token)(?:\s*[:=]\s*|\s+)\S+/gi,
+    "$1: [redacted]"
+  );
+  out = out.replace(/\bsession\s*[:=]\s*\S+/gi, "session: [redacted]");
+  out = out.replace(/cookie\s*[:=]\s*[^\n;]+/gi, "cookie: [redacted]");
   return out;
 }

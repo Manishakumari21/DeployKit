@@ -11,6 +11,7 @@ import pool from "../db/database.js";
 import type { DeploymentExecutor } from "./deploymentExecutor.js";
 import { RealDeploymentExecutor } from "./deploymentPipeline.js";
 import { PipelineError } from "../deployments/deploymentErrors.js";
+import { redactForLog } from "../agents/edgeJobSchema.js";
 import { BootstrapError, bootstrapWorker } from "./workerBootstrap.js";
 
 const WORKER_ID =
@@ -77,12 +78,16 @@ function log(
   event: string,
   metadata: Record<string, unknown> = {}
 ) {
+  const safe: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    safe[key] = typeof value === "string" ? redactForLog(value) : value;
+  }
   const entry = {
     timestamp: new Date().toISOString(),
     level,
     event,
     workerId: WORKER_ID,
-    ...metadata,
+    ...safe,
   };
 
   const output = JSON.stringify(entry);

@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import type { DeploymentStatus } from "./deploymentStateMachine.js";
+import { redactSecrets } from "../services/deploymentLogService.js";
 
 export async function recordDeploymentEvent(
   client: PoolClient,
@@ -27,7 +28,7 @@ export async function recordDeploymentEvent(
       input.eventType,
       input.statusFrom,
       input.statusTo,
-      input.message.slice(0, 4000),
+      redactSecrets(input.message).slice(0, 4000),
       JSON.stringify(sanitizeMetadata(input.metadata ?? {})),
     ]
   );
@@ -57,7 +58,7 @@ function sanitizeMetadata(
     ) {
       out[key] =
         typeof value === "string"
-          ? value.slice(0, 2000)
+          ? redactSecrets(value).slice(0, 2000)
           : value;
     }
   }

@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import pool from "../db/database.js";
+import { redactForLog } from "../agents/edgeJobSchema.js";
 import { uuidParam, fail } from "./http.js";
 import {
   LOG_LEVELS,
@@ -51,7 +52,7 @@ export async function getDeploymentLogsController(req: Request, res: Response): 
     const usage = await getDeploymentLogUsage(id);
     res.json({ items, next_cursor, truncated: usage.truncated });
   } catch (error) {
-    console.error("Get deployment logs error:", error);
+    console.error("Get deployment logs error:", error instanceof Error ? redactForLog(error.message) : "Unknown error");
     fail(res, 500, "Failed to fetch logs");
   }
 }

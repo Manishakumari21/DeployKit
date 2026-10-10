@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import pool from "./db/database.js";
+import { redactForLog } from "./agents/edgeJobSchema.js";
 import { buildCorsOptions } from "./config/corsConfig.js";
 import projectRoutes from "./routes/projectRoutes.js";
 import deploymentRoutes from "./routes/deploymentRoutes.js";
@@ -30,7 +31,7 @@ app.get("/api/health", async (_req, res) => {
       database: "connected",
     });
   } catch (error) {
-    console.error("Database connection failed:", error);
+    console.error("Database connection failed:", error instanceof Error ? redactForLog(error.message) : "Unknown error");
 
     res.status(500).json({
       status: "error",

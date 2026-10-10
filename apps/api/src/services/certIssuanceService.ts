@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, rm, writeFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import pool from "../db/database.js";
+import { redactForLog } from "../agents/edgeJobSchema.js";
 import type { TrafficRouter } from "../infrastructure/gateway/trafficRouter.js";
 import { NginxGatewayRouter } from "../infrastructure/gateway/nginxGatewayRouter.js";
 import {
@@ -278,7 +279,7 @@ export async function runCertificateMaintenance(deps: IssuanceDeps): Promise<Mai
         tlsLog("gateway.tls_rollback", {
           projectId,
           code: "EXPIRY_RECONVERGE_FAILED",
-          error: error instanceof Error ? error.message.slice(0, 200) : "reconverge failed",
+          error: error instanceof Error ? redactForLog(error.message).slice(0, 200) : "reconverge failed",
         });
       }
     }

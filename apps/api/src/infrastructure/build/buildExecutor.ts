@@ -4,6 +4,7 @@ export interface BuildPolicy {
   cpuLimit: number;
   networkEnabled: boolean;
   maxBuildContextBytes: number;
+  cacheEnabled?: boolean;
 }
 
 export interface BuildRequest {
@@ -14,6 +15,8 @@ export interface BuildRequest {
   policy: BuildPolicy;
 
   push?: boolean;
+
+  cacheTag?: string | null;
 
   signal?: AbortSignal;
 

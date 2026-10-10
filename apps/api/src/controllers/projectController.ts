@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import { redactForLog } from "../agents/edgeJobSchema.js";
 import {
   createProject,
   getProjectsForUser,
@@ -45,7 +46,7 @@ if (
     if (error instanceof ProjectError) {
       return res.status(error.status).json({ error: error.message });
     }
-    console.error("Create project error:", error);
+    console.error("Create project error:", error instanceof Error ? redactForLog(error.message) : "Unknown error");
 
     return res.status(500).json({
       error: "Failed to create project",
@@ -63,7 +64,7 @@ export async function getProjectsController(
 
     return res.json(projects);
   } catch (error) {
-    console.error("Get projects error:", error);
+    console.error("Get projects error:", error instanceof Error ? redactForLog(error.message) : "Unknown error");
 
     return res.status(500).json({
       error: "Failed to fetch projects",
@@ -86,7 +87,7 @@ export async function getProjectController(
 
     return res.json(project);
   } catch (error) {
-    console.error("Get project error:", error);
+    console.error("Get project error:", error instanceof Error ? redactForLog(error.message) : "Unknown error");
 
     return res.status(500).json({
       error: "Failed to fetch project",
@@ -111,7 +112,7 @@ export async function deleteProjectController(
       message: "Project deleted successfully",
     });
   } catch (error) {
-    console.error("Delete project error:", error);
+    console.error("Delete project error:", error instanceof Error ? redactForLog(error.message) : "Unknown error");
 
     return res.status(500).json({
       error: "Failed to delete project",

@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import pool from "../db/database.js";
+import { redactForLog } from "../agents/edgeJobSchema.js";
 import { uuidParam, fail } from "./http.js";
 import { getProjectMetrics } from "../services/metricsService.js";
 
@@ -14,7 +15,7 @@ export async function getProjectMetricsController(req: Request, res: Response): 
     }
     res.json(await getProjectMetrics(id));
   } catch (error) {
-    console.error("Get project metrics error:", error);
+    console.error("Get project metrics error:", error instanceof Error ? redactForLog(error.message) : "Unknown error");
     fail(res, 500, "Failed to fetch metrics");
   }
 }

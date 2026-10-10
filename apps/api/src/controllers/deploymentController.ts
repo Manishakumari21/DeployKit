@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import { uuidParam } from "./http.js";
+import { redactForLog } from "../agents/edgeJobSchema.js";
 import { AgentError } from "../agents/agentService.js";
 import {
   cancelDeployment,
@@ -106,7 +107,7 @@ export async function createDeploymentController(
       throw error;
     }
   } catch (error) {
-    console.error("Create deployment error:", error);
+    console.error("Create deployment error:", error instanceof Error ? redactForLog(error.message) : "Unknown error");
 
     return res.status(500).json({
       error: "Failed to create deployment",
@@ -164,7 +165,7 @@ export async function rollbackDeploymentController(
       throw error;
     }
   } catch (error) {
-    console.error("Rollback deployment error:", error);
+    console.error("Rollback deployment error:", error instanceof Error ? redactForLog(error.message) : "Unknown error");
     return res.status(500).json({ error: "Failed to create rollback" });
   }
 }
@@ -193,7 +194,7 @@ export async function cancelDeploymentController(
       throw error;
     }
   } catch (error) {
-    console.error("Cancel deployment error:", error);
+    console.error("Cancel deployment error:", error instanceof Error ? redactForLog(error.message) : "Unknown error");
     return res.status(500).json({ error: "Failed to cancel deployment" });
   }
 }
@@ -212,7 +213,7 @@ export async function getDeploymentController(req: Request, res: Response) {
 
     return res.json(deployment);
   } catch (error) {
-    console.error("Get deployment error:", error);
+    console.error("Get deployment error:", error instanceof Error ? redactForLog(error.message) : "Unknown error");
 
     return res.status(500).json({
       error: "Failed to fetch deployment",
@@ -228,7 +229,7 @@ export async function getProjectDeploymentsController(req: Request, res: Respons
 
     return res.json(deployments);
   } catch (error) {
-    console.error("Get project deployments error:", error);
+    console.error("Get project deployments error:", error instanceof Error ? redactForLog(error.message) : "Unknown error");
 
     return res.status(500).json({
       error: "Failed to fetch deployments",
@@ -250,7 +251,7 @@ export async function getDeploymentEventsController(
     const events = await getDeploymentEvents(id);
     return res.json(events);
   } catch (error) {
-    console.error("Get deployment events error:", error);
+    console.error("Get deployment events error:", error instanceof Error ? redactForLog(error.message) : "Unknown error");
     return res.status(500).json({ error: "Failed to fetch events" });
   }
 }
@@ -267,7 +268,7 @@ export async function getProjectReleasesController(
     const releases = await getProjectReleases(idResult.data);
     return res.json(releases);
   } catch (error) {
-    console.error("Get releases error:", error);
+    console.error("Get releases error:", error instanceof Error ? redactForLog(error.message) : "Unknown error");
     return res.status(500).json({ error: "Failed to fetch releases" });
   }
 }
@@ -287,7 +288,7 @@ export async function getReleaseController(
     }
     return res.json(release);
   } catch (error) {
-    console.error("Get release error:", error);
+    console.error("Get release error:", error instanceof Error ? redactForLog(error.message) : "Unknown error");
     return res.status(500).json({ error: "Failed to fetch release" });
   }
 }

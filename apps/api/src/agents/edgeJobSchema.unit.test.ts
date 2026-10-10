@@ -161,6 +161,23 @@ test("redacts credentials from logs and payloads", () => {
   assert.ok(!redactForLog("password: hunter2 visible").includes("hunter2"));
 });
 
+test("redacts database URLs, tokens, sessions, and cookies", () => {
+  const dbUrl = "postgres://deploykit:s3cret@db.internal:5432/deploykit";
+  assert.ok(!redactForLog(`connect failed ${dbUrl}`).includes("s3cret"));
+  assert.ok(!redactForLog("api_key=AKIAIOSFODNN7EXAMPLE").includes("AKIAIOSFODNN7EXAMPLE"));
+  assert.ok(!redactForLog("refresh_token: abcdef123456").includes("abcdef123456"));
+  assert.ok(!redactForLog("session=abcdef1234567890").includes("abcdef1234567890"));
+  assert.ok(!redactForLog("cookie: deploykit_session=abcdef1234567890").includes("abcdef1234567890"));
+  assert.ok(!redactForLog("installation_token abcdef123456").includes("abcdef123456"));
+});
+
+test("redaction preserves non-secret diagnostics", () => {
+  const msg = redactForLog("build failed on project 550e8400-e29b-41d4-a716-446655440000 attempt 2");
+  assert.ok(msg.includes("550e8400-e29b-41d4-a716-446655440000"));
+  assert.ok(msg.includes("attempt 2"));
+  assert.ok(!msg.includes("[redacted]"));
+});
+
 test("claim image block: trusted digest reference parses, malformed fails closed", () => {
   const withImage = { ...(goodJob() as Record<string, unknown>) };
   const releaseId = "77777777-7777-4777-8777-777777777777";

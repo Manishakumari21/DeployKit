@@ -7,6 +7,7 @@ import {
 import {
   BuildxBuildExecutor,
   BuildExecutorError,
+  BUILD_CACHE_TAG,
 } from "../infrastructure/build/buildxBuildExecutor.js";
 import type { BuildExecutor } from "../infrastructure/build/buildExecutor.js";
 import { getBuildPolicy } from "../infrastructure/build/buildPolicy.js";
@@ -38,6 +39,7 @@ import {
   PipelineError,
   PIPELINE_ERROR_CODES,
 } from "../deployments/deploymentErrors.js";
+import { redactForLog } from "../agents/edgeJobSchema.js";
 import type {
   DeploymentExecutor,
   DeploymentExecutionContext,
@@ -492,6 +494,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
               commitSha,
               policy,
               push: registry !== null,
+              cacheTag: registry ? BUILD_CACHE_TAG : undefined,
               signal: context.signal,
               onLog: (line) => {
                 if (buildLines.length < 500) buildLines.push(line);
@@ -531,7 +534,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
                 error.code === "BUILD_TIMEOUT"
                   ? PIPELINE_ERROR_CODES.BUILD_TIMEOUT
                   : PIPELINE_ERROR_CODES.BUILD_FAILED,
-                error.message,
+                redactForLog(error.message),
                 {
                   retryable: error.code === "BUILD_TIMEOUT",
                   details: error.details?.slice(0, 2000),
@@ -636,10 +639,10 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
             { retryable: false }
           );
         }
-        await dlog(projectId, context.deploymentId, "git", "error", `checkout failed: ${error.message.slice(0, 500)}`);
+        await dlog(projectId, context.deploymentId, "git", "error", `checkout failed: ${redactForLog(error.message).slice(0, 500)}`);
         throw new PipelineError(
           PIPELINE_ERROR_CODES.CLONE_FAILED,
-          error.message,
+          redactForLog(error.message),
           { retryable: false }
         );
       }
@@ -993,7 +996,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         throw new PipelineError(
           PIPELINE_ERROR_CODES.RUNTIME_FAILED,
           error instanceof Error
-            ? `Image pull failed: ${error.message.slice(0, 300)}`
+            ? `Image pull failed: ${redactForLog(error.message).slice(0, 300)}`
             : "Image pull failed",
           { retryable }
         );
@@ -1061,7 +1064,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         throw new PipelineError(
           PIPELINE_ERROR_CODES.HEALTH_CHECK_FAILED,
           error instanceof Error
-            ? error.message
+            ? redactForLog(error.message)
             : "Health check failed",
           { retryable: false }
         );
@@ -1106,7 +1109,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
           }
         );
       } catch (error) {
-        throw new PipelineError(PIPELINE_ERROR_CODES.ACTIVATION_FAILED, error instanceof Error ? error.message : "Activation failed");
+        throw new PipelineError(PIPELINE_ERROR_CODES.ACTIVATION_FAILED, error instanceof Error ? redactForLog(error.message) : "Activation failed");
       }
 
       const route: RouteTarget = {
@@ -1168,7 +1171,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         throw new PipelineError(
           PIPELINE_ERROR_CODES.ACTIVATION_FAILED,
           error instanceof Error
-            ? `Traffic switch failed: ${error.message.slice(0, 300)}`
+            ? `Traffic switch failed: ${redactForLog(error.message).slice(0, 300)}`
             : "Traffic switch failed",
           { retryable: true }
         );
@@ -1202,7 +1205,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
           }
         } catch {
         }
-        const msg = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
+        const msg = error instanceof Error ? redactForLog(error.message).slice(0, 500) : String(error).slice(0, 500);
         await dlog(input.projectId, input.deploymentId, "runtime", "error", `runtime failed: ${msg}`);
       }
       const releaseRow = await pool
@@ -1227,7 +1230,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
               ? error.code
               : "RUNTIME_FAILED",
           message:
-            error instanceof Error ? error.message : String(error),
+            error instanceof Error ? redactForLog(error.message) : String(error),
         }).catch(() => undefined);
       }
       if (

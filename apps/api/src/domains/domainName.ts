@@ -28,7 +28,7 @@ export function normalizeDomain(raw: unknown): string {
   if (!value || value.length > 253) {
     throw new DomainError("INVALID_HOSTNAME", "Invalid hostname");
   }
-  // eslint-disable-next-line no-control-regex
+
   if (/[\x00-\x20\x7f\s]/.test(value)) {
     throw new DomainError("INVALID_HOSTNAME", "Invalid hostname");
   }

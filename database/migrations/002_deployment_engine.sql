@@ -24,7 +24,6 @@ CREATE TYPE job_status AS ENUM (
     'cancelled'
 );
 
-
 CREATE TABLE deployments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
@@ -61,19 +60,15 @@ CREATE TABLE deployments (
         DEFAULT CURRENT_TIMESTAMP
 );
 
-
 CREATE UNIQUE INDEX deployments_project_idempotency_idx
 ON deployments(project_id, idempotency_key)
 WHERE idempotency_key IS NOT NULL;
 
-
 CREATE INDEX deployments_project_created_idx
 ON deployments(project_id, created_at DESC);
 
-
 CREATE INDEX deployments_status_created_idx
 ON deployments(status, created_at);
-
 
 CREATE TABLE deployment_attempts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -106,10 +101,8 @@ CREATE TABLE deployment_attempts (
         UNIQUE (deployment_id, attempt_number)
 );
 
-
 CREATE INDEX deployment_attempts_deployment_idx
 ON deployment_attempts(deployment_id, attempt_number DESC);
-
 
 CREATE TABLE deployment_events (
     id BIGSERIAL PRIMARY KEY,
@@ -132,10 +125,8 @@ CREATE TABLE deployment_events (
         DEFAULT CURRENT_TIMESTAMP
 );
 
-
 CREATE INDEX deployment_events_deployment_created_idx
 ON deployment_events(deployment_id, created_at);
-
 
 CREATE TABLE deployment_jobs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -172,14 +163,11 @@ CREATE TABLE deployment_jobs (
         CHECK (max_attempts > 0)
 );
 
-
 CREATE UNIQUE INDEX deployment_jobs_deployment_idx
 ON deployment_jobs(deployment_id);
 
-
 CREATE INDEX deployment_jobs_poll_idx
 ON deployment_jobs(status, available_at);
-
 
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$
@@ -189,12 +177,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-
 CREATE TRIGGER deployments_set_updated_at
 BEFORE UPDATE ON deployments
 FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
-
 
 CREATE TRIGGER deployment_jobs_set_updated_at
 BEFORE UPDATE ON deployment_jobs

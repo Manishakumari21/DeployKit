@@ -1,6 +1,5 @@
-// First-user registration race: the bootstrap gate (users table empty) must
-// admit exactly one concurrent registration. Uses real HTTP + real
-// PostgreSQL; skips only if the shared table is unexpectedly non-empty.
+
+
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";

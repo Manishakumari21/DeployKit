@@ -19,10 +19,6 @@ const ITEMS: { key: NavKey; label: string; icon: typeof Server; group: string }[
   { key: "settings", label: "Settings", icon: Settings, group: "observe" },
 ];
 
-/**
- * Command deck — replaces the sidebar. Brand + health on the left,
- * segmented mission nav in the middle, operator on the right.
- */
 export function CommandBar({
   nav,
   setNav,

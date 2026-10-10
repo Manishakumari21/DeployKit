@@ -1,5 +1,5 @@
-// Phase 10 Step 3: project_members schema, ownership, atomic creation,
-// bootstrap idempotency, and deletion — all against real PostgreSQL.
+
+
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -63,8 +63,6 @@ async function cleanup(): Promise<void> {
     userIds.length = 0;
   }
 }
-
-// ---- Schema ----
 
 test("project_members has the expected columns, PK, FKs, and indexes", async () => {
   if (!(await dbAvailable())) return;
@@ -142,8 +140,6 @@ test("invalid role is rejected by the database", async () => {
     await cleanup();
   }
 });
-
-// ---- Ownership ----
 
 test("owner membership is created and readable", async () => {
   if (!(await dbAvailable())) return;
@@ -231,8 +227,6 @@ test("bootstrap against missing project or user fails without inventing rows", a
   }
 });
 
-// ---- Legacy projects ----
-
 test("project created without owner stays intact with zero memberships", async () => {
   if (!(await dbAvailable())) return;
   const usersBefore = (await pool.query(`SELECT COUNT(*)::int AS n FROM users`)).rows[0].n;
@@ -256,8 +250,6 @@ test("project created without owner stays intact with zero memberships", async (
     await cleanup();
   }
 });
-
-// ---- Atomic creation ----
 
 test("createProject with owner writes project and membership atomically", async () => {
   if (!(await dbAvailable())) return;
@@ -299,8 +291,6 @@ test("createProject with unknown owner rolls back the project row", async () => 
   );
   await cleanup();
 });
-
-// ---- Deletion ----
 
 test("deleting a project removes its memberships but never its users", async () => {
   if (!(await dbAvailable())) return;

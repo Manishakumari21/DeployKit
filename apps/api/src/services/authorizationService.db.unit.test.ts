@@ -1,6 +1,5 @@
-// Phase 10 Step 3: authorization decisions — database-backed, fail closed.
-// No sessions or routes here; user ids are passed explicitly as the future
-// auth layer will supply them from server-side request context.
+
+
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -153,7 +152,7 @@ test("unowned legacy project denies even its creator-era callers", async () => {
       false
     );
     assert.equal(await isDenied(requireProjectMembership({ userId: user.id, projectId: project.id })), true);
-    // Explicit bootstrap flips the decision without touching anything else.
+
     await addProjectOwner({ projectId: project.id, userId: user.id });
     assert.equal(
       await hasProjectAccess({ userId: user.id, projectId: project.id }),

@@ -59,10 +59,6 @@ import {
   type LogSource,
 } from "../services/deploymentLogService.js";
 
-// Best-effort operational log helper: logging failures must never break a
-// deployment (Phase 08 error semantics are preserved). All messages are
-// redacted/normalized inside the log service; callers must not pass tokens,
-// credentials, or env dumps.
 async function dlog(
   projectId: string,
   deploymentId: string,
@@ -102,11 +98,6 @@ function shortId(id: string): string {
   return id.replace(/-/g, "").slice(0, 8).toLowerCase();
 }
 
-// Advisory-lock namespace for the runtime-record critical section. Deliberately
-// distinct from the activation lock key (810971722, project-scoped in
-// releaseService.activateRelease): this one serializes only recorders of the
-// SAME physical container (second key is hashtext(container_id)), never whole
-// projects, so normal deployments for a project keep full parallelism.
 const RUNTIME_CONTAINER_RECORD_LOCK = 810971723;
 
 interface DeployReleaseRequest {
@@ -501,8 +492,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
               },
             });
           } catch (error) {
-            // Persist bounded build output (and the typed error tail) before
-            // mapping to pipeline errors; logging is best-effort.
+
             if (buildLines.length > 0) {
               await appendOutput({
                 deploymentId: context.deploymentId,
@@ -780,12 +770,6 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     );
   }
 
-  // Records this execution's runtime under a container-scoped advisory lock.
-  // Duplicate executions converge here instead of violating the UNIQUE on
-  // container_id: the lock serializes the check-then-record so the second
-  // recorder observes the winner's row. Same-release re-records (crash
-  // resume) take the normal upsert path; only a row owned by ANOTHER
-  // release reports a duplicate. The container_name upsert is unchanged.
   private async recordRuntimeInstance(
     input: DeployReleaseRequest,
     runtime: RuntimeInfo
@@ -837,11 +821,6 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     });
   }
 
-  // Yields a duplicate execution onto the winner's runtime. Writes nothing to
-  // runtime_instances (the winner's row is never overwritten) and never
-  // activates: the loser's own release/deployment reach existing legal
-  // terminal states, and the typed outcome lets the worker finish the job
-  // terminally instead of retrying a duplicate.
   private async convergeDuplicateExecution(
     input: DeployReleaseRequest,
     runtime: RuntimeInfo,
@@ -854,8 +833,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       "info",
       `duplicate execution converged onto release ${adoptedReleaseId}; yielding`
     );
-    // This execution's container was never recorded; remove it best-effort
-    // so it cannot leak (mirrors the failure-path cleanup below).
+
     await this.runtimeManager.remove(runtime.containerName).catch(() => undefined);
     const releaseRow = await pool.query(
       `SELECT status FROM releases WHERE id = $1`,
@@ -1020,8 +998,6 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
           { retryable: false }
         );
       }
-      // On health failure the bounded container tail is persisted for
-      // diagnostics (see catch below); success path needs no log copy.
 
       await pool.query(
         `
@@ -1143,10 +1119,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         imageDigest: input.imageDigest,
       };
     } catch (error) {
-      // Bounded runtime diagnostics: persist a tail of the failed container's
-      // logs (DeployKit-owned container only) plus the typed error. Live
-      // `docker logs` streaming is intentionally NOT copied unbounded into
-      // Postgres; only this bounded window is persisted.
+
       if (runtime) {
         try {
           const tail = await this.runtimeManager.containerLogs?.(runtime.containerName, 100);
@@ -1160,7 +1133,6 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
             });
           }
         } catch {
-          // Diagnostics are best-effort.
         }
         const msg = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
         await dlog(input.projectId, input.deploymentId, "runtime", "error", `runtime failed: ${msg}`);

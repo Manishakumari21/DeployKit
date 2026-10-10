@@ -1,20 +1,4 @@
-// Phase 12.4: minimal control-plane HTTP client for the edge agent.
-//
-// The agent communicates ONLY through the machine-authenticated API
-// (Bearer agent token) and the local Docker Engine. It never accesses
-// PostgreSQL. Every response body is returned as `unknown`: callers must
-// validate with edgeJobSchema.ts before use. Nothing trusted is derived
-// from local config (project/agent/release IDs always come from the server
-// and are revalidated).
-//
-// Error taxonomy (lease semantics mirror agentJobService.ts):
-//   - definitive: the server answered and rejected the request (401
-//     revoked/unauthenticated, 403/404/409 lease not owned / stale /
-//     ineligible). The caller must stop execution, never retry blindly.
-//   - transient: network failure, timeout, abort, or 5xx. The outcome is
-//     UNKNOWN — a timeout never means the server rejected the request.
-//     Callers must reconcile (heartbeat) before retrying non-idempotent
-//     actions such as completion reports.
+
 
 import { redactForLog } from "./edgeJobSchema.js";
 
@@ -42,7 +26,7 @@ export class EdgeApiTransientError extends Error {
 export interface EdgeAgentClientOptions {
   baseUrl: string;
   token: string;
-  // Per-request timeout. Bounded: 1s..120s. Defaults to 15s.
+
   requestTimeoutMs?: number;
   fetchImpl?: FetchImpl;
 }
@@ -91,15 +75,11 @@ export class EdgeAgentClient {
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
-  // Raw claim envelope ({ job: ... | null }) as unknown. Validate with
-  // parseClaimedJobResponse before use. Returns null body content as null.
   async claimJob(signal?: AbortSignal): Promise<unknown> {
     const body = await this.post("/api/agent/jobs/claim", undefined, signal);
     return body;
   }
 
-  // Raw heartbeat state as unknown. Validate with parseHeartbeatState.
-  // Success also renews the lease server-side (extendJobLease semantics).
   async heartbeatJob(jobId: string, signal?: AbortSignal): Promise<unknown> {
     return this.post(`/api/agent/jobs/${encodeURIComponent(jobId)}/heartbeat`, undefined, signal);
   }
@@ -132,8 +112,7 @@ export class EdgeAgentClient {
       response = await this.fetchImpl(this.baseUrl + path, {
         method: "POST",
         headers: {
-          // Token travels only in the Authorization header, never in the
-          // URL, command-line arguments, or logs.
+
           authorization: `Bearer ${this.token}`,
           "content-type": "application/json",
           accept: "application/json",
@@ -145,8 +124,7 @@ export class EdgeAgentClient {
       if (signal?.aborted) {
         throw new EdgeApiTransientError("Edge agent request was cancelled");
       }
-      // Network failure or timeout: the server may still have applied the
-      // request. Outcome unknown — reconcile, do not assume rejection.
+
       throw new EdgeApiTransientError(
         `Control-plane request failed without a response: ${redactForLog(error instanceof Error ? error.message : "unknown error").slice(0, 300)}`
       );

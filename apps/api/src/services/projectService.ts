@@ -18,9 +18,7 @@ export interface CreateProjectInput {
   name: string;
   repositoryUrl: string;
   branch: string;
-  // When supplied, the project and its owner membership are created in one
-  // transaction. When omitted, the legacy unowned project is created (no
-  // membership row); such projects deny access once routes are protected.
+
   ownerUserId?: string;
 }
 
@@ -95,8 +93,6 @@ export async function getProjects() {
   return result.rows;
 }
 
-// Membership-scoped listing: only projects the user belongs to. Legacy
-// unowned projects have no member rows and are therefore never returned.
 export async function getProjectsForUser(userId: string) {
   const result = await pool.query(
     `
@@ -146,10 +142,6 @@ export interface ProjectMembership {
   created: boolean;
 }
 
-// Explicit ownership bootstrap for legacy (unowned) projects and admin use.
-// Idempotent: rerunning with the same pair is a no-op reporting created:false.
-// Never invents users or projects: a missing project/user surfaces as
-// MEMBERSHIP_SUBJECT_NOT_FOUND rather than a silent assignment.
 export async function addProjectOwner(input: {
   projectId: string;
   userId: string;

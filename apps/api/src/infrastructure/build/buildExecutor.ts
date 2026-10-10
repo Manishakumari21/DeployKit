@@ -12,11 +12,11 @@ export interface BuildRequest {
   imageTag: string;
   commitSha: string;
   policy: BuildPolicy;
-  /** push=true uses --push, otherwise --load. Never combined. */
+
   push?: boolean;
-  /** AbortSignal for cancellation; aborts the underlying build process. */
+
   signal?: AbortSignal;
-  /** Optional incremental build-output hook (plain-progress lines). Must never throw. */
+
   onLog?: (line: string) => void;
 }
 

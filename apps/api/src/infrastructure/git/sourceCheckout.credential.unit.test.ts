@@ -73,7 +73,7 @@ exit 0
   process.env.FAKE_GIT_ARGV_LOG = argvLog;
   try {
     const url = "https://github.com/acme/app.git";
-    validateRepositoryUrl(url); 
+    validateRepositoryUrl(url);
     const result = await withCheckedOutRepository(
       { repositoryUrl: url, branch: "main", authToken: TOKEN },
       async ({ workspace, commitSha }) => {

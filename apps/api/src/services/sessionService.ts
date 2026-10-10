@@ -1,8 +1,4 @@
-// Phase 10 Step 4: opaque server-side sessions.
-// The raw token (256-bit, hex) is returned exactly once, at creation, so the
-// caller can set the HttpOnly cookie. Only its SHA-256 digest is persisted;
-// a database read never yields a usable session. Expiry and revocation are
-// enforced on every resolution. Raw tokens are never logged.
+
 
 import crypto from "node:crypto";
 import pool from "../db/database.js";
@@ -25,7 +21,7 @@ export interface CreatedSession {
   id: string;
   userId: string;
   expiresAt: string;
-  // Handle with care: set it in the cookie, never persist or log it.
+
   token: string;
 }
 
@@ -74,8 +70,6 @@ export async function createSession(userId: string): Promise<CreatedSession> {
   }
 }
 
-// Null covers unknown, expired, and revoked uniformly. Never throws for
-// lookup misses; only for unexpected database failures.
 export async function resolveSession(token: unknown): Promise<ResolvedSession | null> {
   if (typeof token !== "string" || !token) return null;
   const result = await pool.query(
@@ -94,7 +88,6 @@ export async function resolveSession(token: unknown): Promise<ResolvedSession | 
   return { sessionId: row.id, userId: row.user_id };
 }
 
-// Idempotent: revoking twice reports false the second time, never an error.
 export async function revokeSession(token: unknown): Promise<boolean> {
   if (typeof token !== "string" || !token) return false;
   const result = await pool.query(
@@ -121,8 +114,6 @@ export async function revokeSessionById(sessionId: string): Promise<boolean> {
   return (result.rowCount ?? 0) > 0;
 }
 
-// Removes only expired rows (revoked-but-unexpired rows linger at most until
-// their expiry, bounded by the session lifetime). Mirrors deleteExpiredLogs.
 export async function deleteExpiredSessions(): Promise<number> {
   const result = await pool.query(`DELETE FROM sessions WHERE expires_at < NOW()`);
   return result.rowCount ?? 0;

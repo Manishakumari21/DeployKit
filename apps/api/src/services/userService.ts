@@ -1,7 +1,4 @@
-// Phase 10 Step 2: identity foundation — user creation and lookup only.
-// No sessions, no login routes, no authorization here (later steps).
-// Password hashing uses bcrypt (via bcryptjs, pure-JS, maintained) at cost 12.
-// Controllers/routes are intentionally untouched in this step.
+
 
 import bcrypt from "bcryptjs";
 import type { QueryResult } from "pg";
@@ -9,8 +6,7 @@ import pool from "../db/database.js";
 import { withTransaction } from "../db/transaction.js";
 
 export const BCRYPT_COST = 12;
-// bcrypt silently truncates inputs past 72 bytes, so longer passwords are
-// rejected rather than hashed in a way that ignores the tail.
+
 export const MIN_PASSWORD_LENGTH = 12;
 export const MAX_PASSWORD_LENGTH = 72;
 export const MAX_EMAIL_LENGTH = 254;
@@ -22,9 +18,6 @@ export interface PublicUser {
   updated_at: string;
 }
 
-// Internal row including the hash. Required by the future login step for
-// password verification. Never serialize this to an API response; use
-// toPublicUser() at service boundaries.
 export interface UserRow extends PublicUser {
   password_hash: string;
 }
@@ -40,8 +33,6 @@ export class UserError extends Error {
   }
 }
 
-// Trim + lowercase so 'User@Example.COM' and 'user@example.com' are one identity.
-// Throws UserError on non-string/empty input; lookup helpers handle that.
 export function normalizeEmail(raw: unknown): string {
   if (typeof raw !== "string") {
     throw new UserError("INVALID_EMAIL", "Invalid email address");
@@ -115,12 +106,6 @@ export async function createUser(input: {
   return insertUserRow(pool, prepared);
 }
 
-// Bootstrap-gated creation for the empty-table first-user window. The
-// emptiness re-check and the insert run in one transaction under a
-// transactional advisory lock, so concurrent first registrations serialize:
-// exactly one wins and the rest get REGISTRATION_CLOSED. An application-only
-// COUNT(*) pre-check can never provide this; the lock is the mechanism.
-// Expensive hashing happens before the lock is taken to hold it briefly.
 export async function createBootstrapUser(input: {
   email: string;
   password: string;
@@ -140,8 +125,6 @@ export async function createBootstrapUser(input: {
   });
 }
 
-// Minimal executor surface shared by pool and transaction clients, so the
-// insert path is written once instead of per caller.
 interface QueryExecutor {
   query(queryText: string, values?: unknown[]): Promise<QueryResult>;
 }
@@ -175,8 +158,6 @@ async function insertUserRow(
   }
 }
 
-// Internal lookup for the future login step; includes password_hash.
-// Returns null (never throws) for unknown or blank emails.
 export async function findUserByEmail(email: string): Promise<UserRow | null> {
   const normalized = typeof email === "string" ? email.trim().toLowerCase() : "";
   if (!normalized) return null;
@@ -198,8 +179,6 @@ export async function findUserById(id: string): Promise<UserRow | null> {
   return (result.rows[0] as UserRow | undefined) ?? null;
 }
 
-// True while no account exists at all. Backs the first-user bootstrap window:
-// self-registration stays possible exactly until the first account is created.
 export async function hasAnyUsers(): Promise<boolean> {
   const result = await pool.query(`SELECT EXISTS(SELECT 1 FROM users) AS exists`);
   return result.rows[0].exists === true;

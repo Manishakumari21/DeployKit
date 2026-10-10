@@ -26,10 +26,6 @@ const querySchema = z.object({
   direction: z.enum(["asc", "desc"]).optional(),
 });
 
-// GET /api/deployments/:id/logs — cursor-paginated operational logs.
-// Bounded reads: limit clamped server-side to 1..200, default 100.
-// Ownership: deployment ids are unguessable UUIDs scoped to their project
-// via the deployment_logs.project_id column written at append time.
 export async function getDeploymentLogsController(req: Request, res: Response): Promise<void> {
   const id = uuidParam(req, res, "Invalid deployment id");
   if (!id) return;

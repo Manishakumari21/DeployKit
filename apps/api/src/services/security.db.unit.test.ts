@@ -1,7 +1,5 @@
-// Final Phase 10 security boundary: CORS, CSRF origin checks, PG-backed
-// rate limiting, registration gating, and the session probe — over real HTTP
-// against the Express app and real PostgreSQL. Extends (never duplicates)
-// the Step 4 authentication/authorization coverage.
+
+
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
@@ -26,8 +24,6 @@ async function dbAvailable(): Promise<boolean> {
   }
 }
 
-// This file performs many localhost logins against the shared per-IP bucket,
-// so raise the ceilings process-wide; individual tests tighten them.
 const savedEnv: Record<string, string | undefined> = {};
 for (const key of [
   "DEPLOYKIT_AUTH_RATE_LIMIT_WINDOW_SECONDS",
@@ -143,8 +139,6 @@ async function cleanup(): Promise<void> {
   await pool.query(`DELETE FROM auth_rate_limits WHERE key LIKE 'login:%' OR key LIKE 'register:%'`);
 }
 
-// ---- CORS configuration ----
-
 test("CORS config: dev defaults, explicit list, and fail-closed validation", () => {
   const savedOrigin = process.env.DEPLOYKIT_WEB_ORIGIN;
   const savedNode = process.env.NODE_ENV;
@@ -187,14 +181,12 @@ test("CORS headers: allowed origin reflected with credentials, others denied", a
   }
 });
 
-// ---- CSRF origin checks ----
-
 test("unsafe browser requests from untrusted origins are rejected", async () => {
   if (!(await ensureServer())) return;
   const user = await makeUser("csrf");
   try {
     const jar = await loginCookie(user.email);
-    // Evil origin is rejected even with a valid session.
+
     const evil = await api("/api/projects", {
       method: "POST",
       cookie: jar,
@@ -203,7 +195,7 @@ test("unsafe browser requests from untrusted origins are rejected", async () => 
     });
     assert.equal(evil.status, 403);
     assert.deepEqual(evil.json, { error: "Untrusted origin" });
-    // Evil referer without origin is rejected too.
+
     const evilRef = await api("/api/projects", {
       method: "POST",
       cookie: jar,
@@ -211,7 +203,7 @@ test("unsafe browser requests from untrusted origins are rejected", async () => 
       body: { name: "x", repositoryUrl: "https://github.com/acme/x.git", branch: "main" },
     });
     assert.equal(evilRef.status, 403);
-    // Allowlisted origin and referer pass the check (auth decides next).
+
     const okOrigin = await api("/api/projects", {
       method: "POST",
       cookie: jar,
@@ -224,10 +216,10 @@ test("unsafe browser requests from untrusted origins are rejected", async () => 
     });
     assert.equal(okOrigin.status, 201);
     projectIds.push((okOrigin.json as { id: string }).id);
-    // Non-browser clients (no origin headers) are unaffected.
+
     const curlLike = await api("/api/projects", { cookie: jar });
     assert.equal(curlLike.status, 200);
-    // Safe methods never trigger the check, even from evil origins.
+
     const safeGet = await api("/api/projects", { cookie: jar, origin: EVIL });
     assert.equal(safeGet.status, 200);
   } finally {
@@ -250,8 +242,7 @@ test("login CSRF is blocked but the webhook HMAC path stays exempt", async () =>
       body: { email: user.email, password: "correct-horse-123" },
     });
     assert.equal(plainLogin.status, 200);
-    // GitHub webhooks carry no browser origin and must never hit the
-    // session/CSRF layer: bad signature is still a 401 from HMAC.
+
     const webhook = await fetch(`${base}/api/webhooks/github`, {
       method: "POST",
       headers: {
@@ -269,8 +260,6 @@ test("login CSRF is blocked but the webhook HMAC path stays exempt", async () =>
     await cleanup();
   }
 });
-
-// ---- Rate limiting ----
 
 test("repeated failures are throttled without leaking account existence", async () => {
   if (!(await ensureServer())) return;
@@ -295,7 +284,7 @@ test("repeated failures are throttled without leaking account existence", async 
     assert.equal(limited.status, 429);
     assert.deepEqual(limited.json, { error: "Too many attempts" });
     assert.ok(Number(limited.headers.get("retry-after")) >= 1);
-    // Same response shape for an address that never existed.
+
     for (let i = 0; i < 3; i++) {
       await api("/api/auth/login", { method: "POST", body: { email: ghost, password: "x" } });
     }
@@ -333,7 +322,7 @@ test("successful login clears the account bucket; windows expire", async () => {
       })).status,
       200
     );
-    // Two more failures stay under the cleared budget of 3.
+
     for (let i = 0; i < 2; i++) {
       assert.equal(
         (await api("/api/auth/login", {
@@ -343,7 +332,7 @@ test("successful login clears the account bucket; windows expire", async () => {
         401
       );
     }
-    // One more exhausts it again.
+
     await api("/api/auth/login", {
       method: "POST",
       body: { email: user.email, password: "wrong-password-xyz" },
@@ -355,7 +344,7 @@ test("successful login clears the account bucket; windows expire", async () => {
       })).status,
       429
     );
-    // Rewinding the window re-opens the budget (deterministic expiry).
+
     await pool.query(
       `UPDATE auth_rate_limits SET window_start = NOW() - INTERVAL '2 hours'
        WHERE key = $1`,
@@ -383,13 +372,13 @@ test("limiter buckets are independent and increments are atomic", async () => {
     for (let i = 0; i < 5; i++) {
       await api("/api/auth/login", { method: "POST", body: { email: first, password: "x" } });
     }
-    // A different address from the same IP is unaffected.
+
     assert.equal(
       (await api("/api/auth/login", { method: "POST", body: { email: second, password: "x" } }))
         .status,
       401
     );
-    // Ten concurrent consumes on one fresh key all land exactly once each.
+
     const key = `login:email:${uniqueEmail("atomic")}`;
     await Promise.all(
       Array.from({ length: 10 }, () =>
@@ -412,8 +401,6 @@ test("limiter buckets are independent and increments are atomic", async () => {
   }
 });
 
-// ---- Registration ----
-
 test("registration creates an account without a session when open", async () => {
   if (!(await ensureServer())) return;
   process.env.DEPLOYKIT_ALLOW_PUBLIC_REGISTRATION = "true";
@@ -430,13 +417,13 @@ test("registration creates an account without a session when open", async () => 
     assert.equal(sessionCookie(res.cookies), null);
     const row = (await pool.query(`SELECT id FROM users WHERE email = $1`, [email])).rows[0];
     userIds.push(row.id);
-    // Duplicate email is a safe 409, not a 500 or a second account.
+
     const dup = await api("/api/auth/register", {
       method: "POST",
       body: { email, password: "correct-horse-123" },
     });
     assert.equal(dup.status, 409);
-    // Policy violations stay 400.
+
     assert.equal(
       (await api("/api/auth/register", { method: "POST", body: { email: uniqueEmail("w"), password: "short" } }))
         .status,
@@ -459,7 +446,7 @@ test("registration closes once accounts exist unless explicitly enabled", async 
   try {
     const usersBefore = (await pool.query(`SELECT COUNT(*)::int AS n FROM users`)).rows[0].n;
     if (usersBefore === 0) {
-      // First-user bootstrap window: open while the table is empty.
+
       const email = uniqueEmail("bootstrap");
       const res = await api("/api/auth/register", {
         method: "POST",
@@ -468,7 +455,7 @@ test("registration closes once accounts exist unless explicitly enabled", async 
       assert.equal(res.status, 201);
       userIds.push((res.json as { id: string }).id);
     }
-    // With accounts present and no flag, the door stays shut.
+
     const closed = await api("/api/auth/register", {
       method: "POST",
       body: { email: uniqueEmail("shut"), password: "correct-horse-123" },
@@ -479,8 +466,6 @@ test("registration closes once accounts exist unless explicitly enabled", async 
     await cleanup();
   }
 });
-
-// ---- Session probe + remaining route coverage ----
 
 test("session probe returns the user on a valid cookie and 401 otherwise", async () => {
   if (!(await ensureServer())) return;
@@ -523,9 +508,9 @@ test("forwarded clients behind the proxy get independent buckets; spoofed prefix
     assert.equal(await post(emailA, "198.51.100.11"), 401);
     assert.equal(await post(emailA, "198.51.100.11"), 401);
     assert.equal(await post(emailA, "198.51.100.11"), 429);
-    // A different forwarded client is unaffected by A's exhaustion.
+
     assert.equal(await post(emailB, "198.51.100.22"), 401);
-    // Attacker-injected prefix is ignored: the proxy-appended last entry keys the bucket.
+
     assert.equal(await post(uniqueEmail("xff-c"), "9.9.9.9, 198.51.100.33"), 401);
     const keyed = await pool.query(`SELECT key FROM auth_rate_limits WHERE key = $1`, [
       "login:ip:198.51.100.33",
@@ -585,7 +570,7 @@ test("strangers cannot create deployments, delete projects, or touch github link
       (await api(`/api/projects/${project.id}`, { method: "DELETE" })).status,
       401
     );
-    // Owner paths still work end to end.
+
     assert.equal((await api(`/api/projects/${project.id}`, { cookie: ownerJar })).status, 200);
   } finally {
     await cleanup();

@@ -35,17 +35,10 @@ export interface ClaimedAgentJob {
   leaseExpiresAt: string | null;
   branch: string;
   commitSha: string | null;
-  // Trusted execution image resolved server-side from release/deployment
-  // records (see resolveTrustedJobImage). Null when no trustworthy
-  // digest-pinned reference exists yet; the agent must then fail closed and
-  // never substitute its own image reference.
+
   image: AgentJobImage | null;
 }
 
-// Smallest explicit server-to-agent image contract: an immutable,
-// registry-pullable reference plus the source release (if any). Only these
-// fields reach the authenticated agent; nothing else about the release,
-// registry, or environment is disclosed.
 export interface AgentJobImage {
   repository: string;
   digest: string;
@@ -117,10 +110,6 @@ interface DbQuery {
   ): Promise<{ rows: Record<string, unknown>[] }>;
 }
 
-// Validates one candidate (repository, digest) pair from a trusted record.
-// Returns null for anything that is not an immutable, registry-pullable
-// `repository@sha256:<64 hex>` reference: malformed digests, non-registry
-// repositories, and non-string values all fail closed.
 function toTrustedImage(
   repository: unknown,
   digest: unknown,
@@ -131,9 +120,7 @@ function toTrustedImage(
   }
   let repo: string;
   try {
-    // Lowercase, registry-host-prefixed, no credentials or schemes: the
-    // reference must be remotely pullable by the edge agent, so local-only
-    // names (e.g. `deploykit/project-xxxx`) do not qualify.
+
     repo = validateRegistryRepository(repository);
   } catch {
     return null;
@@ -152,29 +139,11 @@ function toTrustedImage(
   };
 }
 
-// Docker's own registry-host rule: the first path component names a
-// registry (not a Docker Hub namespace) when it contains a `.` or `:` or is
-// `localhost`. Without this, a local-only build name would make the agent
-// pull from the default public registry. Digest pinning would still protect
-// integrity, but the reference is not one this control plane can vouch for,
-// so it fails closed here.
 function isRegistryQualified(repository: string): boolean {
   const host = repository.split("/")[0].toLowerCase();
   return host === "localhost" || host.includes(".") || host.includes(":");
 }
-// Resolves the trusted execution image for an edge-targeted deployment from
-// server-side records only. Agent request payloads (claim parameters,
-// completion bodies) are never consulted. Sources, in order:
-//
-//  1. The deployment's own release row (releases.deployment_id is UNIQUE,
-//     project-scoped, digest-validated at creation).
-//  2. For rollback deployments, the rollback target release row
-//     (project-scoped at creation; failed targets rejected at creation).
-//  3. The deployment row's image columns (written only by the trusted
-//     central build path) for non-rollback deployments.
-//
-// Failed releases are never executable. Cross-project rows never match.
-// Returns null when no trustworthy reference exists; callers fail closed.
+
 export async function resolveTrustedJobImage(
   db: DbQuery,
   deploymentId: string,
@@ -238,9 +207,7 @@ export async function resolveTrustedJobImage(
   }
 
   if (dep.trigger === "rollback") {
-    // A rollback must execute its target release's digest. If the target is
-    // missing, cross-project, failed, or malformed, fail closed: deployment
-    // columns cannot speak for rollback intent.
+
     if (dep.rollback_release_id === null) {
       return null;
     }
@@ -488,8 +455,6 @@ async function claimAgentJobAttempt(
       commit_sha: string | null;
     };
 
-    // Resolve the trusted execution image inside the claim transaction so
-    // the returned reference reflects the claimed deployment's records.
     const image = await resolveTrustedJobImage(
       client,
       updated.deployment_id,
@@ -672,10 +637,7 @@ export async function completeAgentJob(
   }
   requireRunningLease(owned, validAgent);
   if (input.outcome === "succeeded" && input.imageDigest != null) {
-    // The agent-reported digest is informational only and never establishes
-    // the execution image. But when a trusted record exists, an explicit
-    // mismatch means the agent did not run the claimed image (bug or
-    // substitution): refuse success rather than record a false completion.
+
     const trusted = await resolveTrustedJobImage(
       pool,
       owned.deploymentId,

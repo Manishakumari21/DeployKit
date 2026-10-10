@@ -1,5 +1,5 @@
-// Phase 10 Step 4: session lifecycle against real PostgreSQL.
-// Raw tokens must never be recoverable from the database.
+
+
 import test from "node:test";
 import assert from "node:assert/strict";
 

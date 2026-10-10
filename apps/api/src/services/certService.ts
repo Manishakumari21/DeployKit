@@ -53,7 +53,6 @@ export async function requestCertificate(domainId: string): Promise<DomainRow> {
   return toDomainRow(result.rows[0]);
 }
 
-
 export async function claimDueCertificates(limit = 5): Promise<DomainRow[]> {
   const client = await pool.connect();
   try {

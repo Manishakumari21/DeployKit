@@ -1,27 +1,4 @@
-// Phase 12.4: agent-side Docker abstraction for the edge executor.
-//
-// Reuses the existing process/Docker machinery where it is safe:
-//   - DockerRuntimeManager for pull/create/start/inspect/health (argument
-//     arrays, digest-pinned images only, resource limits, bounded timeouts).
-//   - runCommand for label-filtered listing and label inspection.
-//
-// Agent-specific safeguards added here:
-//   - Deterministic bounded container names (dk-p<8hex>-d<8hex>) so a run
-//     can only ever address its own deployment's container.
-//   - Ownership-linkage labels (deployment/project/agent/release) applied at
-//     create time via the extended RuntimeSpec.
-//   - An inspect-based ownership gate: stop/remove/list-derived destructive
-//     operations verify io.deploykit.managed=true plus matching deployment,
-//     project, and agent labels first and refuse otherwise. Unrelated
-//     containers are never touched; no prune or broad cleanup exists.
-//   - Hard prohibitions: no privileged mode, no host networking, no host
-//     mounts, no Docker socket mounts, no credentials in argv/env/logs, no
-//     shell interpolation (spawn arg arrays only), no image builds.
-//
-// Registry authentication: the current control-plane API exposes no safe
-// credential mechanism for agents, so pulls are unauthenticated. If a pull
-// fails with an authorization error the executor reports a blocker instead
-// of accepting credentials through job payloads, argv, or logs.
+
 
 import { runCommand, type ExecResult } from "../infrastructure/process/dockerExec.js";
 import {
@@ -89,9 +66,9 @@ export interface EdgeDockerOptions {
   containerPort?: number;
   healthPath?: string;
   healthTimeoutMs?: number;
-  // Injected for tests; defaults to DockerRuntimeManager.
+
   runtimeManager?: RuntimeManager;
-  // Injected for tests; defaults to runCommand (local Docker Engine CLI).
+
   runFn?: typeof runCommand;
 }
 
@@ -106,8 +83,6 @@ function requireUuid(value: string, field: string): string {
   return value;
 }
 
-// Deterministic container name binding a container to one deployment.
-// Bounded, charset-validated, and verifiable by the ownership gate.
 export function edgeContainerName(projectId: string, deploymentId: string): string {
   requireUuid(projectId, "project id");
   requireUuid(deploymentId, "deployment id");
@@ -185,10 +160,6 @@ export class EdgeDockerRuntime {
     return { ...this.config };
   }
 
-  // Pulls the exact digest-pinned image. Unauthenticated: there is no safe
-  // control-plane credential mechanism for agents. Throws EDGE_PULL_FAILED
-  // (bounded, redacted) on failure; callers surface registry auth failures
-  // as a contract blocker, never by injecting credentials.
   async pullImage(imageReference: string, signal?: AbortSignal): Promise<string> {
     let pinned: string;
     try {
@@ -217,12 +188,6 @@ export class EdgeDockerRuntime {
     return pinned;
   }
 
-  // Creates and starts the deployment container. Hardened exactly like the
-  // central runtime: read-only rootfs, init, no-new-privileges, ALL caps
-  // dropped, restart=no, tmpfs /tmp only, explicit memory/cpu/pids limits,
-  // validated network (never host), no mounts, no privileged flag, minimal
-  // non-secret environment. Labels link the container to the deployment,
-  // project, and agent for the ownership gate.
   async createAndStart(
     identity: EdgeOwnedIdentity,
     imageReference: string,
@@ -300,9 +265,6 @@ export class EdgeDockerRuntime {
     }
   }
 
-  // Reads the container's DeployKit labels via `docker container inspect`
-  // (single argv element, no shell). Returns the label map; never throws for
-  // missing containers (null) so reconciliation stays best-effort.
   async readLabels(containerName: string): Promise<Record<string, string> | null> {
     assertEdgeContainerName(containerName);
     let result: ExecResult;
@@ -329,9 +291,6 @@ export class EdgeDockerRuntime {
     }
   }
 
-  // Ownership gate: proves the named container is DeployKit-managed AND
-  // linked to this deployment/project/agent before any destructive
-  // operation. Throws EDGE_NOT_OWNED otherwise (touch nothing).
   async assertOwned(containerName: string, identity: EdgeOwnedIdentity): Promise<void> {
     assertEdgeContainerName(containerName);
     const expectedName = edgeContainerName(identity.projectId, identity.deploymentId);
@@ -350,15 +309,11 @@ export class EdgeDockerRuntime {
     }
   }
 
-  // Stops and removes ONLY a container proven owned by assertOwned.
-  // Best-effort stop (a missing container is not an error); remove failure
-  // is surfaced so callers do not mistake an orphan for cleanup.
   async stopAndRemoveOwned(containerName: string, identity: EdgeOwnedIdentity): Promise<void> {
     await this.assertOwned(containerName, identity);
     try {
       await this.manager.stop(containerName);
     } catch {
-      // Best-effort: the container may already be stopped or gone.
     }
     try {
       await this.manager.remove(containerName);
@@ -371,10 +326,6 @@ export class EdgeDockerRuntime {
     }
   }
 
-  // Lists local containers carrying this deployment's label (for reconnect
-  // reconciliation). Label value is a validated UUID passed as a single argv
-  // element; output names are filtered to the edge naming convention so
-  // unrelated containers can never enter the owned set.
   async listOwnedContainers(deploymentId: string): Promise<string[]> {
     requireUuid(deploymentId, "deployment id");
     let result: ExecResult;

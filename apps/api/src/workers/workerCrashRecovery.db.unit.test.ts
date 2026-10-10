@@ -91,13 +91,13 @@ test("crash during build recovers via lease and resumes to active exactly once",
   const project = await createProject(`crash-build-${Date.now()}`);
   try {
     const dep = await createQueuedDeployment(project.id);
-    // Worker 1 claims then crashes (never completes); force lease expiry.
+
     const claimed = await claimNextJob("worker-crash-1", 50);
     assert.ok(claimed);
     await pool.query(`UPDATE deployment_jobs SET lease_expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE id = $1`, [claimed!.id]);
     const recovered = await recoverExpiredJobs();
     assert.ok(recovered >= 1);
-    // Worker 2 restarts after bootstrap and resumes the same deployment.
+
     const claimed2 = await claimNextJob("worker-restart-2", 30_000);
     assert.ok(claimed2);
     assert.equal(claimed2!.deploymentId, dep.id);

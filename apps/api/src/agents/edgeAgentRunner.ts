@@ -1,14 +1,4 @@
-// Phase 12.5: standalone edge agent runner.
-//
-// Reuses the Phase 12.4 executor, client, Docker abstraction, and the
-// existing agent API/lease contracts. This module adds ONLY the operational
-// shell around them: startup validation, Docker preflight, a bounded
-// poll/execute loop, reconnect backoff, graceful shutdown, structured
-// redacted logging, and process exit codes.
-//
-// It never executes the central deployment worker, never creates a second
-// queue or lease system, never touches PostgreSQL, and never reports
-// success except through the executor's real success conditions.
+
 
 import { EdgeAgentClient } from "./edgeAgentClient.js";
 import { EdgeDockerRuntime } from "./edgeDocker.js";
@@ -115,9 +105,7 @@ export class EdgeAgentRunner {
   private inFlight: AbortController | null = null;
 
   constructor(env: NodeJS.ProcessEnv = process.env, factories: EdgeAgentRunnerFactories = {}) {
-    // All configuration (including Docker resource bounds, via the
-    // EdgeDockerRuntime constructor below) is validated before anything
-    // runs. Throws EdgeAgentConfigError / EdgeDockerError on bad values.
+
     this.config = parseEdgeAgentConfig(env);
     this.client =
       factories.createClient?.(this.config) ??
@@ -174,8 +162,7 @@ export class EdgeAgentRunner {
       const bounded = boundField(value);
       if (bounded !== undefined) safe[key] = bounded;
     }
-    // The agent token never reaches logs: callers cannot add it (key
-    // filter), and every string field is redacted for bearer patterns.
+
     this.emit({
       timestamp: new Date(this.now()).toISOString(),
       level,
@@ -185,9 +172,6 @@ export class EdgeAgentRunner {
     });
   }
 
-  // Read-only preflight: proves Docker client/daemon connectivity and that
-  // the configured network exists. Never installs, reconfigures, prunes, or
-  // removes anything.
   async preflight(signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) {
       throw new EdgeAgentPreflightError("Preflight cancelled");
@@ -246,8 +230,6 @@ export class EdgeAgentRunner {
     return Math.min(grown, MAX_BACKOFF_MS);
   }
 
-  // Main loop. Resolves with a process exit code. Never throws for
-  // operational failures; unexpected fatals resolve EXIT_FATAL.
   async run(): Promise<number> {
     const startedAt = new Date(this.now()).toISOString();
     this.log("info", "agent.starting", {
@@ -292,8 +274,7 @@ export class EdgeAgentRunner {
           linked
         );
       } catch (error) {
-        // runEdgeDeploymentOnce is not supposed to throw, but a runner must
-        // never die on one iteration: back off and reconcile next tick.
+
         consecutiveBackoff += 1;
         this.log("error", "agent.iteration_failed", {
           error: redactForLog(error instanceof Error ? error.message : "Unknown error").slice(0, 300),
@@ -360,8 +341,7 @@ export class EdgeAgentRunner {
           break;
       }
       if (this.stopping) break;
-      // Reconcile again next tick: transient/blocked outcomes re-claim and
-      // re-validate server state, so a reconnect never blindly reruns work.
+
       const waitMs =
         outcome.result === "transient" || outcome.result === "blocked"
           ? this.backoffDelay(consecutiveBackoff)
@@ -372,16 +352,12 @@ export class EdgeAgentRunner {
     return EXIT_OK;
   }
 
-  // Idempotent. Aborts in-flight work (the executor cleans up owned
-  // containers on abort) and wakes any pending sleep so run() resolves
-  // promptly. No new claims start after this returns.
   stop(): void {
     if (this.stopping) return;
     this.stopping = true;
     try {
       this.inFlight?.abort();
     } catch {
-      // Abort must never throw during shutdown.
     }
     this.shutdownController.abort();
   }
@@ -395,8 +371,6 @@ function controlPlaneHostForLog(url: string): string {
   }
 }
 
-// Entry helper: parse env, run, and map construction failures to exit
-// codes. Never prints configuration values.
 export async function runEdgeAgentFromEnv(
   env: NodeJS.ProcessEnv = process.env,
   factories: EdgeAgentRunnerFactories = {}

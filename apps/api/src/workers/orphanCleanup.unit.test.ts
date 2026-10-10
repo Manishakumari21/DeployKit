@@ -19,10 +19,7 @@ test("orphan cleanup with unreachable binary is a safe no-op", async () => {
 });
 
 test("orphan cleanup never runs global destructive commands", async () => {
-  // By construction the implementation only ever runs:
-  // `container ls -a --filter label=<managed>` and
-  // `container rm --force <scoped-name>`.
-  // This test pins the allowlist by inspecting the module source.
+
   const { readFile } = await import("node:fs/promises");
   const { join } = await import("node:path");
   const src = await readFile(join(process.cwd(), "src/workers/orphanCleanup.ts"), "utf8");

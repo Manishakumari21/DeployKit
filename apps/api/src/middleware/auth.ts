@@ -1,8 +1,4 @@
-// Phase 10 Step 4: HTTP authentication boundary.
-// Resolves the session cookie to an authenticated identity and enforces
-// project access via authorizationService. This layer never decides project
-// permissions itself; it only supplies the authenticated userId.
-// Raw session tokens are never logged here.
+
 
 import type { NextFunction, Request, Response } from "express";
 import {
@@ -24,8 +20,7 @@ export interface AuthContext {
 }
 
 declare global {
-  // Set by authenticate(); routes wired with it guarantee presence.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
   namespace Express {
     interface Request {
       auth?: AuthContext;
@@ -37,8 +32,6 @@ declare global {
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// No cookie-parser in this repo; parse the single session cookie directly.
-// Exact-name match only, so similarly-named cookies cannot confuse lookup.
 export function parseSessionCookie(req: Request): string | null {
   const header = req.headers.cookie;
   if (typeof header !== "string" || !header) return null;
@@ -93,7 +86,6 @@ async function authenticateRequest(req: Request): Promise<AuthContext | null> {
   return { userId: session.userId, sessionId: session.sessionId };
 }
 
-// 401 when no valid session. Downstream handlers use req.auth.
 export async function authenticate(
   req: Request,
   res: Response,
@@ -113,8 +105,6 @@ export async function authenticate(
   }
 }
 
-// For routes where :id is the project id. Order: 401, then 400 for malformed
-// ids (existing convention), then 403 via the authorization service.
 export async function requireProjectAccess(
   req: Request,
   res: Response,
@@ -154,8 +144,6 @@ function deploymentParam(req: Request): string | null {
   return typeof id === "string" && UUID_PATTERN.test(id) ? id : null;
 }
 
-// For routes carrying only a deployment id: resolve the owning project,
-// then apply the same membership decision. Unknown ids stay 404.
 export async function requireDeploymentRouteAccess(
   req: Request,
   res: Response,
@@ -191,7 +179,6 @@ export async function requireDeploymentRouteAccess(
   }
 }
 
-// Same shape for release ids. Unknown ids stay 404.
 export async function requireReleaseRouteAccess(
   req: Request,
   res: Response,

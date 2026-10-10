@@ -15,7 +15,6 @@ export function PanelHead({ title, right }: { title: string; right?: ReactNode }
   );
 }
 
-/** Small caps label — the console voice for eyebrows and metadata keys. */
 export function Eyebrow({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <p className={cx("text-[11px] font-medium tracking-[0.16em] text-fog-500 uppercase", className)}>
@@ -26,7 +25,6 @@ export function Eyebrow({ children, className }: { children: ReactNode; classNam
 
 type Btn = ButtonHTMLAttributes<HTMLButtonElement>;
 
-/** Primary action: signal-tinted, single accent across the product. */
 export function DeployBtn({ className, children, ...r }: Btn) {
   return (
     <button
@@ -69,10 +67,6 @@ export function DangerBtn({ className, children, ...r }: Btn) {
   );
 }
 
-/**
- * Phase-aware status. Working phases breathe amber, live is signal green,
- * failure is red, everything idle is fog. One semantic mapping, everywhere.
- */
 const STATUS: Record<DeployStatus, { dot: string; ring: string; text: string; label: string; live?: boolean }> = {
   queued: { dot: "bg-fog-500", ring: "border-edge", text: "text-fog-400", label: "Queued" },
   cloning: { dot: "bg-amber-300 animate-pulse", ring: "border-amber-300/30", text: "text-amber-200", label: "Cloning", live: true },
@@ -136,7 +130,6 @@ export function Kbd({ children }: { children: ReactNode }) {
   );
 }
 
-/** Skeleton block matching the shape of what's loading. */
 export function Skeleton({ className }: { className?: string }) {
   return <div aria-hidden className={cx("animate-pulse rounded-lg bg-ink-700", className)} />;
 }

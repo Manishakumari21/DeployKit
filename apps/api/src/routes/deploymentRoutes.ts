@@ -21,11 +21,8 @@ import { requireTrustedOrigin } from "../middleware/origin.js";
 
 const router = Router();
 
-// Browser state changers pass the origin check first (safe methods skip it
-// internally). Webhook HMAC traffic never reaches this router.
 router.use(requireTrustedOrigin);
 
-// Project-scoped routes: membership is decided on the URL project id.
 router.post(
   "/projects/:id/deployments",
   requireProjectAccess,
@@ -56,8 +53,6 @@ router.get(
   getProjectMetricsController
 );
 
-// Deployment/release routes carry only their own id: the middleware resolves
-// the owning project and applies the same membership decision.
 router.get(
   "/deployments/:id",
   requireDeploymentRouteAccess,

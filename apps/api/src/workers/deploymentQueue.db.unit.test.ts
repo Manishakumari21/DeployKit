@@ -146,12 +146,11 @@ test("central worker cannot claim edge-targeted jobs but still claims central on
       idempotencyKey: null,
     });
     assert.ok(centralDeployment);
-    // The oldest eligible job is edge-targeted: the central worker must skip
-    // it and converge on the central deployment instead.
+
     const claimed = await claimNextJob("central-iso-probe", 30_000);
     assert.ok(claimed);
     assert.equal(claimed?.deploymentId, centralDeployment.id);
-    // With only the edge-targeted job left, the central worker finds no work.
+
     await failJob(claimed!.id, claimed!.deploymentId, "central-iso-probe", "release central job");
     const none = await claimNextJob("central-iso-probe", 30_000);
     assert.equal(none, null);
@@ -160,7 +159,7 @@ test("central worker cannot claim edge-targeted jobs but still claims central on
       [edgeDeployment.id]
     );
     assert.equal(edgeJob.rows[0].status, "queued");
-    // The intended agent is unaffected and can still claim its own job.
+
     const agentClaimed = await claimAgentJob(agent.id);
     assert.ok(agentClaimed);
     assert.equal(agentClaimed?.deploymentId, edgeDeployment.id);
@@ -193,14 +192,13 @@ test("an expired edge lease is never stolen by the central worker", async () => 
        WHERE id = $1`,
       [first!.id]
     );
-    // Central recovery/claim paths must not transfer ownership to the wrong
-    // executor: the expired edge lease is invisible centrally...
+
     assert.equal(await claimNextJob("central-lease-probe", 30_000), null);
-    // ...recovery requeues it without changing executors...
+
     const recovered = await recoverExpiredJobs();
     assert.ok(recovered >= 1);
     assert.equal(await claimNextJob("central-lease-probe", 30_000), null);
-    // ...and only the targeted agent reclaims it, with attempts preserved.
+
     const second = await claimAgentJob(agent.id);
     assert.ok(second);
     assert.equal(second?.id, first!.id);

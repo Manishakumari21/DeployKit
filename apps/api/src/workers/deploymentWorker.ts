@@ -149,8 +149,6 @@ async function processJob() {
       }
     }, LEASE_RENEWAL_MS);
 
-    // Propagate API cancellation and worker shutdown to active work.
-    // Polls deployment status; aborts the build/git/health processes via AbortSignal.
     cancelWatcher = setInterval(async () => {
       try {
         if (shuttingDown) {
@@ -166,7 +164,6 @@ async function processJob() {
           abort.abort();
         }
       } catch {
-        // Watcher must never fail the job; pipeline phase checks are authoritative.
       }
     }, 2000);
 
@@ -186,10 +183,6 @@ async function processJob() {
       imageDigest: result.imageDigest,
     });
 
-    // Duplicate executions converge inside the pipeline (typed outcome, own
-    // release/deployment already terminal there): finish the job terminally
-    // instead of completing it, so a duplicate is never retried or reported
-    // as a genuine success.
     if (result.duplicateConverged) {
       const adopted = result.duplicateConverged.adoptedReleaseId;
       log("info", "deployment.duplicate_converged", {
@@ -231,9 +224,6 @@ async function processJob() {
       code,
     });
 
-    // Cancellation and shutdown must not resurrect the job: the API cancel path
-    // already moved deployment+job to `cancelled`, and shutdown aborts leave the
-    // lease to expire for recovery. Never call failJob in those cases.
     if (
       code === "DEPLOYMENT_CANCELLED" ||
       code === "BUILD_CANCELLED" ||
@@ -249,7 +239,6 @@ async function processJob() {
           return true;
         }
       } catch {
-        // Fall through to normal failure handling if status check fails.
       }
       if (shuttingDown || abort.signal.aborted) {
         log("info", "deployment.aborted_shutdown", {
@@ -367,13 +356,9 @@ function requestShutdown(signal: string) {
     signal,
   });
 
-  // Terminate active git/docker/health work where technically supported.
-  // The job lease then expires and is recovered; no orphan subprocess remains
-  // under DeployKit's control beyond the BuildKit session disconnect.
   try {
     activeAbort?.abort();
   } catch {
-    // Abort must never throw during shutdown.
   }
 }
 

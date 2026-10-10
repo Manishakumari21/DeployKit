@@ -36,7 +36,7 @@ if (
       name,
       repositoryUrl,
       branch: branch || "main",
-      // authenticate middleware guarantees req.auth here.
+
       ownerUserId: req.auth!.userId,
     });
 
@@ -58,8 +58,7 @@ export async function getProjectsController(
   res: Response
 ) {
   try {
-    // authenticate middleware guarantees req.auth here. Only member
-    // projects are listed; unowned legacy projects are never returned.
+
     const projects = await getProjectsForUser(req.auth!.userId);
 
     return res.json(projects);

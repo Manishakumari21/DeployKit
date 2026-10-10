@@ -8,10 +8,6 @@ export function isUnauthorized(e: unknown): boolean {
   return e instanceof ApiError && e.status === 401;
 }
 
-// Session-aware identity. The raw session token never enters JS state — the
-// browser holds it only in the HttpOnly cookie and fetch sends it via
-// credentials:include. Only the /auth/session probe changes auth state, so
-// no dashboard 401 can cause redirect loops.
 export function useAuth() {
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -62,7 +58,7 @@ export function useAuth() {
     setError(null);
     try {
       await apiRegister({ email, password });
-      // Registration creates no session; sign in explicitly afterwards.
+
       const me = await apiLogin({ email, password });
       setUser(me);
       setStatus("authenticated");
@@ -80,7 +76,6 @@ export function useAuth() {
     try {
       await apiLogout();
     } catch {
-      // Server revocation is best-effort; the local state must clear anyway.
     } finally {
       setUser(null);
       setStatus("unauthenticated");

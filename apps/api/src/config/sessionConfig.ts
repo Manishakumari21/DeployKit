@@ -1,5 +1,4 @@
-// Phase 10 Step 4: session/cookie configuration. Fail-fast like logConfig:
-// invalid values throw at startup rather than silently weakening security.
+
 
 export const SESSION_COOKIE_NAME = "deploykit_session";
 
@@ -15,9 +14,6 @@ export function getSessionLifetimeMs(): number {
   return days * DAY_MS;
 }
 
-// Explicit opt-in for open registration. Unset means closed; the first user
-// can still self-register while the users table is empty (bootstrap window),
-// which closes automatically once anyone exists.
 export function isPublicRegistrationEnabled(): boolean {
   const raw = process.env.DEPLOYKIT_ALLOW_PUBLIC_REGISTRATION;
   if (raw === undefined || raw === "") return false;
@@ -26,8 +22,6 @@ export function isPublicRegistrationEnabled(): boolean {
   throw new Error('DEPLOYKIT_ALLOW_PUBLIC_REGISTRATION must be "true" or "false"');
 }
 
-// Secure cookies only where HTTPS is expected. Explicit override wins;
-// otherwise production defaults to Secure and local dev stays plain HTTP.
 export function isCookieSecure(): boolean {
   const raw = process.env.DEPLOYKIT_COOKIE_SECURE;
   if (raw === undefined || raw === "") {

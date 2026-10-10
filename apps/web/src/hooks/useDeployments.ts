@@ -170,7 +170,6 @@ export function useDeploymentMonitor(deploymentId: string | null) {
               setEvents(ev);
             }
           } catch {
-            // Events are supplementary; keep the last known list.
           }
         }
 

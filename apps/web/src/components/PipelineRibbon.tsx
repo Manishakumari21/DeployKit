@@ -14,11 +14,6 @@ const STAGES = [
 
 type Stage = (typeof STAGES)[number];
 
-/**
- * The deployment journey as a horizontal mission rail. This is the
- * signature of the console: every deployment is a flight from queue
- * to live, and this rail shows exactly where it is.
- */
 export function PipelineRibbon({
   deployment,
   events,

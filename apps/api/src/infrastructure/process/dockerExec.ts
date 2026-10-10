@@ -62,7 +62,6 @@ export function runCommand(
       try {
         onData?.({ stream: "stdout", chunk: c.toString() });
       } catch {
-        // Never let a log hook break process execution.
       }
     });
     child.stderr.on("data", (c: Buffer) => {
@@ -70,7 +69,6 @@ export function runCommand(
       try {
         onData?.({ stream: "stderr", chunk: c.toString() });
       } catch {
-        // Never let a log hook break process execution.
       }
     });
     child.on("error", (e) => {
@@ -83,7 +81,7 @@ export function runCommand(
       if (settled) return;
       settled = true;
       cleanup();
-      // If abort fired but process already exited, still report it.
+
       if (signal?.aborted) aborted = true;
       resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 1, timedOut, aborted });
     });

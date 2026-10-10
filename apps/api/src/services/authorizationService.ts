@@ -1,13 +1,7 @@
-// Phase 10 Step 3: database-backed project authorization primitives.
-// Reads membership only; writes live in projectService. No sessions here:
-// callers pass the authenticated user id supplied by the future auth layer.
-// Every decision fails closed: unknown project, unknown user, non-member,
-// unowned legacy project (zero member rows), or unknown role all deny.
+
 
 import pool from "../db/database.js";
 
-// Single role today. New roles extend this tuple and ROLE_RANK; no controller
-// or query changes are needed because checks compare rank, not strings.
 export const PROJECT_ROLES = ["owner"] as const;
 export type ProjectRole = (typeof PROJECT_ROLES)[number];
 
@@ -33,9 +27,6 @@ function isProjectRole(value: unknown): value is ProjectRole {
   );
 }
 
-// One targeted query; selects role only. Null uniformly covers unknown
-// project, unknown user, non-member, and unowned legacy projects, so callers
-// cannot distinguish (and leak) project existence from this result alone.
 export async function getProjectMembership(input: {
   userId: string;
   projectId: string;
@@ -66,8 +57,6 @@ export async function hasProjectAccess(input: {
   return ROLE_RANK[membership] >= ROLE_RANK[input.role];
 }
 
-// Throws AuthorizationError (403 PROJECT_FORBIDDEN) on any deny, so route
-// handlers authorize in one line without inventing their own queries.
 export async function requireProjectMembership(input: {
   userId: string;
   projectId: string;
@@ -96,9 +85,6 @@ export async function requireProjectRole(
   return requireProjectMembership({ userId, projectId, role });
 }
 
-// Deployment/release routes carry only their own id, so they resolve the
-// owning project first and then apply the same membership decision. Unknown
-// ids stay 404 (existing API convention); existing-but-forbidden stays 403.
 export async function requireDeploymentAccess(
   userId: string,
   deploymentId: string

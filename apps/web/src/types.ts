@@ -6,8 +6,6 @@ export type Project = {
   created_at: string;
 };
 
-// Authenticated identity from GET /api/auth/session. Never carries secrets:
-// the session token lives only in the HttpOnly cookie, never in JS state.
 export type AuthUser = {
   id: string;
   email: string;
@@ -22,7 +20,7 @@ export type NavKey =
   | "domains"
   | "logs"
   | "settings";
- 
+
 export type DeploymentStatus =
   | "queued"
   | "cloning"

@@ -9,8 +9,6 @@ import { requireTrustedOrigin } from "../middleware/origin.js";
 
 const router = Router();
 
-// All auth mutations are browser-reachable state changers, so they pass the
-// origin check. The session probe is a safe GET and skips it internally.
 router.post("/login", requireTrustedOrigin, loginController);
 router.post("/register", requireTrustedOrigin, registerController);
 router.post("/logout", requireTrustedOrigin, logoutController);

@@ -1,6 +1,5 @@
-// Phase 10 Step 2: identity foundation tests (real PostgreSQL, no fakes).
-// Pure validation tests always run; DB tests skip only if the users table
-// (migration 011) has not been applied to the target database.
+
+
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -42,8 +41,6 @@ async function cleanup(): Promise<void> {
   createdIds.length = 0;
 }
 
-// ---- Pure unit tests (no DB required) ----
-
 test("normalizeEmail trims and lowercases consistently", () => {
   assert.equal(normalizeEmail("  User@Example.COM  "), "user@example.com");
   assert.equal(normalizeEmail("USER@EXAMPLE.COM"), "user@example.com");
@@ -75,8 +72,6 @@ test("validatePassword enforces the length policy", () => {
     );
   }
 });
-
-// ---- Real database tests ----
 
 test("valid user creation returns a public DTO without any hash", async () => {
   if (!(await dbAvailable())) return;
@@ -146,7 +141,7 @@ test("database enforces email uniqueness below the application layer", async () 
       ]),
       (e: unknown) => (e as { code?: string }).code === "23505"
     );
-    // A short plaintext value violates the password_hash length backstop.
+
     await assert.rejects(
       pool.query(`INSERT INTO users (email, password_hash) VALUES ($1, $2)`, [
         uniqueEmail("plain"),

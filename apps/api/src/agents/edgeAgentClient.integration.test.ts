@@ -1,10 +1,5 @@
-// Phase 12.5: edge client ↔ control-plane HTTP contract test.
-//
-// Real Express app + real PostgreSQL + real EdgeAgentClient. Proves the
-// client's request paths match the server's actual route mount
-// (/api/agent, see app.ts) and that the full claim → heartbeat → fail
-// round trip works over HTTP. Guarded by DB availability; skipped without
-// a database (never faked).
+
+
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
@@ -71,10 +66,8 @@ test("client paths match the server mount and round-trip over HTTP", async () =>
     const cred = await createEnrollmentCredential(agent.id);
     const client = new EdgeAgentClient({ baseUrl, token: cred.token });
 
-    // No work: 200 envelope (a wrong path would surface as 404 → throw).
     assert.deepEqual(await client.claimJob(), { job: null });
 
-    // Full round trip against the real routes.
     const deployment = await createDeployment({
       projectId: project.id,
       trigger: "manual",

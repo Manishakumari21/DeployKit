@@ -90,12 +90,6 @@ export function sha256Hex(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-// Desired buildkitd.toml for the deterministic builder. When a local insecure
-// (plain-HTTP) registry is configured, buildkitd needs an explicit per-host
-// `http = true` stanza — it never falls back to HTTP for non-loopback hosts.
-// TLS registries need no stanza. The host is already strictly validated by
-// registryConfig (lowercase host[:port], no whitespace/quotes), but we refuse
-// to interpolate anything containing a quote or newline regardless.
 export function desiredBuildkitdToml(registry: RegistryConfig | null): string {
   if (!registry || !registry.insecure) {
     return BASE_BUILDKITD_TOML;
@@ -256,12 +250,10 @@ export async function bootstrapWorker(): Promise<BootstrapResult> {
   lifecycleEvent("STARTING", { dockerBinary: binary, builder, buildxConfigDir: configDir });
 
   await mkdir(configDir, { recursive: true });
-  // Fail closed: child buildx commands must use this controlled directory,
-  // never an accidental container-home default.
+
   process.env.BUILDX_CONFIG = configDir;
   const env = bootstrapEnv(configDir);
 
-  // Fail fast on invalid registry configuration before touching Docker.
   const registry = loadRegistryConfig();
   const desiredToml = desiredBuildkitdToml(registry);
   const desiredSha = sha256Hex(desiredToml);
@@ -337,7 +329,6 @@ export async function bootstrapWorker(): Promise<BootstrapResult> {
     }
   }
 
-  // Bootstrap and verify operational. Uses only flags supported by Buildx 0.37.1.
   lifecycleEvent("BOOTSTRAPPING", { step: "builder_bootstrap", builder });
   const bootstrapped = await runCommand(binary, ["buildx", "inspect", "--builder", builder, "--bootstrap"], 120_000, env);
   if (bootstrapped.code !== 0 || bootstrapped.timedOut || bootstrapped.aborted) {
@@ -359,18 +350,10 @@ export async function bootstrapWorker(): Promise<BootstrapResult> {
     }
   }
 
-  // Attach the builder container to the worker's networks so BuildKit pushes
-  // can reach registries on Compose networks (e.g. deploykit-registry on the
-  // default network). Post-creation `network connect` is idempotent and
-  // preserves the builder's build cache. Fatal in registry mode (push would
-  // fail); advisory otherwise.
   lifecycleEvent("BOOTSTRAPPING", { step: "builder_network", builder });
   const attachedNetworks = await ensureBuilderNetworks(binary, builder, env, registry);
   lifecycleEvent("BOOTSTRAPPING", { step: "builder_network_done", builder, networks: attachedNetworks });
 
-  // Scoped orphan sweep: DeployKit-owned temp workspaces and non-running
-  // DeployKit-owned containers only. Never touches running releases or
-  // unrelated Docker resources. Best-effort; never fails bootstrap.
   lifecycleEvent("BOOTSTRAPPING", { step: "orphan_cleanup" });
   try {
     const [workspaces, containers] = await Promise.all([
@@ -379,7 +362,6 @@ export async function bootstrapWorker(): Promise<BootstrapResult> {
     ]);
     lifecycleEvent("BOOTSTRAPPING", { step: "orphan_cleanup_done", workspaces, containers });
   } catch {
-    // Best-effort.
   }
 
   lifecycleEvent("READY", { builder, buildxConfigDir: configDir, registryHost: registry?.registryHost ?? null });

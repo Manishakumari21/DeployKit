@@ -1,4 +1,4 @@
-// Phase 12.5: edge agent configuration tests (no DB, no Docker).
+
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -46,12 +46,12 @@ test("invalid control-plane URLs are rejected", () => {
 });
 
 test("non-local HTTP is rejected; loopback and explicit opt-in are allowed", () => {
-  // Remote HTTP without opt-in: rejected.
+
   assert.throws(
     () => parseEdgeAgentConfig({ ...baseEnv(), DEPLOYKIT_CONTROL_PLANE_URL: "http://control.example.com" }),
     /Plain HTTP/
   );
-  // Loopback HTTP: permitted (documented local development).
+
   for (const url of [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -60,10 +60,10 @@ test("non-local HTTP is rejected; loopback and explicit opt-in are allowed", () 
     const cfg = parseEdgeAgentConfig({ ...baseEnv(), DEPLOYKIT_CONTROL_PLANE_URL: url });
     assert.ok(cfg.controlPlaneUrl.startsWith("http://"));
   }
-  // Remote HTTPS: always permitted.
+
   const https = parseEdgeAgentConfig({ ...baseEnv(), DEPLOYKIT_CONTROL_PLANE_URL: "https://control.example.com:8443" });
   assert.equal(https.controlPlaneUrl, "https://control.example.com:8443");
-  // Compose-internal hostname: only with the explicit opt-in.
+
   assert.throws(
     () => parseEdgeAgentConfig({ ...baseEnv(), DEPLOYKIT_CONTROL_PLANE_URL: "http://api:3000" }),
     /Plain HTTP/
@@ -93,7 +93,7 @@ test("TLS verification cannot be disabled", () => {
     () => parseEdgeAgentConfig({ ...baseEnv(), DEPLOYKIT_EDGE_TLS_INSECURE: "1" }),
     /TLS verification/
   );
-  // Unset or non-zero values are fine.
+
   parseEdgeAgentConfig({ ...baseEnv(), NODE_TLS_REJECT_UNAUTHORIZED: "1" });
 });
 

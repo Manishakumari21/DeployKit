@@ -1,17 +1,4 @@
-// PostgreSQL-backed fixed-window rate limiter for auth endpoints.
-//
-// Why PostgreSQL instead of memory: DeployKit already runs Postgres for the
-// API, and an in-memory Map would silently reset per instance and grow
-// without bounds. One row per (key, window), one atomic upsert per check,
-// lazy expiry — no scans of live data, no background jobs. Approximate under
-// concurrency (acceptable for throttling): the increment itself is atomic,
-// so counts never lose writes.
-//
-// Buckets: per-IP over all attempts (credential stuffing across many emails)
-// and per-account over consecutive failures (targeted guessing). Success
-// clears the account bucket, so legitimate users are never permanently
-// blocked. Checks run before user lookup, so 429s reveal nothing about
-// account existence.
+
 
 import pool from "../db/database.js";
 
@@ -42,8 +29,6 @@ function readPositiveInteger(name: string, fallback: number, ceiling: number): n
   return value;
 }
 
-// Read per call (not cached) so tests and operators can adjust without
-// restart-sensitive singletons; the parse cost is negligible next to I/O.
 export function getRateLimitConfig(): RateLimitConfig {
   return {
     windowSeconds: readPositiveInteger("DEPLOYKIT_AUTH_RATE_LIMIT_WINDOW_SECONDS", 900, 86400),
@@ -52,7 +37,6 @@ export function getRateLimitConfig(): RateLimitConfig {
   };
 }
 
-// Atomic consume-and-check. Returns retry delay only when denied.
 async function consume(
   key: string,
   maxAttempts: number,
@@ -92,7 +76,6 @@ export async function resetRateLimitKey(key: string): Promise<void> {
   await pool.query(`DELETE FROM auth_rate_limits WHERE key = $1`, [key]);
 }
 
-// Best-effort sweep of expired windows; failures must never block login.
 export async function sweepExpiredRateLimits(windowSeconds: number): Promise<number> {
   try {
     const result = await pool.query(
@@ -114,8 +97,6 @@ export function emailBucket(prefix: string, email: string): string {
   return `${prefix}:email:${email}`;
 }
 
-// Throws RateLimitError when either bucket is exhausted. Callers set
-// Retry-After from the error; the message stays generic by design.
 export async function checkAuthRateLimit(input: {
   kind: "login" | "register";
   ip: string;

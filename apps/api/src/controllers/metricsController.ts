@@ -3,9 +3,6 @@ import pool from "../db/database.js";
 import { uuidParam, fail } from "./http.js";
 import { getProjectMetrics } from "../services/metricsService.js";
 
-// GET /api/projects/:id/metrics — sampled operational metrics from real state.
-// No platform-wide endpoint: no authenticated platform scope exists, so only
-// project-scoped metrics are exposed.
 export async function getProjectMetricsController(req: Request, res: Response): Promise<void> {
   const id = uuidParam(req, res, "Invalid project id");
   if (!id) return;

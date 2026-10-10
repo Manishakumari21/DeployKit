@@ -47,8 +47,6 @@ export default function App() {
     );
   }
 
-  // Unauthenticated users never reach dashboard hooks or data: the session
-  // probe is the single gate, so stray 401s cannot cause redirect loops.
   if (auth.status === "unauthenticated" || !auth.user) {
     return (
       <Shell>

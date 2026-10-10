@@ -10,10 +10,7 @@ export interface DeploymentExecutionResult {
   commitSha: string;
   imageRepository: string;
   imageDigest: string;
-  // Present only when this execution converged onto another execution's
-  // runtime instead of deploying its own: the adopted (winner) release.
-  // Never set on the normal path, so workers can tell convergence apart
-  // from a genuine success without parsing messages.
+
   duplicateConverged?: {
     adoptedReleaseId: string;
   };

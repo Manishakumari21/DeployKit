@@ -1,5 +1,4 @@
-// Phase 09: bounded log configuration. All values are validated fail-fast;
-// zero/negative/absurd values throw rather than silently degrading.
+
 
 export interface LogConfig {
   retentionDays: number;
@@ -15,7 +14,6 @@ export const DEFAULT_LOG_CONFIG: LogConfig = {
   maxMessageBytes: 8 * 1024, // 8 KiB per line
 };
 
-// Hard ceilings prevent absurd values from exhausting Postgres.
 const CEILINGS: LogConfig = {
   retentionDays: 365,
   maxLinesPerDeployment: 20000,

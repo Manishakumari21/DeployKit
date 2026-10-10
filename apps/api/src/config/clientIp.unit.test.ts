@@ -1,4 +1,4 @@
-// Pure unit tests for proxy-aware client-IP resolution (no database).
+
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -41,7 +41,7 @@ test("trusted peer uses the last forwarded entry (proxy-appended, attacker entri
     }),
     "203.0.113.9"
   );
-  // Single entry from the proxy is the client itself.
+
   assert.equal(
     resolveClientIp({ socketAddress: "127.0.0.1", forwardedFor: "198.51.100.7" }),
     "198.51.100.7"

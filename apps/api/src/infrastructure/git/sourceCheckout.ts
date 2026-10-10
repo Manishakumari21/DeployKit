@@ -25,7 +25,7 @@ export interface SourceCheckoutOptions {
   targetCommitSha?: string | null;
   authToken?: string | null;
   signal?: AbortSignal;
-  /** Optional phase-tagged log hook. Never receives tokens, URLs with secrets, or env. */
+
   onLog?: (event: { phase: "git"; message: string; level: "info" | "warn" | "error" }) => void;
 }
 

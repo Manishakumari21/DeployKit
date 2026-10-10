@@ -8,8 +8,6 @@ function fmtDuration(s: number | null): string {
   return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
 }
 
-// Signal board — sampled metrics from GET /api/projects/:id/metrics.
-// Big tabular numerals, one accent, honest "sampled" label.
 export function MetricsPanel({ projectId }: { projectId: string | null }) {
   const [metrics, setMetrics] = useState<ProjectMetrics | null>(null);
   const [error, setError] = useState<string | null>(null);

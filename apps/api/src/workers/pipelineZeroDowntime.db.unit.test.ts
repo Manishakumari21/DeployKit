@@ -148,15 +148,15 @@ async function createDeploymentRow(projectId: string) {
 function executorWith(
   runtime: ReturnType<typeof fakeRuntime>,
   router: ReturnType<typeof fakeRouter>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   extra: Record<string, any> = {}
 ) {
   return new RealDeploymentExecutor({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     buildExecutor: fakeBuild() as any,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     runtimeManager: runtime as any,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     trafficRouter: router as any,
     checkout: fakeCheckout(SHA),
     runtimeNetwork: "deploykit-runtime",
@@ -193,7 +193,7 @@ test("unhealthy release never switches traffic and old release stays active", as
 
     const second = await createDeploymentRow(project.id);
     const failing = fakeRuntime();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     (failing as any).waitForHealthy = async () => {
       throw new Error("readiness probe failed");
     };
@@ -285,11 +285,11 @@ test("worker restart resumes a stuck deployment without rebuilding", async () =>
       },
     };
     const first = new RealDeploymentExecutor({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       buildExecutor: countingBuild as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       runtimeManager: runtime as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       trafficRouter: {
         ...router,
         async sync() {
@@ -321,11 +321,11 @@ test("worker restart resumes a stuck deployment without rebuilding", async () =>
       },
     };
     const resumed = new RealDeploymentExecutor({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       buildExecutor: failBuild as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       runtimeManager: runtime as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       trafficRouter: router as any,
       checkout: (async () => {
         throw new Error("must not checkout on resume");

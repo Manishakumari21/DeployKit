@@ -1,4 +1,4 @@
-// Phase 12.4: control-plane client tests (stubbed fetch; no network).
+
 import test from "node:test";
 import assert from "node:assert/strict";
 

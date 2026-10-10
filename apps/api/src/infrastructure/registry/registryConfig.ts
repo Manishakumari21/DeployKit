@@ -27,7 +27,7 @@ export class RegistryConfigError extends Error {
 }
 
 function hasControlCharacters(value: string): boolean {
-  // eslint-disable-next-line no-control-regex
+
   return /[\u0000-\u001f\u007f]/.test(value);
 }
 

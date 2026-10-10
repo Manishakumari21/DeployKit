@@ -15,7 +15,6 @@ CREATE TYPE runtime_instance_status AS ENUM (
     'failed'
 );
 
-
 CREATE TABLE releases (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
@@ -56,23 +55,18 @@ CREATE TABLE releases (
         UNIQUE (deployment_id)
 );
 
-
 CREATE INDEX releases_project_created_idx
 ON releases(project_id, created_at DESC);
-
 
 CREATE INDEX releases_project_status_idx
 ON releases(project_id, status);
 
-
 CREATE INDEX releases_digest_idx
 ON releases(image_digest);
-
 
 CREATE UNIQUE INDEX releases_one_active_per_project_idx
 ON releases(project_id)
 WHERE status = 'active';
-
 
 CREATE TABLE runtime_instances (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -120,14 +114,11 @@ CREATE TABLE runtime_instances (
         UNIQUE (container_name)
 );
 
-
 CREATE INDEX runtime_instances_release_idx
 ON runtime_instances(release_id);
 
-
 CREATE INDEX runtime_instances_status_idx
 ON runtime_instances(status);
-
 
 CREATE UNIQUE INDEX runtime_instances_container_id_idx
 ON runtime_instances(container_id)
@@ -137,7 +128,6 @@ ALTER TABLE deployments
 ADD COLUMN release_id UUID
     REFERENCES releases(id)
     ON DELETE SET NULL;
-
 
 CREATE UNIQUE INDEX deployments_release_unique_idx
 ON deployments(release_id)

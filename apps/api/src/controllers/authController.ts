@@ -1,7 +1,4 @@
-// Login/logout/register/session. Authentication only: verifies identity and
-// manages the session cookie. Project access stays in authorizationService.
-// Failure responses are generic so email existence cannot be probed.
-// Passwords, hashes, and session tokens are never logged or returned.
+
 
 import type { Request, Response } from "express";
 import { z } from "zod";
@@ -29,8 +26,6 @@ import {
   setSessionCookie,
 } from "../middleware/auth.js";
 
-// Static bcrypt hash used when the email is unknown, so miss and mismatch
-// take the same code path and similar time. Not a credential for anything.
 const DUMMY_HASH =
   "$2b$12$b0bI3z4B9vLtKXCmTH1UNukIcZf0Px7Ei5jc9Mwr59rGFsHJAg2Wi";
 
@@ -45,9 +40,7 @@ const registerSchema = z.object({
 });
 
 function clientIp(req: Request): string {
-  // Proxy-aware without global trust-proxy: XFF is honored only when the
-  // direct peer is our own private proxy layer (see config/clientIp.ts).
-  // req.ip is Express's socket peer here since trust proxy is unset.
+
   return resolveClientIp({
     socketAddress: req.socket?.remoteAddress ?? req.ip,
     forwardedFor: req.headers["x-forwarded-for"],
@@ -97,8 +90,6 @@ export async function loginController(req: Request, res: Response): Promise<void
   }
 }
 
-// Always succeeds: revokes when a session exists, clears the cookie either
-// way. Safe to call repeatedly, with or without a cookie.
 export async function logoutController(req: Request, res: Response): Promise<void> {
   try {
     await revokeSession(parseSessionCookie(req));
@@ -109,10 +100,6 @@ export async function logoutController(req: Request, res: Response): Promise<voi
   res.json({ loggedOut: true });
 }
 
-// Registration is deliberately NOT open by default. It succeeds only while
-// the operator allows it (DEPLOYKIT_ALLOW_PUBLIC_REGISTRATION=true) or while
-// no account exists yet (first-user bootstrap, closes automatically).
-// Creates the account only — no session, no project, no membership.
 export async function registerController(req: Request, res: Response): Promise<void> {
   const parsed = registerSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -131,18 +118,14 @@ export async function registerController(req: Request, res: Response): Promise<v
       }
       throw error;
     }
-    // Fast closed path avoids lock contention once accounts exist. The
-    // residual TOCTOU with the locked re-check below is harmless: the lock
-    // is what actually admits exactly one bootstrap account.
+
     const open = isPublicRegistrationEnabled() || !(await hasAnyUsers());
     if (!open) {
       res.status(403).json({ error: "Public registration is disabled" });
       return;
     }
     try {
-      // Explicitly enabled registration admits concurrent accounts by
-      // design; the empty-table bootstrap window admits exactly one via
-      // createBootstrapUser's transactional advisory lock.
+
       const user = isPublicRegistrationEnabled()
         ? await createUser({ email, password: parsed.data.password })
         : await createBootstrapUser({ email, password: parsed.data.password });
@@ -150,8 +133,7 @@ export async function registerController(req: Request, res: Response): Promise<v
       res.status(201).json(user);
     } catch (error) {
       if (error instanceof UserError) {
-        // Surface a professional, actionable message for weak passwords so
-        // the UI can show it directly instead of a generic policy string.
+
         const message =
           error.code === "WEAK_PASSWORD"
             ? "Password must be 12–72 characters."
@@ -167,8 +149,6 @@ export async function registerController(req: Request, res: Response): Promise<v
   }
 }
 
-// Session probe for frontend startup: 200 with the user when the cookie is
-// valid, uniform 401 otherwise. Safe method, so no CSRF check applies.
 export async function sessionController(req: Request, res: Response): Promise<void> {
   try {
     const session = await resolveSession(parseSessionCookie(req));

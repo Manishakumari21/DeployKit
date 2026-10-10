@@ -20,8 +20,7 @@ async function json(res: Response) {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    // Cookies carry the session; always send them (same-origin by default,
-    // cross-origin when VITE_API_URL points at the API directly).
+
     res = await fetch(`${API_URL}${path}`, { credentials: "include", ...init });
   } catch (e) {
     if (e instanceof DOMException && e.name === "AbortError") throw e;

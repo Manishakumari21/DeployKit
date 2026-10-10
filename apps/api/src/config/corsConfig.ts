@@ -1,6 +1,4 @@
-// Centralized CORS policy. Browser auth uses cookies, so a wildcard origin
-// is never acceptable: origins are explicit and credentials are reflected
-// only for allowlisted origins. Same single source also feeds CSRF checks.
+
 
 const DEV_DEFAULT_ORIGINS = ["http://localhost:5173", "http://localhost:8081"];
 
@@ -51,9 +49,7 @@ export interface CorsOptions {
 export function buildCorsOptions(): CorsOptions {
   const allowed = new Set(getAllowedOrigins());
   return {
-    // Non-browser clients send no Origin and pass through untouched (no
-    // ACAO header is added for them). Browsers get a reflected origin only
-    // when allowlisted — never a wildcard alongside credentials.
+
     origin: (requestOrigin, cb) => {
       if (!requestOrigin) {
         cb(null, true);

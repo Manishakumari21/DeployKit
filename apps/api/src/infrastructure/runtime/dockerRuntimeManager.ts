@@ -64,10 +64,6 @@ function validateEnvironment(env: Record<string, string>): void {
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Ownership-linkage labels an edge agent may attach so a container can be
-// proven DeployKit-owned before any destructive operation. Closed key set;
-// values are UUIDs only (never credentials, tokens, or free-form text), so
-// nothing secret can reach command lines or logs through this path.
 const EDGE_LINK_LABEL_KEYS: ReadonlySet<string> = new Set([
   "io.deploykit.deployment",
   "io.deploykit.project",
@@ -317,13 +313,6 @@ export class DockerRuntimeManager
     );
   }
 
-  /**
-   * Bounded tail of a DeployKit-owned container's logs.
-   * Only names matching the DeployKit runtime convention (dk-p<8hex>-d<8hex>)
-   * are queried; arbitrary user-provided container names are rejected.
-   * Returns at most `tailLines` lines / 32 KiB, never throws for missing
-   * containers (returns empty string) so diagnostics stay best-effort.
-   */
   async containerLogs(containerName: string, tailLines = 100): Promise<string> {
     const name = validateContainerName(containerName);
     if (!/^dk-p[0-9a-f]{8}-d[0-9a-f]{8}$/.test(name)) {

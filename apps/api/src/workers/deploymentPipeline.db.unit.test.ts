@@ -130,9 +130,9 @@ test("pipeline builds, releases and leaves deployment deploying", async () => {
     const deployment = await createDeploymentRow(project.id);
     const runtime = fakeRuntime();
     const executor = new RealDeploymentExecutor({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       buildExecutor: fakeBuild() as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       runtimeManager: runtime as any,
       checkout: (async (_opts: unknown, work: unknown) => {
         const fn = work as (c: {
@@ -144,7 +144,7 @@ test("pipeline builds, releases and leaves deployment deploying", async () => {
       runtimeNetwork: "deploykit-runtime",
       gatewayName: "dk-gateway",
       routeTimeoutMs: 1000,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       trafficRouter: fakeRouter() as any,
       healthTimeoutMs: 1000,
     });
@@ -205,9 +205,9 @@ test("rollback reuses the stored digest without rebuilding", async () => {
     };
     const runtime = fakeRuntime();
     const executor = new RealDeploymentExecutor({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       buildExecutor: countingBuild as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       runtimeManager: runtime as any,
       checkout: (async () => {
         throw new Error("must not checkout on rollback");
@@ -215,7 +215,7 @@ test("rollback reuses the stored digest without rebuilding", async () => {
       runtimeNetwork: "deploykit-runtime",
       gatewayName: "dk-gateway",
       routeTimeoutMs: 1000,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       trafficRouter: fakeRouter() as any,
       healthTimeoutMs: 1000,
     });
@@ -242,14 +242,14 @@ test("pipeline cleans up new runtime when health fails", async () => {
   try {
     const deployment = await createDeploymentRow(project.id);
     const runtime = fakeRuntime();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     (runtime as any).waitForHealthy = async () => {
       throw new Error("unhealthy");
     };
     const executor = new RealDeploymentExecutor({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       buildExecutor: fakeBuild() as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       runtimeManager: runtime as any,
       checkout: (async (_opts: unknown, work: unknown) => {
         const fn = work as (c: {
@@ -261,7 +261,7 @@ test("pipeline cleans up new runtime when health fails", async () => {
       runtimeNetwork: "deploykit-runtime",
       gatewayName: "dk-gateway",
       routeTimeoutMs: 1000,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       trafficRouter: fakeRouter() as any,
       healthTimeoutMs: 1000,
     });

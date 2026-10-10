@@ -81,11 +81,6 @@ export interface BuildxBuildArgsInput {
 export function buildBuildxArgs(input: BuildxBuildArgsInput): string[] {
   const push = input.push ?? false;
 
-  // Resource enforcement uses ONLY `docker buildx build --resource`,
-  // verified on Buildx 0.37.1 (`--resource memory=..`, `--resource cpu-quota=..`).
-  // Semantics: limits apply to individual RUN/build-step containers created
-  // during the build, NOT to the BuildKit daemon as a whole. Whole-daemon
-  // isolation would require builder-level (driver-opt / buildkitd) controls.
   const memoryBytes = input.policy.memoryBytes;
   const cpuLimit = input.policy.cpuLimit;
   if (!Number.isSafeInteger(memoryBytes) || memoryBytes <= 0) {
@@ -211,9 +206,7 @@ async function runBuild(
   signal?: AbortSignal,
   onLog?: (line: string) => void
 ) {
-  // Incremental chunk processing: forward normalized lines to the caller
-  // without buffering the entire build in memory beyond the 64KB tail kept
-  // by runCommand for error details.
+
   let buffer = "";
   const flush = (final = false) => {
     const parts = buffer.split("\n");
@@ -224,10 +217,9 @@ async function runBuild(
       try {
         onLog?.(line.slice(0, 4000));
       } catch {
-        // Never let a log hook break the build.
       }
     }
-    // Bound the pending partial line.
+
     if (buffer.length > 16384) buffer = buffer.slice(-16384);
   };
   try {

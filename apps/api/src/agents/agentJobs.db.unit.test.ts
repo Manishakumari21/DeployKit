@@ -545,7 +545,7 @@ test("claim and job endpoints expose no secrets", async () => {
       "maxAttempts",
       "projectId",
     ]);
-    // Fresh deployment with no trusted image record: fail-closed null.
+
     assert.equal(claimed.image, null);
   } finally {
     await cleanupProject(project.id);
@@ -744,7 +744,7 @@ test("edge agent claims its own targeted job with a fail-closed null image", asy
     assert.ok(claimed);
     assert.equal(claimed.deploymentId, deployment.id);
     assert.equal(claimed.agentId, agent.id);
-    // No trusted image record exists yet: fail closed, never fabricate.
+
     assert.equal(claimed.image, null);
     const done = await completeAgentJob(agent.id, claimed.id, {
       outcome: "succeeded",
@@ -770,7 +770,7 @@ test("claim resolves the trusted image from the deployment's own release", async
       digest,
       releaseId: release.id,
     });
-    // The trusted echo completes; the digest is informational only.
+
     const done = await completeAgentJob(agent.id, claimed.id, {
       outcome: "succeeded",
       imageDigest: digest,
@@ -821,7 +821,7 @@ test("missing artifacts fail closed with a null image", async () => {
   const project = await makeProject(uniqueName("noartifact"));
   try {
     const { agent } = await makeAgent(project.id, "empty");
-    // Fresh manual deployment: no release, no image columns.
+
     const bare = await makeTargetedDeployment(project.id, agent.id);
     const first = await claimAgentJob(agent.id);
     assert.ok(first);
@@ -829,7 +829,6 @@ test("missing artifacts fail closed with a null image", async () => {
     assert.equal(first.image, null);
     await failAgentJob(agent.id, first.id, { errorMessage: "blocked: no image" });
 
-    // Rollback deployment whose target vanished: fail closed, never crash.
     const source = await createDeployment({
       projectId: project.id,
       trigger: "manual",
@@ -859,7 +858,7 @@ test("malformed digests and repositories fail closed and are never returned", as
   const project = await makeProject(uniqueName("malformed"));
   try {
     const { agent } = await makeAgent(project.id, "strict");
-    // Deployment columns bypassing service validation: bad digest.
+
     const badDigest = await makeTargetedDeployment(project.id, agent.id);
     await pool.query(
       `UPDATE deployments SET image_repository = $2, image_digest = $3 WHERE id = $1`,
@@ -870,7 +869,6 @@ test("malformed digests and repositories fail closed and are never returned", as
     assert.equal(first.image, null);
     await failAgentJob(agent.id, first.id, { errorMessage: "blocked" });
 
-    // Valid digest but non-registry (local-only) repository: not pullable.
     const localRepo = await makeTargetedDeployment(project.id, agent.id);
     await pool.query(
       `UPDATE deployments SET image_repository = $2, image_digest = $3 WHERE id = $1`,
@@ -881,7 +879,6 @@ test("malformed digests and repositories fail closed and are never returned", as
     assert.equal(second.image, null);
     await failAgentJob(agent.id, second.id, { errorMessage: "blocked" });
 
-    // Corrupted release row (created valid, mutated afterwards): rejected.
     const dep = await makeTargetedDeployment(project.id, agent.id);
     const release = await makeRelease(dep.id, project.id, `sha256:${"e".repeat(64)}`);
     await pool.query(`UPDATE releases SET image_digest = 'garbage' WHERE id = $1`, [release.id]);
@@ -921,7 +918,7 @@ test("cross-project release artifacts never leak into another project's claim", 
       targetAgentId: agent.id,
     });
     assert.ok(deployment);
-    // Smuggle a cross-project target past creation-time checks.
+
     await pool.query(`UPDATE deployments SET rollback_release_id = $2 WHERE id = $1`, [
       deployment.id,
       foreignRelease.id,
@@ -946,7 +943,7 @@ test("client-supplied digests are never adopted; mismatches are rejected", async
     const claimed = await claimAgentJob(agent.id);
     assert.ok(claimed);
     assert.equal(claimed.image?.digest, trusted);
-    // Forged digest on success: rejected, job stays running, nothing adopted.
+
     const forged = `sha256:${"0".repeat(64)}`;
     await assert.rejects(
       completeAgentJob(agent.id, claimed.id, { outcome: "succeeded", imageDigest: forged }),
@@ -960,7 +957,7 @@ test("client-supplied digests are never adopted; mismatches are rejected", async
       await pool.query(`SELECT status FROM deployment_jobs WHERE id = $1`, [claimed.id])
     ).rows[0] as { status: string };
     assert.equal(jobRow.status, "running");
-    // Trusted echo succeeds; omission also succeeds (digest is optional).
+
     const done = await completeAgentJob(agent.id, claimed.id, {
       outcome: "succeeded",
       imageDigest: trusted,

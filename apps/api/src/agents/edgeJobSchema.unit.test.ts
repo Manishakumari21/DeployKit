@@ -1,4 +1,4 @@
-// Phase 12.4: strict job/image validation tests (no DB, no Docker).
+
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -56,13 +56,13 @@ test("rejects malformed claim envelopes and untrusted ids", () => {
   assert.throws(() => parseClaimedJobResponse(null), EdgeJobSchemaError);
   assert.throws(() => parseClaimedJobResponse({}), EdgeJobSchemaError);
   assert.throws(() => parseClaimedJobResponse({ job: 42 }), EdgeJobSchemaError);
-  // Agent-supplied lookalike ids must not pass.
+
   for (const field of ["id", "deploymentId", "projectId", "agentId"] as const) {
     const mutated = goodJob();
     mutated[field] = "not-a-uuid";
     assert.throws(() => parseClaimedJobResponse({ job: mutated }), EdgeJobSchemaError, field);
   }
-  // Negative/overflow attempts, bad lease, bad branch, bad sha.
+
   const badAttempts = goodJob(); badAttempts.attempts = -1;
   assert.throws(() => parseClaimedJobResponse({ job: badAttempts }), EdgeJobSchemaError);
   const badLease = goodJob(); badLease.leaseExpiresAt = "not-a-time";
@@ -71,7 +71,7 @@ test("rejects malformed claim envelopes and untrusted ids", () => {
   assert.throws(() => parseClaimedJobResponse({ job: badBranch }), EdgeJobSchemaError);
   const badSha = goodJob(); badSha.commitSha = "latest";
   assert.throws(() => parseClaimedJobResponse({ job: badSha }), EdgeJobSchemaError);
-  // Null lease and null sha are legal (server may omit them).
+
   const nullable = goodJob(); nullable.leaseExpiresAt = null; nullable.commitSha = null;
   const parsed = parseClaimedJobResponse({ job: nullable });
   assert.ok(parsed);
@@ -171,12 +171,9 @@ test("claim image block: trusted digest reference parses, malformed fails closed
   assert.equal(parsed?.image?.digest, GOOD_DIGEST);
   assert.equal(parsed?.image?.releaseId, releaseId);
 
-  // Null image (no trusted record) is legal and means fail-closed downstream.
   const withoutImage = parseClaimedJobResponse({ job: goodJob() });
   assert.equal(withoutImage?.image, null);
 
-  // Malformed image blocks never validate: mutable tag, bad digest,
-  // non-registry repository, bad release id.
   for (const image of [
     { repository: "registry.local:5000/deploykit/app:latest", digest: GOOD_DIGEST, releaseId: null },
     { repository: "registry.local:5000/deploykit/app", digest: "not-a-digest", releaseId: null },

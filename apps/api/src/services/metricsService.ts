@@ -1,8 +1,5 @@
 import pool from "../db/database.js";
 
-// Phase 09: real operational metrics from actual DeployKit state.
-// All values are sampled/polled from Postgres, not real-time streams.
-
 export interface DeploymentMetrics {
   total: number;
   successful: number;

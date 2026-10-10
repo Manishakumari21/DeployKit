@@ -1,13 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchDeploymentLogs, type DeploymentLog } from "../lib/api";
 
-// Efficient cursor polling for deployment logs.
-//
-// SSE (GET /api/deployments/:id/logs/stream) was evaluated and deferred:
-// the API has no authenticated streaming infrastructure, no connection
-// accounting, and deployments are short-lived — 3s cursor polling over the
-// stable (deployment_id, id) index gives bounded reads without holding
-// server connections open. Revisit when multi-viewer tail -f demand requires it.
 export function useDeploymentLogs(
   deploymentId: string | null,
   filters: { source?: string; level?: string } = {},
@@ -72,7 +65,7 @@ export function useDeploymentLogs(
                 next.push(item);
               }
             }
-            // Bound client memory: keep the latest 500 rendered lines.
+
             return next.length > 500 ? next.slice(next.length - 500) : next;
           });
         } else if (res.next_cursor) {

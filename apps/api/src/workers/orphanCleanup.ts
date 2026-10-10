@@ -8,7 +8,7 @@ const CHECKOUT_ROOT =
   path.join(os.tmpdir(), "deploykit-checkouts");
 
 const MANAGED_LABEL = "io.deploykit.managed=true";
-// Scoped strictly to DeployKit runtime names: dk-p<8hex>-d<8hex>
+
 const MANAGED_CONTAINER_PATTERN = /^dk-p[0-9a-f]{8}-d[0-9a-f]{8}$/;
 
 export function isManagedOrphanContainer(name: string): boolean {
@@ -34,15 +34,13 @@ export async function cleanupStaleCheckoutWorkspaces(maxAgeMs = 60 * 60 * 1000):
       await rm(full, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
       removed++;
     } catch {
-      // Best-effort; startup sweep must never fail bootstrap.
     }
   }
   return removed;
 }
 
 export async function cleanupOrphanedContainers(dockerBinary = "docker", timeoutMs = 30_000): Promise<number> {
-  // List only DeployKit-owned containers via label; never a global prune.
-  // Remove only non-running orphans with DeployKit-scoped names.
+
   let result;
   try {
     result = await runCommand(
@@ -62,13 +60,12 @@ export async function cleanupOrphanedContainers(dockerBinary = "docker", timeout
     if (!name || !state) continue;
     if (!isManagedOrphanContainer(name)) continue;
     const s = state.toLowerCase();
-    // Never touch running/restarting/paused containers (may be active releases).
+
     if (s === "running" || s === "restarting" || s === "paused") continue;
     try {
       const rmResult = await runCommand(dockerBinary, ["container", "rm", "--force", name], timeoutMs);
       if (rmResult.code === 0) removed++;
     } catch {
-      // Best-effort per container.
     }
   }
   return removed;

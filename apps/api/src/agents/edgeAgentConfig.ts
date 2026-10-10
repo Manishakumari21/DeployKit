@@ -1,22 +1,4 @@
-// Phase 12.5: edge agent configuration and validation.
-//
-// All values come from the process environment. Everything required is
-// validated at startup; the runner refuses to start on any missing,
-// malformed, insecure, or contradictory value (fail closed, exit code 2).
-//
-// Security rules enforced here:
-//   - Control-plane URL must be a bare http(s) origin (no path, query, or
-//     userinfo, so credentials can never hide in the URL).
-//   - HTTPS is required for non-local hosts. Plain HTTP is permitted only
-//     for loopback hosts, or with the explicit local-dev opt-in
-//     DEPLOYKIT_EDGE_ALLOW_HTTP (compose-internal hostnames such as `api`).
-//   - TLS verification cannot be disabled: there is no such option, unknown
-//     TLS-bypass knobs are rejected, and NODE_TLS_REJECT_UNAUTHORIZED=0
-//     fails startup.
-//   - The agent token is never echoed in errors, logs, or diagnostics.
-//   - No shell commands or Docker arguments are accepted from configuration.
-//   - Numeric settings are bounded; no default image exists anywhere here,
-//     so the executor's fail-closed image contract cannot be bypassed.
+
 
 import { z } from "zod";
 
@@ -152,8 +134,6 @@ function parseControlPlaneUrl(raw: unknown, allowHttp: boolean): string {
   return `${url.protocol}//${url.host}`;
 }
 
-// The agent token is a 256-bit opaque credential (64 hex chars at issuance).
-// Minimum-length + whitespace checks here; the value itself is never echoed.
 function parseAgentToken(raw: unknown): string {
   if (typeof raw !== "string" || raw === "") {
     throw new EdgeAgentConfigError("DEPLOYKIT_AGENT_TOKEN is required");
@@ -169,8 +149,7 @@ const agentIdSchema = z.string().uuid();
 export function parseEdgeAgentConfig(
   env: NodeJS.ProcessEnv = process.env
 ): EdgeAgentConfig {
-  // TLS verification cannot be disabled: refuse to run under knobs that
-  // would silently downgrade every control-plane connection.
+
   if (env.NODE_TLS_REJECT_UNAUTHORIZED === "0") {
     throw new EdgeAgentConfigError(
       "NODE_TLS_REJECT_UNAUTHORIZED=0 disables TLS verification and is forbidden for the edge agent"

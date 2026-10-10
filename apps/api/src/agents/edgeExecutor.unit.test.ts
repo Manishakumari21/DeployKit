@@ -1,4 +1,4 @@
-// Phase 12.4: edge executor lifecycle tests (fakes; no DB, no Docker).
+
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -137,13 +137,13 @@ test("blocked contract: reports bounded failure, creates nothing, never succeeds
   const outcome = await runEdgeDeploymentOnce({ client: client.client, docker: docker.docker as never });
   assert.equal(outcome.result, "blocked");
   assert.equal((outcome as { code: string }).code, EDGE_IMAGE_CONTRACT_MISSING);
-  // Failure reported through the existing endpoint with bounded payload.
+
   const fail = client.calls.find((c) => c.method === "fail");
   assert.ok(fail, "expected a failure report");
   const payload = fail.payload as { errorCode: string; errorMessage: string };
   assert.equal(payload.errorCode, EDGE_IMAGE_CONTRACT_MISSING);
   assert.ok(payload.errorMessage.length >= 1 && payload.errorMessage.length <= 4000);
-  // No container work, no success report.
+
   assert.deepEqual(docker.calls, []);
   assert.ok(!client.calls.some((c) => c.method === "complete"));
 });
@@ -247,11 +247,10 @@ test("ready path success: lease renewed during ops, success only after health", 
     AbortSignal.timeout(60_000)
   );
   assert.equal(outcome.result, "succeeded");
-  // Renewal happened during the long health check (reconcile-free direct
-  // call: interval beats + final ownership proof).
+
   const beats = client.calls.filter((c) => c.method === "heartbeat").length;
   assert.ok(beats >= 2, `expected lease renewal during ops, saw ${beats} heartbeats`);
-  // Order: pull -> create -> healthy -> complete.
+
   assert.deepEqual(docker.order, ["pull", "create", "healthy"]);
   const complete = client.calls.find((c) => c.method === "complete");
   assert.ok(complete);
@@ -360,8 +359,7 @@ test("cancellation removes the owned container and reports nothing", async () =>
       await new Promise((r) => setTimeout(r, 5000));
     },
   });
-  // Abort while health checks run. The fake health never observes the
-  // signal, so emulate runtime abort propagation: reject on abort.
+
   const abortingDocker = {
     ...docker.docker,
     waitHealthy: async (_rt: unknown, s?: AbortSignal) => new Promise<void>((_resolve, reject) => {
@@ -441,8 +439,7 @@ test("outcome of a timed-out completion is transient so callers reconcile", asyn
     undefined,
     AbortSignal.timeout(60_000)
   );
-  // A timeout is not a rejection: report retryable, keep the container for
-  // reconciliation (a rerun converges via idempotent completion).
+
   assert.equal(outcome.result, "transient");
   assert.equal((outcome as EdgeOutcome & { code: string }).code, "EDGE_REPORT_TRANSIENT");
 });

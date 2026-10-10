@@ -1,4 +1,4 @@
-// Phase 12.4: edge Docker abstraction tests (fakes; no Docker daemon).
+
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -134,27 +134,27 @@ test("ownership gate refuses foreign or unlabeled containers", async () => {
     runtimeManager: fakeManager(),
     runFn: (async () => okResult(JSON.stringify(ownedLabels()))) as never,
   });
-  // Name bound to another deployment: refuse before even inspecting.
+
   await assert.rejects(rt.assertOwned(strangerName, IDENTITY), (e: unknown) => e instanceof EdgeDockerError && e.code === "EDGE_NOT_OWNED");
-  // Missing managed label.
+
   const noManaged = new EdgeDockerRuntime({
     runtimeManager: fakeManager(),
     runFn: labelsRunFn({ [EDGE_DEPLOYMENT_LABEL]: DEPLOYMENT_ID }) as never,
   });
   await assert.rejects(noManaged.assertOwned(OWN_NAME, IDENTITY), (e: unknown) => e instanceof EdgeDockerError && e.code === "EDGE_NOT_OWNED");
-  // Labels of another agent.
+
   const foreign = new EdgeDockerRuntime({
     runtimeManager: fakeManager(),
     runFn: labelsRunFn({ ...ownedLabels(), [EDGE_AGENT_LABEL]: "66666666-6666-4666-8666-666666666666" }) as never,
   });
   await assert.rejects(foreign.assertOwned(OWN_NAME, IDENTITY), (e: unknown) => e instanceof EdgeDockerError && e.code === "EDGE_NOT_OWNED");
-  // Missing container: refuse (never assume ownership).
+
   const missing = new EdgeDockerRuntime({
     runtimeManager: fakeManager(),
     runFn: labelsRunFn(null) as never,
   });
   await assert.rejects(missing.assertOwned(OWN_NAME, IDENTITY), (e: unknown) => e instanceof EdgeDockerError && e.code === "EDGE_NOT_OWNED");
-  // Owned: passes.
+
   await rt.assertOwned(OWN_NAME, IDENTITY);
 });
 

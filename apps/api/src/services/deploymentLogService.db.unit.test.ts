@@ -100,11 +100,9 @@ test("append + cursor pagination + source/level filters use real DB", async () =
     const errors = await listLogs({ deploymentId: dep.id, level: "error", limit: 10 });
     assert.equal(errors.items.length, 1);
 
-    // Descending order is stable by id.
     const desc = await listLogs({ deploymentId: dep.id, limit: 10, direction: "desc" });
     assert.equal(desc.items[0].message, "build failed: boom");
 
-    // Secret metadata keys are redacted; tokens in messages are redacted.
     const secretRow = await appendLog({
       deploymentId: dep.id,
       projectId: project.id,

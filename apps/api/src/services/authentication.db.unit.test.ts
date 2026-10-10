@@ -1,6 +1,5 @@
-// Phase 10 Step 4: login/logout/cookies plus authorization preservation,
-// exercised over real HTTP against the Express app and real PostgreSQL.
-// No mocks for session or membership behavior.
+
+
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
@@ -160,8 +159,6 @@ async function teardown(): Promise<void> {
   }
 }
 
-// ---- Login ----
-
 test("successful login returns the user, never secrets, and sets a secure cookie", async () => {
   const fx = await setup();
   if (!fx) return;
@@ -184,7 +181,7 @@ test("successful login returns the user, never secrets, and sets a secure cookie
     assert.ok(header.includes("Path=/"), "cookie must be Path=/");
     assert.ok(header.includes("Max-Age="), "cookie must carry Max-Age");
     assert.ok(!flat.includes(jar.split("=")[1]), "raw token must not be in JSON");
-    // The session actually authenticates.
+
     const me = await api(fx.base, "/api/projects", { cookie: jar });
     assert.equal(me.status, 200);
   } finally {
@@ -238,8 +235,6 @@ test("login creates no project membership", async () => {
   }
 });
 
-// ---- Logout ----
-
 test("logout revokes the session, clears the cookie, and is repeatable", async () => {
   const fx = await setup();
   if (!fx) return;
@@ -262,8 +257,6 @@ test("logout revokes the session, clears the cookie, and is repeatable", async (
     await teardown();
   }
 });
-
-// ---- Authorization preservation ----
 
 test("project access: owner allowed, stranger and legacy denied, anonymous 401", async () => {
   const fx = await setup();
@@ -375,7 +368,7 @@ test("deployment routes resolve the owning project for authorization", async () 
       cookie: aliceJar,
     })).json as { items: unknown[] };
     assert.ok(Array.isArray(logs.items));
-    // Stranger cannot cancel; owner can.
+
     assert.equal(
       (
         await api(fx.base, `/api/deployments/${fx.deploymentId}/cancel`, {
@@ -394,7 +387,7 @@ test("deployment routes resolve the owning project for authorization", async () 
       ).status,
       200
     );
-    // Project-scoped deployment listing follows the same boundary.
+
     assert.equal(
       (await api(fx.base, `/api/projects/${fx.projectId}/deployments`, { cookie: aliceJar }))
         .status,

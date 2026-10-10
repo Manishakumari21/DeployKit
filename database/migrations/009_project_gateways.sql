@@ -29,11 +29,9 @@ CREATE TABLE project_gateways (
         )
 );
 
-
 CREATE INDEX project_gateways_release_idx
 ON project_gateways(active_release_id)
 WHERE active_release_id IS NOT NULL;
-
 
 DROP TRIGGER IF EXISTS project_gateways_set_updated_at ON project_gateways;
 

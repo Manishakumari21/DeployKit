@@ -7,9 +7,6 @@ type Mode = "login" | "register";
 const MIN_PASSWORD_LENGTH = 12;
 const MAX_PASSWORD_LENGTH = 72;
 
-// Session gate: email + password, nothing else. Credentials travel only in
-// the POST body; the session token comes back as an HttpOnly cookie and is
-// never readable here. No password is ever logged or displayed.
 export function LoginView({
   busy,
   error,
@@ -34,9 +31,7 @@ export function LoginView({
       setFormError("Enter a valid email address.");
       return;
     }
-    // Only registration enforces the 12-character policy. Login must accept
-    // whatever the user originally chose so older/shorter credentials can
-    // still sign in and receive the server's generic 401 on mismatch.
+
     if (password.length === 0) {
       setFormError("Enter your password.");
       return;

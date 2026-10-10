@@ -1,4 +1,4 @@
-// Phase 12.5: edge agent runner tests (fakes; no DB, no Docker daemon).
+
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -81,8 +81,7 @@ function makeHarness(overrides: Partial<Harness> = {}): Harness & {
     dockerCalls: [],
   };
   Object.assign(h, overrides);
-  // Attach factories to the LIVE harness object (no spread copy: scalar
-  // counters must stay shared between the fakes and the assertions).
+
   const withFactories = h as Harness & {
     factories: ConstructorParameters<typeof EdgeAgentRunner>[1];
   };
@@ -106,8 +105,7 @@ function makeHarness(overrides: Partial<Harness> = {}): Harness & {
     runFn: async () => okResult("25.0.3"),
     sleep: async (ms: number) => {
       h.sleeps.push(ms);
-      // Yield to the event loop so test timers (stop conditions) can fire;
-      // a purely microtask sleep would starve them and spin unbounded.
+
       await new Promise((r) => setTimeout(r, 0));
     },
     log: (entry: EdgeLogEntry) => { h.logs.push(entry); },
@@ -154,7 +152,7 @@ test("shutdown stops polling and prevents new claims", async () => {
   await new Promise((r) => setTimeout(r, 50));
   assert.ok(h.claims >= 1, "expected polling to start");
   runner.stop();
-  runner.stop(); // idempotent
+  runner.stop();
   const code = await done;
   assert.equal(code, 0);
   assert.ok(runner.isStopping);
@@ -200,7 +198,7 @@ test("reconnection re-claims and revalidates instead of blindly rerunning", asyn
   runner.stop();
   await done;
   assert.ok(calls >= 2, "must re-claim after the outage");
-  // Null image: fail-closed blocked path reports failure, runs no container.
+
   assert.ok(h.fails >= 1);
   assert.deepEqual(h.dockerCalls, []);
   assert.equal(h.completes, 0);

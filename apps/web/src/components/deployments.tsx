@@ -265,6 +265,5 @@ function useEffectSync(deployment: ApiDeployment | null, onUpdate: (d: ApiDeploy
   const updatedAt = deployment?.updated_at;
   useEffect(() => {
     if (deployment) onUpdate(deployment);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, updatedAt]);
 }

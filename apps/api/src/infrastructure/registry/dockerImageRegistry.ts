@@ -43,7 +43,6 @@ export function validateLocalReference(ref: string): string {
     throw new RegistryError("INVALID_REFERENCE", "Local image reference is invalid");
   }
 
-  // eslint-disable-next-line no-control-regex
   if (/[\s\u0000-\u001f\u007f'"`$\\;&|<>!()*?]/.test(value)) {
     throw new RegistryError("INVALID_REFERENCE", "Local image reference contains invalid characters");
   }

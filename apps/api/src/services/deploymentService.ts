@@ -11,7 +11,6 @@ export type DeploymentTrigger =
   | "github_push"
   | "rollback";
 
-// Single source for commit-SHA shape wherever deployments accept one.
 export const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
 
 export interface CreateDeploymentInput {
@@ -20,9 +19,7 @@ export interface CreateDeploymentInput {
   idempotencyKey: string | null;
   rollbackReleaseId?: string | null;
   commitSha?: string | null;
-  // Optional edge-agent destination. NULL preserves the legacy
-  // central-worker deployment. Ownership is verified server-side against
-  // the agent row; a client-supplied project id never establishes it.
+
   targetAgentId?: string | null;
 }
 

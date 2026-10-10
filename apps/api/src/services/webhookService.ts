@@ -1,6 +1,6 @@
 import pool from "../db/database.js";
 import { validateBranch } from "../infrastructure/git/sourceCheckout.js";
-import { createDeployment } from "./deploymentService.js";
+import { createDeployment, DeploymentConflictError } from "./deploymentService.js";
 
 export class WebhookError extends Error {
   readonly code: string;
@@ -322,6 +322,18 @@ export async function handleGitHubWebhook(input: {
     return { status: "processed", deploymentId: deployment.id as string };
   } catch (error) {
     if (error instanceof WebhookError) throw error;
+    if (error instanceof DeploymentConflictError) {
+      await markDelivery(deliveryId, "failed", {
+        error: "Project already has an active deployment",
+        repository: fullName,
+        installation: installationId ?? undefined,
+      }).catch(() => undefined);
+      throw new WebhookError(
+        "DEPLOYMENT_CONFLICT",
+        "Project already has an active deployment",
+        409
+      );
+    }
     const message = error instanceof Error ? error.message.slice(0, 500) : "Deployment creation failed";
     await markDelivery(deliveryId, "failed", {
       error: message,

@@ -1,11 +1,20 @@
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import pool from "../db/database.js";
 import { RealDeploymentExecutor } from "./deploymentPipeline.js";
 import { getDeploymentById } from "../services/deploymentService.js";
 import { getReleaseById } from "../services/releaseService.js";
 import { getProjectGateway } from "../services/gatewayService.js";
+
+const PREFLIGHT_WORKSPACE = mkdtempSync(path.join(os.tmpdir(), "deploykit-preflight-"));
+writeFileSync(path.join(PREFLIGHT_WORKSPACE, "Dockerfile"), "FROM scratch\n");
+after(() => {
+  rmSync(PREFLIGHT_WORKSPACE, { recursive: true, force: true });
+});
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -110,7 +119,7 @@ function fakeCheckout(SHAValue: string) {
       workspace: string;
       commitSha: string;
     }) => Promise<never>;
-    return fn({ workspace: "/tmp", commitSha: SHAValue });
+    return fn({ workspace: PREFLIGHT_WORKSPACE, commitSha: SHAValue });
   }) as never;
 }
 

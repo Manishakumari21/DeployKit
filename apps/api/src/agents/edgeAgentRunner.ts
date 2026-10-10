@@ -4,6 +4,7 @@ import { EdgeAgentClient } from "./edgeAgentClient.js";
 import { EdgeDockerRuntime } from "./edgeDocker.js";
 import {
   runEdgeDeploymentOnce,
+  type EdgeCleanupSummary,
   type EdgeOutcome,
 } from "./edgeExecutor.js";
 import {
@@ -305,6 +306,7 @@ export class EdgeAgentRunner {
             jobId: outcome.jobId,
             deploymentId: outcome.deploymentId,
             code: outcome.code,
+            ...cleanupCountFields(outcome),
           });
           break;
         case "blocked":
@@ -314,11 +316,12 @@ export class EdgeAgentRunner {
             deploymentId: outcome.deploymentId,
             code: outcome.code,
             backoffMs: this.backoffDelay(consecutiveBackoff),
+            ...cleanupCountFields(outcome),
           });
           break;
         case "lease-lost":
           consecutiveBackoff = 0;
-          this.log("warn", "agent.lease_lost", { code: outcome.code });
+          this.log("warn", "agent.lease_lost", { code: outcome.code, ...cleanupCountFields(outcome) });
           break;
         case "revoked":
           this.log("error", "agent.revoked", {
@@ -329,6 +332,7 @@ export class EdgeAgentRunner {
           this.log("info", "agent.cancelled", {
             jobId: outcome.jobId,
             deploymentId: outcome.deploymentId,
+            ...cleanupCountFields(outcome),
           });
           consecutiveBackoff = 0;
           break;
@@ -337,6 +341,7 @@ export class EdgeAgentRunner {
           this.log("warn", "agent.transient", {
             code: outcome.code,
             backoffMs: this.backoffDelay(consecutiveBackoff),
+            ...cleanupCountFields(outcome),
           });
           break;
       }
@@ -361,6 +366,19 @@ export class EdgeAgentRunner {
     }
     this.shutdownController.abort();
   }
+}
+
+function cleanupCountFields(outcome: { cleanup?: EdgeCleanupSummary }): Record<string, unknown> {
+  const summary = outcome.cleanup;
+  if (summary === undefined) return {};
+  return {
+    cleanupAttempted: summary.attempted,
+    cleanupRemoved: summary.removed.length,
+    cleanupAbsent: summary.absent.length,
+    cleanupNotOwned: summary.notOwned.length,
+    cleanupFailed: summary.failed.length,
+    cleanupListOk: summary.listOk,
+  };
 }
 
 function controlPlaneHostForLog(url: string): string {

@@ -1,10 +1,19 @@
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import pool from "../db/database.js";
 import { RealDeploymentExecutor } from "./deploymentPipeline.js";
 import { claimNextJob, recoverExpiredJobs } from "./deploymentQueue.js";
 import { BuildExecutorError } from "../infrastructure/build/buildxBuildExecutor.js";
 import { PIPELINE_ERROR_CODES } from "../deployments/deploymentErrors.js";
+
+const PREFLIGHT_WORKSPACE = mkdtempSync(path.join(os.tmpdir(), "deploykit-preflight-"));
+writeFileSync(path.join(PREFLIGHT_WORKSPACE, "Dockerfile"), "FROM scratch\n");
+after(() => {
+  rmSync(PREFLIGHT_WORKSPACE, { recursive: true, force: true });
+});
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -52,7 +61,7 @@ function fakeRouter() {
 function fakeCheckout(sha: string) {
   return (async (_opts: unknown, work: unknown) => {
     const fn = work as (c: { workspace: string; commitSha: string }) => Promise<unknown>;
-    return fn({ workspace: "/tmp", commitSha: sha });
+    return fn({ workspace: PREFLIGHT_WORKSPACE, commitSha: sha });
   }) as never;
 }
 

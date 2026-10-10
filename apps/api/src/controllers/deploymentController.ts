@@ -5,6 +5,7 @@ import { AgentError } from "../agents/agentService.js";
 import {
   cancelDeployment,
   createDeployment,
+  DeploymentConflictError,
   getDeploymentById,
   getDeploymentEvents,
   getProjectDeployments,
@@ -96,6 +97,12 @@ export async function createDeploymentController(
       if (error instanceof AgentError) {
         return res.status(error.status).json({ error: error.message });
       }
+      if (error instanceof DeploymentConflictError) {
+        return res.status(409).json({
+          error: error.message,
+          activeDeploymentId: error.activeDeploymentId,
+        });
+      }
       throw error;
     }
   } catch (error) {
@@ -142,6 +149,12 @@ export async function rollbackDeploymentController(
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Rollback failed";
+      if (error instanceof DeploymentConflictError) {
+        return res.status(409).json({
+          error: error.message,
+          activeDeploymentId: error.activeDeploymentId,
+        });
+      }
       if (
         message.includes("failed release") ||
         message.includes("required")

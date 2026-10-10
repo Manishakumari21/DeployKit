@@ -131,6 +131,7 @@ test("central worker cannot claim edge-targeted jobs but still claims central on
   const { createAgent } = await import("../agents/agentService.js");
   const { claimAgentJob } = await import("../agents/agentJobService.js");
   const project = await createProject(`edge-isolation-${Date.now()}`);
+  const centralProject = await createProject(`edge-isolation-central-${Date.now()}`);
   try {
     const agent = await createAgent(project.id, `edge-iso-${Date.now()}`);
     const edgeDeployment = await createDeployment({
@@ -141,7 +142,7 @@ test("central worker cannot claim edge-targeted jobs but still claims central on
     });
     assert.ok(edgeDeployment);
     const centralDeployment = await createDeployment({
-      projectId: project.id,
+      projectId: centralProject.id,
       trigger: "manual",
       idempotencyKey: null,
     });
@@ -165,6 +166,7 @@ test("central worker cannot claim edge-targeted jobs but still claims central on
     assert.equal(agentClaimed?.deploymentId, edgeDeployment.id);
   } finally {
     await pool.query(`DELETE FROM projects WHERE id = $1`, [project.id]);
+    await pool.query(`DELETE FROM projects WHERE id = $1`, [centralProject.id]);
   }
 });
 

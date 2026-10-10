@@ -13,6 +13,7 @@ import {
   heartbeatAgentJob,
 } from "./agentJobService.js";
 import { createDeployment } from "../services/deploymentService.js";
+import { cancelDeployment } from "../services/deploymentService.js";
 import { createRelease } from "../services/releaseService.js";
 import { claimNextJob } from "../workers/deploymentQueue.js";
 import { AgentError } from "./agentService.js";
@@ -795,6 +796,7 @@ test("claim resolves the trusted image from the rollback target release", async 
     assert.ok(source);
     const digest = `sha256:${"b".repeat(64)}`;
     const release = await makeRelease(source.id, project.id, digest);
+    await cancelDeployment(source.id);
     const deployment = await createDeployment({
       projectId: project.id,
       trigger: "rollback",
@@ -828,6 +830,7 @@ test("missing artifacts fail closed with a null image", async () => {
     assert.equal(first.deploymentId, bare.id);
     assert.equal(first.image, null);
     await failAgentJob(agent.id, first.id, { errorMessage: "blocked: no image" });
+    await cancelDeployment(bare.id);
 
     const source = await createDeployment({
       projectId: project.id,
@@ -836,6 +839,7 @@ test("missing artifacts fail closed with a null image", async () => {
     });
     assert.ok(source);
     const release = await makeRelease(source.id, project.id, `sha256:${"c".repeat(64)}`);
+    await cancelDeployment(source.id);
     const rollback = await createDeployment({
       projectId: project.id,
       trigger: "rollback",
@@ -868,6 +872,7 @@ test("malformed digests and repositories fail closed and are never returned", as
     assert.ok(first);
     assert.equal(first.image, null);
     await failAgentJob(agent.id, first.id, { errorMessage: "blocked" });
+    await cancelDeployment(badDigest.id);
 
     const localRepo = await makeTargetedDeployment(project.id, agent.id);
     await pool.query(
@@ -878,6 +883,7 @@ test("malformed digests and repositories fail closed and are never returned", as
     assert.ok(second);
     assert.equal(second.image, null);
     await failAgentJob(agent.id, second.id, { errorMessage: "blocked" });
+    await cancelDeployment(localRepo.id);
 
     const dep = await makeTargetedDeployment(project.id, agent.id);
     const release = await makeRelease(dep.id, project.id, `sha256:${"e".repeat(64)}`);
@@ -910,6 +916,7 @@ test("cross-project release artifacts never leak into another project's claim", 
     });
     assert.ok(homeSource);
     const homeRelease = await makeRelease(homeSource.id, home.id, `sha256:${"a".repeat(64)}`);
+    await cancelDeployment(homeSource.id);
     const deployment = await createDeployment({
       projectId: home.id,
       trigger: "rollback",

@@ -1,10 +1,19 @@
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import pool from "../db/database.js";
 import { RealDeploymentExecutor } from "./deploymentPipeline.js";
 import { getDeploymentById } from "../services/deploymentService.js";
 import { getReleaseById } from "../services/releaseService.js";
+
+const PREFLIGHT_WORKSPACE = mkdtempSync(path.join(os.tmpdir(), "deploykit-preflight-"));
+writeFileSync(path.join(PREFLIGHT_WORKSPACE, "Dockerfile"), "FROM scratch\n");
+after(() => {
+  rmSync(PREFLIGHT_WORKSPACE, { recursive: true, force: true });
+});
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -139,7 +148,7 @@ test("pipeline builds, releases and leaves deployment deploying", async () => {
           workspace: string;
           commitSha: string;
         }) => Promise<never>;
-        return fn({ workspace: "/tmp", commitSha: SHA });
+        return fn({ workspace: PREFLIGHT_WORKSPACE, commitSha: SHA });
       }) as never,
       runtimeNetwork: "deploykit-runtime",
       gatewayName: "dk-gateway",
@@ -256,7 +265,7 @@ test("pipeline cleans up new runtime when health fails", async () => {
           workspace: string;
           commitSha: string;
         }) => Promise<never>;
-        return fn({ workspace: "/tmp", commitSha: SHA });
+        return fn({ workspace: PREFLIGHT_WORKSPACE, commitSha: SHA });
       }) as never,
       runtimeNetwork: "deploykit-runtime",
       gatewayName: "dk-gateway",

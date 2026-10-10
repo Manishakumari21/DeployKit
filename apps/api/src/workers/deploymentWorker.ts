@@ -259,7 +259,7 @@ async function processJob() {
           code
         );
       } else {
-        await failJob(job.id, job.deploymentId, WORKER_ID, message);
+        await failJob(job.id, job.deploymentId, WORKER_ID, `${code}: ${message}`, code);
       }
     } catch (failError) {
       log("error", "deployment.fail_recording_failed", {
@@ -318,6 +318,18 @@ async function run() {
     });
     process.exitCode = 1;
     return;
+  }
+
+  try {
+    const { reconcileActiveGateways } = await import("../services/gatewayService.js");
+    const summary = await reconcileActiveGateways();
+    if (summary.reconciled > 0 || summary.failed > 0 || summary.superseded > 0) {
+      log("info", "worker.gateway_reconciled", { ...summary });
+    }
+  } catch (error) {
+    log("error", "worker.gateway_reconcile_failed", {
+      error: error instanceof Error ? error.message.slice(0, 300) : "Unknown error",
+    });
   }
 
   while (!shuttingDown) {

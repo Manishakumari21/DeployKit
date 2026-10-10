@@ -13,6 +13,26 @@ export type DeploymentTrigger =
 
 export const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
 
+export const NON_TERMINAL_DEPLOYMENT_STATUSES = [
+  "queued",
+  "cloning",
+  "building",
+  "pushing",
+  "verifying",
+  "deploying",
+] as const;
+
+export class DeploymentConflictError extends Error {
+  readonly code = "DEPLOYMENT_CONFLICT";
+  readonly status = 409;
+  readonly activeDeploymentId: string;
+  constructor(activeDeploymentId: string) {
+    super("Project already has an active deployment");
+    this.name = "DeploymentConflictError";
+    this.activeDeploymentId = activeDeploymentId;
+  }
+}
+
 export interface CreateDeploymentInput {
   projectId: string;
   trigger: DeploymentTrigger;
@@ -118,6 +138,47 @@ export async function createDeployment(
     }
 
     let deployment;
+
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+      input.projectId,
+    ]);
+
+    if (input.idempotencyKey) {
+      const replayResult = await client.query(
+        `
+        SELECT *
+        FROM deployments
+        WHERE project_id = $1
+          AND idempotency_key = $2
+        LIMIT 1
+        `,
+        [input.projectId, input.idempotencyKey]
+      );
+      if (replayResult.rows.length > 0) {
+        await client.query("COMMIT");
+        return replayResult.rows[0];
+      }
+    }
+
+    const activeResult = await client.query(
+      `
+      SELECT d.id
+      FROM deployments d
+      LEFT JOIN deployment_jobs j
+        ON j.deployment_id = d.id
+      WHERE d.project_id = $1
+        AND d.status = ANY($2)
+        AND (j.status IS NULL OR j.status IN ('queued', 'running'))
+      ORDER BY d.created_at ASC
+      LIMIT 1
+      `,
+      [input.projectId, [...NON_TERMINAL_DEPLOYMENT_STATUSES]]
+    );
+
+    if (activeResult.rows.length > 0) {
+      await client.query("ROLLBACK");
+      throw new DeploymentConflictError(activeResult.rows[0].id);
+    }
 
     if (input.idempotencyKey) {
       const insertResult = await client.query(

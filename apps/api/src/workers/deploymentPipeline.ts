@@ -11,6 +11,11 @@ import {
 import type { BuildExecutor } from "../infrastructure/build/buildExecutor.js";
 import { getBuildPolicy } from "../infrastructure/build/buildPolicy.js";
 import {
+  detectStack,
+  StackDetectorError,
+} from "../infrastructure/build/stackDetector.js";
+import { recordDeploymentEvent } from "../deployments/deploymentEvents.js";
+import {
   DockerRuntimeManager,
   RuntimeManagerError,
 } from "../infrastructure/runtime/dockerRuntimeManager.js";
@@ -453,6 +458,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         async ({ commitSha, workspace }) => {
           await this.assertNotCancelled(context.deploymentId, context.signal);
           await dlog(projectId, context.deploymentId, "git", "info", `checkout complete at ${commitSha.slice(0, 12)}`);
+          await this.runPreflight(projectId, context.deploymentId, workspace, context.signal);
           const policy = getBuildPolicy();
           const imageRepository = registry
             ? registryRepositoryForProject(registry, projectId)
@@ -527,7 +533,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
                   : PIPELINE_ERROR_CODES.BUILD_FAILED,
                 error.message,
                 {
-                  retryable: false,
+                  retryable: error.code === "BUILD_TIMEOUT",
                   details: error.details?.slice(0, 2000),
                 }
               );
@@ -723,6 +729,68 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     } catch {
       return undefined;
     }
+  }
+
+  private async runPreflight(
+    projectId: string,
+    deploymentId: string,
+    workspace: string,
+    signal?: AbortSignal
+  ): Promise<void> {
+    await dlog(projectId, deploymentId, "build", "info", "preflight started");
+    const emit = async (
+      failed: boolean,
+      message: string,
+      metadata: Record<string, unknown> = {}
+    ): Promise<void> => {
+      try {
+        const cur = await getDeploymentRow(deploymentId);
+        const status = (cur?.status ?? "building") as DeploymentStatus;
+        await withTransaction(async (client) => {
+          await recordDeploymentEvent(client, {
+            deploymentId,
+            eventType: failed
+              ? "deployment.preflight_failed"
+              : "deployment.preflight_passed",
+            statusFrom: status,
+            statusTo: status,
+            message,
+            metadata,
+          });
+        });
+      } catch {
+      }
+    };
+    const fail = async (code: string, message: string, metadata: Record<string, unknown> = {}): Promise<never> => {
+      await dlog(projectId, deploymentId, "build", "error", `preflight failed: ${message}`);
+      await emit(true, `Preflight failed: ${message}`, { code, ...metadata });
+      throw new PipelineError(code, message, { retryable: false });
+    };
+    if (signal?.aborted) {
+      throw new PipelineError(
+        PIPELINE_ERROR_CODES.DEPLOYMENT_CANCELLED,
+        "Deployment was cancelled during preflight",
+        { retryable: false }
+      );
+    }
+    let detection;
+    try {
+      detection = detectStack(workspace);
+    } catch (error) {
+      if (error instanceof StackDetectorError) {
+        await fail(error.code, error.message);
+      }
+      throw error;
+    }
+    if (detection.kind !== "dockerfile") {
+      await fail(
+        PIPELINE_ERROR_CODES.PREFLIGHT_NEEDS_CONFIG,
+        detection.detail,
+        { stack: detection.kind }
+      );
+    }
+    await dlog(projectId, deploymentId, "build", "info", `preflight passed: ${detection.detail}`);
+    await emit(false, `Preflight passed: ${detection.detail}`, { stack: detection.kind });
   }
 
   private async assertNotCancelled(deploymentId: string, signal?: AbortSignal): Promise<void> {
@@ -1161,6 +1229,39 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
           message:
             error instanceof Error ? error.message : String(error),
         }).catch(() => undefined);
+      }
+      if (
+        releaseActive &&
+        error instanceof PipelineError &&
+        error.code === PIPELINE_ERROR_CODES.ACTIVATION_FAILED &&
+        context.attempt >= context.maxAttempts
+      ) {
+        try {
+          const { reconcileProjectGateway } = await import("../services/gatewayService.js");
+          const reconciled = await reconcileProjectGateway(input.projectId, {
+            router: this.trafficRouter,
+            timeoutMs: this.routeTimeoutMs,
+          });
+          await dlog(
+            input.projectId,
+            input.deploymentId,
+            "gateway",
+            "info",
+            `gateway recovery ${reconciled.status} for release ${reconciled.releaseId ?? "none"}`
+          );
+        } catch (reconcileError) {
+          await dlog(
+            input.projectId,
+            input.deploymentId,
+            "gateway",
+            "warn",
+            `gateway recovery failed and will retry on worker restart: ${
+              reconcileError instanceof Error
+                ? reconcileError.message.slice(0, 300)
+                : "unknown error"
+            }`
+          );
+        }
       }
       if (
         error instanceof PipelineError ||

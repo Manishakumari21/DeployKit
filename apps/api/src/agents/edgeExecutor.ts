@@ -29,12 +29,120 @@ const DEFAULT_EXECUTION_TIMEOUT_MS = 600_000;
 export type EdgeOutcome =
   | { result: "idle" }
   | { result: "succeeded"; deploymentId: string; jobId: string }
-  | { result: "blocked"; deploymentId: string; jobId: string; code: string; message: string }
-  | { result: "failed"; deploymentId: string; jobId: string; code: string; message: string }
-  | { result: "lease-lost"; deploymentId: string | null; jobId: string | null; code: string }
-  | { result: "revoked"; code: string }
-  | { result: "cancelled"; deploymentId: string; jobId: string }
-  | { result: "transient"; code: string; message: string; deploymentId: string | null; jobId: string | null };
+  | { result: "blocked"; deploymentId: string; jobId: string; code: string; message: string; cleanup?: EdgeCleanupSummary }
+  | { result: "failed"; deploymentId: string; jobId: string; code: string; message: string; cleanup?: EdgeCleanupSummary }
+  | { result: "lease-lost"; deploymentId: string | null; jobId: string | null; code: string; cleanup?: EdgeCleanupSummary }
+  | { result: "revoked"; code: string; cleanup?: EdgeCleanupSummary }
+  | { result: "cancelled"; deploymentId: string; jobId: string; cleanup?: EdgeCleanupSummary }
+  | { result: "transient"; code: string; message: string; deploymentId: string | null; jobId: string | null; cleanup?: EdgeCleanupSummary };
+
+export interface EdgeCleanupFailure {
+  name: string;
+  code: string;
+  message: string;
+}
+
+export interface EdgeCleanupSummary {
+  attempted: number;
+  listOk: boolean;
+  removed: string[];
+  absent: string[];
+  notOwned: string[];
+  failed: EdgeCleanupFailure[];
+}
+
+export type EdgeCleanupDocker = Pick<EdgeDockerRuntime, "stopAndRemoveOwned" | "listOwnedContainers">;
+
+export async function cleanupOwnedContainers(
+  docker: EdgeCleanupDocker,
+  identity: EdgeOwnedIdentity
+): Promise<EdgeCleanupSummary> {
+  let names: string[];
+  try {
+    names = await docker.listOwnedContainers(identity.deploymentId);
+  } catch {
+    return { attempted: 0, listOk: false, removed: [], absent: [], notOwned: [], failed: [] };
+  }
+  const summary: EdgeCleanupSummary = {
+    attempted: names.length,
+    listOk: true,
+    removed: [],
+    absent: [],
+    notOwned: [],
+    failed: [],
+  };
+  for (const name of names) {
+    try {
+      await docker.stopAndRemoveOwned(name, identity);
+      summary.removed.push(name);
+    } catch (error) {
+      if (error instanceof EdgeDockerError && error.code === "EDGE_NOT_OWNED") {
+        summary.notOwned.push(name);
+        continue;
+      }
+      let stillPresent = true;
+      try {
+        const relisted = await docker.listOwnedContainers(identity.deploymentId);
+        stillPresent = relisted.includes(name);
+      } catch {
+        stillPresent = true;
+      }
+      if (!stillPresent) {
+        summary.absent.push(name);
+      } else {
+        summary.failed.push({
+          name,
+          code: error instanceof EdgeDockerError ? error.code : "EDGE_CLEANUP_FAILED",
+          message: describe(error).slice(0, 300),
+        });
+      }
+    }
+  }
+  return summary;
+}
+
+function hasCleanupTrouble(summary: EdgeCleanupSummary): boolean {
+  return !summary.listOk || summary.failed.length > 0 || summary.notOwned.length > 0;
+}
+
+function attachCleanup(
+  outcome: EdgeOutcome,
+  summary: EdgeCleanupSummary | undefined
+): EdgeOutcome {
+  if (summary === undefined || !hasCleanupTrouble(summary)) return outcome;
+  switch (outcome.result) {
+    case "idle":
+    case "succeeded":
+      return outcome;
+    default:
+      return { ...outcome, cleanup: summary };
+  }
+}
+
+function mergeCleanupSummaries(a: EdgeCleanupSummary, b: EdgeCleanupSummary): EdgeCleanupSummary {
+  return {
+    attempted: a.attempted + b.attempted,
+    listOk: a.listOk && b.listOk,
+    removed: [...a.removed, ...b.removed],
+    absent: [...a.absent, ...b.absent],
+    notOwned: [...a.notOwned, ...b.notOwned],
+    failed: [...a.failed, ...b.failed],
+  };
+}
+
+function cleanupNote(summary: EdgeCleanupSummary): string {
+  const parts: string[] = [];
+  if (summary.failed.length > 0) {
+    parts.push(`${summary.failed.length} removal failed`);
+  }
+  if (summary.notOwned.length > 0) {
+    parts.push(`${summary.notOwned.length} not owned`);
+  }
+  if (!summary.listOk) {
+    parts.push("listing failed");
+  }
+  return parts.length > 0 ? ` cleanup incomplete (${parts.join("; ")})` : "";
+}
 
 export interface EdgeOwnedIdentity {
   deploymentId: string;
@@ -197,19 +305,19 @@ async function runOnce(
   } catch (error) {
     if (callerSignal?.aborted || combinedSignal.aborted) return cancelled();
     if (isRevoked(error)) {
-      await cleanupOwnedBestEffort(docker, identity);
-      return { result: "revoked", code: "EDGE_AGENT_REVOKED" };
+      const cleanup = await cleanupOwnedContainers(docker, identity);
+      return attachCleanup({ result: "revoked", code: "EDGE_AGENT_REVOKED" }, cleanup);
     }
     if (isLeaseDefinitive(error)) {
-      await cleanupOwnedBestEffort(docker, identity);
-      return { result: "lease-lost", deploymentId: job.deploymentId, jobId: job.id, code: "EDGE_LEASE_STALE" };
+      const cleanup = await cleanupOwnedContainers(docker, identity);
+      return attachCleanup({ result: "lease-lost", deploymentId: job.deploymentId, jobId: job.id, code: "EDGE_LEASE_STALE" }, cleanup);
     }
 
     return { result: "transient", code: "EDGE_RECONCILE_TRANSIENT", message: describe(error), deploymentId: job.deploymentId, jobId: job.id };
   }
   if (reconciled.job.id !== job.id || reconciled.job.deploymentId !== job.deploymentId) {
-    await cleanupOwnedBestEffort(docker, identity);
-    return { result: "lease-lost", deploymentId: job.deploymentId, jobId: job.id, code: "EDGE_STATE_MISMATCH" };
+    const cleanup = await cleanupOwnedContainers(docker, identity);
+    return attachCleanup({ result: "lease-lost", deploymentId: job.deploymentId, jobId: job.id, code: "EDGE_STATE_MISMATCH" }, cleanup);
   }
   if (reconciled.job.status !== "running") {
 
@@ -225,12 +333,12 @@ async function runOnce(
         return { result: "transient", code: "EDGE_RECONCILE_TRANSIENT", message: describe(error), deploymentId: job.deploymentId, jobId: job.id };
       }
     }
-    await cleanupOwnedBestEffort(docker, identity);
-    return { result: "lease-lost", deploymentId: job.deploymentId, jobId: job.id, code: "EDGE_JOB_NOT_RUNNING" };
+    const jobNotRunningCleanup = await cleanupOwnedContainers(docker, identity);
+    return attachCleanup({ result: "lease-lost", deploymentId: job.deploymentId, jobId: job.id, code: "EDGE_JOB_NOT_RUNNING" }, jobNotRunningCleanup);
   }
   if (reconciled.deployment.status === "cancelled") {
-    await cleanupOwnedBestEffort(docker, identity);
-    return cancelled();
+    const cleanup = await cleanupOwnedContainers(docker, identity);
+    return attachCleanup(cancelled(), cleanup);
   }
 
   const plan = planFromClaimedJob(job);
@@ -260,22 +368,6 @@ async function runOnce(
     callerSignal,
     timeoutSignal
   );
-}
-
-async function cleanupOwnedBestEffort(
-  docker: EdgeExecutorDependencies["docker"],
-  identity: EdgeOwnedIdentity
-): Promise<void> {
-  try {
-    const names = await docker.listOwnedContainers(identity.deploymentId);
-    for (const name of names) {
-      try {
-        await docker.stopAndRemoveOwned(name, identity);
-      } catch {
-      }
-    }
-  } catch {
-  }
 }
 
 export interface ReadyPlanDependencies {
@@ -314,8 +406,8 @@ export async function executeReadyPlan(
   const cancelled = (): EdgeOutcome => ({ result: "cancelled", deploymentId: job.deploymentId, jobId: job.id });
   const leaseLost = (code: string): EdgeOutcome => ({ result: "lease-lost", deploymentId: job.deploymentId, jobId: job.id, code });
 
-  await cleanupOwnedBestEffort(docker, identity);
-  if (callerSignal?.aborted || combinedSignal.aborted) return cancelled();
+  const preCleanup = await cleanupOwnedContainers(docker, identity);
+  if (callerSignal?.aborted || combinedSignal.aborted) return attachCleanup(cancelled(), preCleanup);
 
   const phaseController = new AbortController();
   const phaseSignal = callerSignal === undefined
@@ -368,19 +460,19 @@ export async function executeReadyPlan(
       const raw = await client.heartbeatJob(job.id, combinedSignal);
       const state = parseHeartbeatState(raw);
       if (state.job.id !== job.id || state.job.status !== "running") {
-        await cleanupOwnedBestEffort(docker, identity);
-        return leaseLost("EDGE_LEASE_STALE");
+        const cleanup = await cleanupOwnedContainers(docker, identity);
+        return attachCleanup(leaseLost("EDGE_LEASE_STALE"), cleanup);
       }
     } catch (error) {
-      await cleanupOwnedBestEffort(docker, identity);
-      if (callerSignal?.aborted || combinedSignal.aborted) return cancelled();
-      if (isRevoked(error)) return { result: "revoked", code: "EDGE_AGENT_REVOKED" };
-      if (isLeaseDefinitive(error)) return leaseLost("EDGE_LEASE_STALE");
-      return { result: "transient", code: "EDGE_REPORT_TRANSIENT", message: describe(error), deploymentId: job.deploymentId, jobId: job.id };
+      const cleanup = await cleanupOwnedContainers(docker, identity);
+      if (callerSignal?.aborted || combinedSignal.aborted) return attachCleanup(cancelled(), cleanup);
+      if (isRevoked(error)) return attachCleanup({ result: "revoked", code: "EDGE_AGENT_REVOKED" }, cleanup);
+      if (isLeaseDefinitive(error)) return attachCleanup(leaseLost("EDGE_LEASE_STALE"), cleanup);
+      return attachCleanup({ result: "transient", code: "EDGE_REPORT_TRANSIENT", message: describe(error), deploymentId: job.deploymentId, jobId: job.id }, cleanup);
     }
     if (callerSignal?.aborted || combinedSignal.aborted) {
-      await cleanupOwnedBestEffort(docker, identity);
-      return cancelled();
+      const cleanup = await cleanupOwnedContainers(docker, identity);
+      return attachCleanup(cancelled(), cleanup);
     }
     try {
       await client.completeJob(
@@ -390,12 +482,12 @@ export async function executeReadyPlan(
       );
     } catch (error) {
       if (isRevoked(error)) {
-        await cleanupOwnedBestEffort(docker, identity);
-        return { result: "revoked", code: "EDGE_AGENT_REVOKED" };
+        const cleanup = await cleanupOwnedContainers(docker, identity);
+        return attachCleanup({ result: "revoked", code: "EDGE_AGENT_REVOKED" }, cleanup);
       }
       if (isLeaseDefinitive(error)) {
-        await cleanupOwnedBestEffort(docker, identity);
-        return leaseLost("EDGE_LEASE_STALE");
+        const cleanup = await cleanupOwnedContainers(docker, identity);
+        return attachCleanup(leaseLost("EDGE_LEASE_STALE"), cleanup);
       }
 
       return { result: "transient", code: "EDGE_REPORT_TRANSIENT", message: describe(error), deploymentId: job.deploymentId, jobId: job.id };
@@ -403,23 +495,24 @@ export async function executeReadyPlan(
     return { result: "succeeded", deploymentId: job.deploymentId, jobId: job.id };
   } catch (error) {
     stopBeats();
-    await cleanupOwnedBestEffort(docker, identity);
-    if (sawRevoked || isRevoked(error)) return { result: "revoked", code: "EDGE_AGENT_REVOKED" };
-    if (callerSignal?.aborted) return cancelled();
+    const postCleanup = await cleanupOwnedContainers(docker, identity);
+    const cleanup = mergeCleanupSummaries(preCleanup, postCleanup);
+    if (sawRevoked || isRevoked(error)) return attachCleanup({ result: "revoked", code: "EDGE_AGENT_REVOKED" }, cleanup);
+    if (callerSignal?.aborted) return attachCleanup(cancelled(), cleanup);
     if (timeoutSignal.aborted) {
 
-      return reportPhaseFailure(client, job, combinedSignal, callerSignal, "EDGE_EXECUTION_TIMEOUT", "Edge execution exceeded its bounded timeout");
+      return reportPhaseFailure(client, job, combinedSignal, callerSignal, "EDGE_EXECUTION_TIMEOUT", "Edge execution exceeded its bounded timeout", cleanup);
     }
     if (!leaseAlive || isLeaseDefinitive(error) || isLeaseLostDocker(error)) {
-      return leaseLost("EDGE_LEASE_STALE");
+      return attachCleanup(leaseLost("EDGE_LEASE_STALE"), cleanup);
     }
-    if (combinedSignal.aborted) return cancelled();
+    if (combinedSignal.aborted) return attachCleanup(cancelled(), cleanup);
     const code = boundErrorCode(
       error instanceof EdgeDockerError ? error.code : "EDGE_EXECUTION_FAILED",
       "EDGE_EXECUTION_FAILED"
     );
     const message = boundErrorMessage(describe(error), "Edge execution failed");
-    return reportPhaseFailure(client, job, combinedSignal, callerSignal, code, message);
+    return reportPhaseFailure(client, job, combinedSignal, callerSignal, code, message, cleanup);
   }
 }
 
@@ -437,7 +530,8 @@ async function reportPhaseFailure(
   combinedSignal: AbortSignal,
   callerSignal: AbortSignal | undefined,
   code: string,
-  message: string
+  message: string,
+  cleanup?: EdgeCleanupSummary
 ): Promise<EdgeOutcome> {
   const leaseLost = (lostCode: string): EdgeOutcome => ({ result: "lease-lost", deploymentId: job.deploymentId, jobId: job.id, code: lostCode });
 
@@ -460,8 +554,11 @@ async function reportPhaseFailure(
   if (callerSignal?.aborted || combinedSignal.aborted) {
     return { result: "cancelled", deploymentId: job.deploymentId, jobId: job.id };
   }
+  const reportedMessage = cleanup !== undefined && hasCleanupTrouble(cleanup)
+    ? boundErrorMessage(`${message}${cleanupNote(cleanup)}`, "Edge execution failed")
+    : boundErrorMessage(message, "Edge execution failed");
   try {
-    await client.failJob(job.id, boundErrorCode(code, "EDGE_EXECUTION_FAILED"), boundErrorMessage(message, "Edge execution failed"), combinedSignal);
+    await client.failJob(job.id, boundErrorCode(code, "EDGE_EXECUTION_FAILED"), reportedMessage, combinedSignal);
   } catch (error) {
     if (callerSignal?.aborted || combinedSignal.aborted) {
       return { result: "cancelled", deploymentId: job.deploymentId, jobId: job.id };
@@ -472,5 +569,5 @@ async function reportPhaseFailure(
     if (isLeaseDefinitive(error)) return leaseLost("EDGE_LEASE_STALE");
     return { result: "transient", code: "EDGE_REPORT_TRANSIENT", message: describe(error), deploymentId: job.deploymentId, jobId: job.id };
   }
-  return { result: "failed", deploymentId: job.deploymentId, jobId: job.id, code: boundErrorCode(code, "EDGE_EXECUTION_FAILED"), message: boundErrorMessage(message, "Edge execution failed") };
+  return attachCleanup({ result: "failed", deploymentId: job.deploymentId, jobId: job.id, code: boundErrorCode(code, "EDGE_EXECUTION_FAILED"), message: reportedMessage }, cleanup);
 }

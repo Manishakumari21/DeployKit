@@ -301,14 +301,14 @@ test("deployments default to a NULL target (central worker)", async () => {
   if (!(await dbAvailable())) return;
   const project = await makeProject(uniqueName("nulltarget"));
   try {
-    const deployment = await makeDeployment(project.id);
-    assert.equal((await getDeploymentTarget(deployment.id)).target_agent_id, null);
     const viaService = await createDeployment({
       projectId: project.id,
       trigger: "manual",
       idempotencyKey: null,
     });
     assert.equal(viaService?.target_agent_id ?? null, null);
+    const deployment = await makeDeployment(project.id);
+    assert.equal((await getDeploymentTarget(deployment.id)).target_agent_id, null);
   } finally {
     await cleanupProject(project.id);
   }

@@ -157,3 +157,88 @@ export async function syncProjectGateway(
   const { target: synced } = await syncProjectTarget(projectId, target, { router, timeoutMs });
   return synced;
 }
+
+export type GatewayReconcileStatus =
+  | "reconciled"
+  | "no-active-route"
+  | "superseded";
+
+export interface GatewayReconcileResult {
+  status: GatewayReconcileStatus;
+  releaseId: string | null;
+}
+
+export interface ReconcileOptions {
+  router?: TrafficRouter;
+  timeoutMs?: number;
+  maxRounds?: number;
+}
+
+export async function reconcileProjectGateway(
+  projectId: string,
+  options: ReconcileOptions = {}
+): Promise<GatewayReconcileResult> {
+  const router = options.router ?? new NginxGatewayRouter();
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  const maxRounds = options.maxRounds ?? 3;
+  let lastReleaseId: string | null = null;
+  for (let round = 0; round < Math.max(1, maxRounds); round += 1) {
+    const target = await resolveActiveRoute(projectId);
+    if (!target) {
+      return { status: "no-active-route", releaseId: null };
+    }
+    await syncProjectTarget(projectId, target, { router, timeoutMs });
+    const current = await resolveActiveRoute(projectId);
+    if (!current) {
+      return { status: "no-active-route", releaseId: null };
+    }
+    lastReleaseId = current.releaseId;
+    if (current.releaseId === target.releaseId) {
+      return { status: "reconciled", releaseId: target.releaseId };
+    }
+  }
+  return { status: "superseded", releaseId: lastReleaseId };
+}
+
+export interface GatewayReconcileSummary {
+  reconciled: number;
+  skipped: number;
+  failed: number;
+  superseded: number;
+}
+
+export async function reconcileActiveGateways(
+  options: ReconcileOptions & {
+    createRouter?: (projectId: string) => TrafficRouter;
+    onProjectError?: (projectId: string, error: unknown) => void;
+  } = {}
+): Promise<GatewayReconcileSummary> {
+  const summary: GatewayReconcileSummary = {
+    reconciled: 0,
+    skipped: 0,
+    failed: 0,
+    superseded: 0,
+  };
+  const rows = await pool.query(
+    `SELECT DISTINCT project_id FROM releases WHERE status = 'active'`
+  );
+  for (const row of rows.rows as Array<{ project_id: string }>) {
+    try {
+      const result = await reconcileProjectGateway(row.project_id, {
+        router: options.createRouter ? options.createRouter(row.project_id) : (options.router ?? new NginxGatewayRouter()),
+        timeoutMs: options.timeoutMs,
+        maxRounds: options.maxRounds,
+      });
+      if (result.status === "reconciled") summary.reconciled += 1;
+      else if (result.status === "no-active-route") summary.skipped += 1;
+      else summary.superseded += 1;
+    } catch (error) {
+      summary.failed += 1;
+      try {
+        options.onProjectError?.(row.project_id, error);
+      } catch {
+      }
+    }
+  }
+  return summary;
+}

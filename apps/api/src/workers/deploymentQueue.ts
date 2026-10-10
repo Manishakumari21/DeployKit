@@ -570,7 +570,8 @@ export async function failJob(
   jobId: string,
   deploymentId: string,
   workerId: string,
-  errorMessage: string
+  errorMessage: string,
+  errorCode?: string
 ): Promise<"retrying" | "failed"> {
   const client = await pool.connect();
 
@@ -611,6 +612,8 @@ export async function failJob(
 
     const previousStatus = deploymentResult.rows[0].status as string;
     const safeMessage = errorMessage.slice(0, 4000);
+    const retryCode = (errorCode ?? "DEPLOYMENT_RETRY").slice(0, 100);
+    const failedCode = (errorCode ?? "DEPLOYMENT_FAILED").slice(0, 100);
 
     if (shouldRetry) {
       const backoffSeconds = Math.min(
@@ -649,12 +652,12 @@ export async function failJob(
             UPDATE deployments
             SET
               status = 'queued',
-              error_code = 'DEPLOYMENT_RETRY',
+              error_code = $3,
               error_message = $2,
               updated_at = CURRENT_TIMESTAMP
             WHERE id = $1
             `,
-            [deploymentId, safeMessage]
+            [deploymentId, safeMessage, retryCode]
           );
         }
       }
@@ -686,6 +689,7 @@ export async function failJob(
             attempt: job.attempts,
             maxAttempts: job.max_attempts,
             backoffSeconds,
+            errorCode: retryCode,
             error: safeMessage.slice(0, 1000),
           }),
         ]
@@ -732,13 +736,13 @@ export async function failJob(
         UPDATE deployments
         SET
           status = 'failed',
-          error_code = 'DEPLOYMENT_FAILED',
+          error_code = $3,
           error_message = $2,
           finished_at = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
         `,
-        [deploymentId, safeMessage]
+        [deploymentId, safeMessage, failedCode]
       );
     }
 
@@ -768,6 +772,7 @@ export async function failJob(
         JSON.stringify({
           attempts: job.attempts,
           maxAttempts: job.max_attempts,
+          errorCode: failedCode,
           error: safeMessage.slice(0, 1000),
         }),
       ]

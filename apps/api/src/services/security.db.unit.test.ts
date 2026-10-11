@@ -9,6 +9,7 @@ import app from "../app.js";
 import { createUser } from "./userService.js";
 import { createProject } from "./projectService.js";
 import { getAllowedOrigins } from "../config/corsConfig.js";
+import { gateDb } from "../test/dbGate.js";
 
 const EVIL = "https://evil.example";
 const DEV_ORIGIN = "http://localhost:5173";
@@ -38,12 +39,17 @@ process.env.DEPLOYKIT_AUTH_RATE_LIMIT_MAX_ATTEMPTS = "10000";
 process.env.DEPLOYKIT_AUTH_RATE_LIMIT_EMAIL_MAX_ATTEMPTS = "1000";
 delete process.env.DEPLOYKIT_ALLOW_PUBLIC_REGISTRATION;
 
+// Set only once gateDb has confirmed a usable database connection. Teardown
+// must never issue cleanup queries against an unreachable database.
+let dbEstablished = false;
+
 test.after(async () => {
+  // Environment is restored regardless of database availability.
   for (const [key, value] of Object.entries(savedEnv)) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
-  await cleanup();
+  if (dbEstablished) await cleanup();
   if (server) {
     await new Promise<void>((resolve, reject) =>
       server!.close((e: unknown) => (e ? reject(e) : resolve()))
@@ -63,7 +69,8 @@ const userIds: string[] = [];
 const projectIds: string[] = [];
 
 async function ensureServer(): Promise<string | null> {
-  if (!(await dbAvailable())) return null;
+  if (!(await gateDb("services/security.db.unit.test.ts", dbAvailable))) return null;
+  dbEstablished = true;
   if (!server) {
     server = app.listen(0);
     await new Promise<void>((resolve) => server!.once("listening", resolve));
@@ -529,7 +536,8 @@ test("forwarded clients behind the proxy get independent buckets; spoofed prefix
   }
 });
 
-test("strangers cannot create deployments, delete projects, or touch github links", async () => {  if (!(await ensureServer())) return;
+test("strangers cannot create deployments, delete projects, or touch github links", async () => {
+  if (!(await ensureServer())) return;
   const owner = await makeUser("own-x");
   const stranger = await makeUser("str-x");
   try {

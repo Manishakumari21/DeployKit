@@ -16,6 +16,7 @@ import {
   rotateCredential,
   updateAgentHeartbeat,
 } from "../agents/agentService.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -74,7 +75,7 @@ async function getDeploymentTarget(deploymentId: string): Promise<{
 }
 
 test("creates an agent scoped to its project", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("create"));
   try {
     const agent = await createAgent(project.id, "edge-1");
@@ -97,7 +98,7 @@ test("creates an agent scoped to its project", async () => {
 });
 
 test("agent creation rejects missing or malformed projects", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   await assert.rejects(
     createAgent("00000000-0000-0000-0000-000000000000", "edge-x"),
     (e: unknown) => e instanceof AgentError && e.code === "PROJECT_NOT_FOUND"
@@ -115,7 +116,7 @@ test("agent creation rejects missing or malformed projects", async () => {
 });
 
 test("project deletion cascades its agents", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("cascade"));
   const agent = await createAgent(project.id, "edge-1");
   const cred = await createEnrollmentCredential(agent.id);
@@ -132,7 +133,7 @@ test("project deletion cascades its agents", async () => {
 });
 
 test("agent names are unique per project but reusable across projects", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   const first = await makeProject(uniqueName("dup-a"));
   const second = await makeProject(uniqueName("dup-b"));
   try {
@@ -162,7 +163,7 @@ test("agent names are unique per project but reusable across projects", async ()
 });
 
 test("credential is stored only as a SHA-256 digest", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("hash"));
   try {
     const agent = await createAgent(project.id, "edge-1");
@@ -183,7 +184,7 @@ test("credential is stored only as a SHA-256 digest", async () => {
 });
 
 test("the issued raw credential resolves to its agent and project", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("resolve"));
   try {
     const agent = await createAgent(project.id, "edge-1");
@@ -206,7 +207,7 @@ test("the issued raw credential resolves to its agent and project", async () => 
 });
 
 test("unknown and malformed credentials resolve to null", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   assert.equal(await resolveCredential("0".repeat(64)), null);
   assert.equal(await resolveCredential("not-a-credential"), null);
   assert.equal(await resolveCredential(""), null);
@@ -216,7 +217,7 @@ test("unknown and malformed credentials resolve to null", async () => {
 });
 
 test("revoked credentials are rejected and revocation is idempotent", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("revoke"));
   try {
     const agent = await createAgent(project.id, "edge-1");
@@ -232,7 +233,7 @@ test("revoked credentials are rejected and revocation is idempotent", async () =
 });
 
 test("expired credentials are rejected while future-dated ones resolve", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("expiry"));
   try {
     const agent = await createAgent(project.id, "edge-1");
@@ -254,7 +255,7 @@ test("expired credentials are rejected while future-dated ones resolve", async (
 });
 
 test("each credential digest is unique", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("unique"));
   try {
     const agent = await createAgent(project.id, "edge-1");
@@ -278,7 +279,7 @@ test("each credential digest is unique", async () => {
 });
 
 test("agent deletion cascades its credentials", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("agentcascade"));
   try {
     const agent = await createAgent(project.id, "edge-1");
@@ -298,7 +299,7 @@ test("agent deletion cascades its credentials", async () => {
 });
 
 test("deployments default to a NULL target (central worker)", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("nulltarget"));
   try {
     const viaService = await createDeployment({
@@ -315,7 +316,7 @@ test("deployments default to a NULL target (central worker)", async () => {
 });
 
 test("a deployment can target an agent from its own project", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("target"));
   try {
     const agent = await createAgent(project.id, "edge-1");
@@ -334,7 +335,7 @@ test("a deployment can target an agent from its own project", async () => {
 });
 
 test("cross-project deployment targets are rejected", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   const home = await makeProject(uniqueName("home"));
   const away = await makeProject(uniqueName("away"));
   try {
@@ -361,7 +362,7 @@ test("cross-project deployment targets are rejected", async () => {
 });
 
 test("deleting an agent preserves deployment history with a NULL target", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("history"));
   try {
     const agent = await createAgent(project.id, "edge-1");
@@ -385,7 +386,7 @@ test("deleting an agent preserves deployment history with a NULL target", async 
 });
 
 test("job lease owner is tracked separately from the requested target", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("lease"));
   try {
     const target = await createAgent(project.id, "edge-target");
@@ -440,7 +441,7 @@ test("job lease owner is tracked separately from the requested target", async ()
 });
 
 test("legacy central deployments stay valid with NULL targets", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   const before = (
     await pool.query(`SELECT COUNT(*)::int AS n FROM deployments`)
   ).rows[0].n as number;
@@ -469,7 +470,7 @@ test("legacy central deployments stay valid with NULL targets", async () => {
 });
 
 test("agents schema carries the intended constraints and indexes", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   const agentColumns = (
     await pool.query(
       `SELECT column_name, is_nullable
@@ -565,7 +566,7 @@ test("agents schema carries the intended constraints and indexes", async () => {
 });
 
 test("raw credentials never reach logs or list/get payloads", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("nolog"));
   try {
     const agent = await createAgent(project.id, "edge-1");
@@ -616,7 +617,7 @@ test("raw credentials never reach logs or list/get payloads", async () => {
 });
 
 test("rotation issues a fresh credential and revokes the old ones", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("rotate"));
   try {
     const agent = await createAgent(project.id, "edge-1");
@@ -647,7 +648,7 @@ test("rotation issues a fresh credential and revokes the old ones", async () => 
 });
 
 test("revoking an agent disables its credentials and heartbeat", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("agentrevoke"));
   try {
     const agent = await createAgent(project.id, "edge-1");
@@ -678,7 +679,7 @@ test("revoking an agent disables its credentials and heartbeat", async () => {
 });
 
 test("concurrent credential creation yields distinct working credentials", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentService.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("concurrent"));
   try {
     const agent = await createAgent(project.id, "edge-1");

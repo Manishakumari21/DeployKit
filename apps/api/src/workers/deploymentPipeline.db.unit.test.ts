@@ -8,6 +8,7 @@ import pool from "../db/database.js";
 import { RealDeploymentExecutor } from "./deploymentPipeline.js";
 import { getDeploymentById } from "../services/deploymentService.js";
 import { getReleaseById } from "../services/releaseService.js";
+import { gateDb } from "../test/dbGate.js";
 
 const PREFLIGHT_WORKSPACE = mkdtempSync(path.join(os.tmpdir(), "deploykit-preflight-"));
 writeFileSync(path.join(PREFLIGHT_WORKSPACE, "Dockerfile"), "FROM scratch\n");
@@ -131,7 +132,7 @@ async function createDeploymentRow(projectId: string) {
 }
 
 test("pipeline builds, releases and leaves deployment deploying", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("workers/deploymentPipeline.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const project = await createProject(`pipe-${Date.now()}`);
@@ -179,7 +180,7 @@ test("pipeline builds, releases and leaves deployment deploying", async () => {
 });
 
 test("rollback reuses the stored digest without rebuilding", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("workers/deploymentPipeline.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const project = await createProject(`piperb-${Date.now()}`);
@@ -244,7 +245,7 @@ test("rollback reuses the stored digest without rebuilding", async () => {
 });
 
 test("pipeline cleans up new runtime when health fails", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("workers/deploymentPipeline.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const project = await createProject(`pipefail-${Date.now()}`);

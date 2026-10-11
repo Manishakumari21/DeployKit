@@ -15,6 +15,7 @@ import {
   isCookieSecure,
   SESSION_COOKIE_NAME,
 } from "../config/sessionConfig.js";
+import { gateDb } from "../test/dbGate.js";
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
 const SHA = "b".repeat(40);
@@ -83,7 +84,7 @@ function sessionCookie(cookies: string[]): string | null {
 }
 
 async function setup(): Promise<Fixture | null> {
-  if (!(await dbAvailable())) return null;
+  if (!(await gateDb("services/authentication.db.unit.test.ts", dbAvailable))) return null;
   if (!server) {
     server = app.listen(0);
     await new Promise<void>((resolve) => server!.once("listening", resolve));

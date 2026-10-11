@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import pool from "../db/database.js";
 import { getProjectMetrics } from "./metricsService.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -14,7 +15,7 @@ async function dbAvailable(): Promise<boolean> {
 }
 
 test("project metrics are computed from real state without loading rows into Node", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/metricsService.db.unit.test.ts", dbAvailable))) return;
   const project = (
     await pool.query(
       `INSERT INTO projects (name, repository_url, branch)

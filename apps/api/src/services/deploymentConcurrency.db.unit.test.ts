@@ -6,6 +6,7 @@ import {
   createDeployment,
   DeploymentConflictError,
 } from "./deploymentService.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -45,7 +46,7 @@ async function nonTerminalCount(projectId: string): Promise<number> {
 }
 
 test("second non-terminal deployment for the same project is rejected", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/deploymentConcurrency.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`cc-second-${Date.now()}`);
   try {
     const first = await createDeployment({
@@ -77,7 +78,7 @@ test("second non-terminal deployment for the same project is rejected", async ()
 });
 
 test("duplicate idempotency key returns the existing deployment", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/deploymentConcurrency.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`cc-replay-${Date.now()}`);
   try {
     const key = `cc-replay-key-${Date.now()}`;
@@ -99,7 +100,7 @@ test("duplicate idempotency key returns the existing deployment", async () => {
 });
 
 test("concurrent same-project requests create exactly one deployment", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/deploymentConcurrency.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`cc-race-${Date.now()}`);
   try {
     const stamp = Date.now();
@@ -129,7 +130,7 @@ test("concurrent same-project requests create exactly one deployment", async () 
 });
 
 test("different projects deploy concurrently without conflict", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/deploymentConcurrency.db.unit.test.ts", dbAvailable))) return;
   const stamp = Date.now();
   const a = await createProject(`cc-a-${stamp}`);
   const b = await createProject(`cc-b-${stamp}`);
@@ -155,7 +156,7 @@ test("different projects deploy concurrently without conflict", async () => {
 });
 
 test("terminal deployment does not block a new deployment", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/deploymentConcurrency.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`cc-terminal-${Date.now()}`);
   try {
     const first = await createDeployment({

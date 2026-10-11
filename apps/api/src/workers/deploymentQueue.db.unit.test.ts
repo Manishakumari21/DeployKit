@@ -11,6 +11,7 @@ import {
   failJob,
   recoverExpiredJobs,
 } from "./deploymentQueue.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -34,7 +35,7 @@ async function createProject(name: string) {
 }
 
 test("idempotent deployment creation returns the same row", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("workers/deploymentQueue.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const project = await createProject(`idemp-${Date.now()}`);
@@ -62,7 +63,7 @@ test("idempotent deployment creation returns the same row", async () => {
 });
 
 test("claim increments attempts and records attempt history", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("workers/deploymentQueue.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const project = await createProject(`claim-${Date.now()}`);
@@ -97,7 +98,7 @@ test("claim increments attempts and records attempt history", async () => {
 });
 
 test("expired leases are recovered with audit events", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("workers/deploymentQueue.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const project = await createProject(`recover-${Date.now()}`);
@@ -125,7 +126,7 @@ test("expired leases are recovered with audit events", async () => {
 });
 
 test("central worker cannot claim edge-targeted jobs but still claims central ones", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("workers/deploymentQueue.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const { createAgent } = await import("../agents/agentService.js");
@@ -171,7 +172,7 @@ test("central worker cannot claim edge-targeted jobs but still claims central on
 });
 
 test("an expired edge lease is never stolen by the central worker", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("workers/deploymentQueue.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const { createAgent } = await import("../agents/agentService.js");

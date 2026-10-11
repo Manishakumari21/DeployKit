@@ -13,6 +13,7 @@ import {
   ProjectError,
 } from "./projectService.js";
 import { getProjectMembership } from "./authorizationService.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -65,7 +66,7 @@ async function cleanup(): Promise<void> {
 }
 
 test("project_members has the expected columns, PK, FKs, and indexes", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/projectMembership.db.unit.test.ts", dbAvailable))) return;
   const columns = (
     await pool.query(
       `SELECT column_name FROM information_schema.columns
@@ -124,7 +125,7 @@ test("project_members has the expected columns, PK, FKs, and indexes", async () 
 });
 
 test("invalid role is rejected by the database", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/projectMembership.db.unit.test.ts", dbAvailable))) return;
   const user = await trackUser(uniqueEmail("role"));
   const project = await trackProject(`role-${Date.now()}`);
   try {
@@ -142,7 +143,7 @@ test("invalid role is rejected by the database", async () => {
 });
 
 test("owner membership is created and readable", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/projectMembership.db.unit.test.ts", dbAvailable))) return;
   const user = await trackUser(uniqueEmail("own"));
   const project = await trackProject(`own-${Date.now()}`);
   try {
@@ -159,7 +160,7 @@ test("owner membership is created and readable", async () => {
 });
 
 test("duplicate membership is an idempotent no-op, not a second row", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/projectMembership.db.unit.test.ts", dbAvailable))) return;
   const user = await trackUser(uniqueEmail("idem"));
   const project = await trackProject(`idem-${Date.now()}`);
   try {
@@ -182,7 +183,7 @@ test("duplicate membership is an idempotent no-op, not a second row", async () =
 });
 
 test("different users hold distinct memberships on one project", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/projectMembership.db.unit.test.ts", dbAvailable))) return;
   const alice = await trackUser(uniqueEmail("alice"));
   const bob = await trackUser(uniqueEmail("bob"));
   const project = await trackProject(`multi-${Date.now()}`);
@@ -203,7 +204,7 @@ test("different users hold distinct memberships on one project", async () => {
 });
 
 test("bootstrap against missing project or user fails without inventing rows", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/projectMembership.db.unit.test.ts", dbAvailable))) return;
   const user = await trackUser(uniqueEmail("ghost"));
   const project = await trackProject(`ghost-${Date.now()}`);
   const missing = "00000000-0000-0000-0000-000000000000";
@@ -228,7 +229,7 @@ test("bootstrap against missing project or user fails without inventing rows", a
 });
 
 test("project created without owner stays intact with zero memberships", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/projectMembership.db.unit.test.ts", dbAvailable))) return;
   const usersBefore = (await pool.query(`SELECT COUNT(*)::int AS n FROM users`)).rows[0].n;
   const project = await trackProject(`legacy-${Date.now()}`);
   try {
@@ -252,7 +253,7 @@ test("project created without owner stays intact with zero memberships", async (
 });
 
 test("createProject with owner writes project and membership atomically", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/projectMembership.db.unit.test.ts", dbAvailable))) return;
   const user = await trackUser(uniqueEmail("atomic"));
   try {
     const project = await trackProject(`atomic-${Date.now()}`, user.id);
@@ -266,7 +267,7 @@ test("createProject with owner writes project and membership atomically", async 
 });
 
 test("createProject with unknown owner rolls back the project row", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/projectMembership.db.unit.test.ts", dbAvailable))) return;
   const missing = "00000000-0000-0000-0000-000000000000";
   const before = (await pool.query(`SELECT COUNT(*)::int AS n FROM projects`)).rows[0].n;
   await assert.rejects(
@@ -293,7 +294,7 @@ test("createProject with unknown owner rolls back the project row", async () => 
 });
 
 test("deleting a project removes its memberships but never its users", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/projectMembership.db.unit.test.ts", dbAvailable))) return;
   const user = await trackUser(uniqueEmail("delp"));
   const project = await createProject({
     name: `delp-${Date.now()}`,
@@ -318,7 +319,7 @@ test("deleting a project removes its memberships but never its users", async () 
 });
 
 test("deleting a user removes its memberships but never its projects", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/projectMembership.db.unit.test.ts", dbAvailable))) return;
   const user = await trackUser(uniqueEmail("delu"));
   const project = await trackProject(`delu-${Date.now()}`, user.id);
   try {

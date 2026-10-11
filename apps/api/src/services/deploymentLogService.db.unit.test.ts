@@ -12,6 +12,7 @@ import {
   redactSecrets,
   safeAppendLog,
 } from "./deploymentLogService.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -55,7 +56,7 @@ test("normalizeLogLine strips ANSI and control chars", () => {
 });
 
 test("append + cursor pagination + source/level filters use real DB", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/deploymentLogService.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`logs-${Date.now()}`);
   const dep = await createDeployment(project.id);
   try {
@@ -123,7 +124,7 @@ test("append + cursor pagination + source/level filters use real DB", async () =
 });
 
 test("appendOutput splits bulk output into bounded lines", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/deploymentLogService.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`logs-bulk-${Date.now()}`);
   const dep = await createDeployment(project.id);
   try {
@@ -152,7 +153,7 @@ test("safeAppendLog never throws on validation failure", async () => {
 });
 
 test("deleteExpiredLogs removes only rows past retention", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/deploymentLogService.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`logs-ret-${Date.now()}`);
   const dep = await createDeployment(project.id);
   try {

@@ -15,6 +15,7 @@ import {
   hashVerificationToken,
 } from "./domainService.js";
 import { DomainError } from "../domains/domainName.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -63,7 +64,7 @@ async function teardown(): Promise<void> {
 }
 
 test("creation normalizes and stores only a token hash", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/domainService.db.unit.test.ts", dbAvailable))) return;
   const projectId = await makeProject();
   try {
     const domain = uniqueDomain("norm");
@@ -87,7 +88,7 @@ test("creation normalizes and stores only a token hash", async () => {
 });
 
 test("global uniqueness prevents cross-project hijacking", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/domainService.db.unit.test.ts", dbAvailable))) return;
   const a = await makeProject();
   const b = await makeProject();
   try {
@@ -111,7 +112,7 @@ test("global uniqueness prevents cross-project hijacking", async () => {
 });
 
 test("concurrent creation does not create duplicates", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/domainService.db.unit.test.ts", dbAvailable))) return;
   const projectId = await makeProject();
   const other = await makeProject();
   try {
@@ -139,7 +140,7 @@ test("concurrent creation does not create duplicates", async () => {
 });
 
 test("correct TXT token verifies; wrong/missing/expired fail; rotation invalidates", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/domainService.db.unit.test.ts", dbAvailable))) return;
   const projectId = await makeProject();
   try {
     const domain = uniqueDomain("verify");
@@ -190,7 +191,7 @@ test("correct TXT token verifies; wrong/missing/expired fail; rotation invalidat
 });
 
 test("verified domains list feeds the renderer with one query", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/domainService.db.unit.test.ts", dbAvailable))) return;
   const projectId = await makeProject();
   try {
     const a = await createDomain({ projectId, domain: uniqueDomain("a") });
@@ -208,7 +209,7 @@ test("verified domains list feeds the renderer with one query", async () => {
 });
 
 test("project deletion cascades domains; invalid status rejected; indexes exist", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/domainService.db.unit.test.ts", dbAvailable))) return;
   const projectId = await makeProject();
   try {
     const created = await createDomain({ projectId, domain: uniqueDomain("cascade") });

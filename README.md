@@ -169,6 +169,23 @@ npm run test:build                         # buildx (Docker + builder)
 npx tsx --test src/infrastructure/runtime/dockerRuntimeManager.integration.test.ts  # runtime (Docker)
 ```
 
+#### Database test gate
+
+DB-backed suites skip when PostgreSQL is unreachable, which previously made a
+run look green while silently covering no database behavior. `src/test/dbGate.ts`
+records a marker per database suite and the verifier fails when an expected
+suite did not run.
+
+| Command | Behavior |
+| --- | --- |
+| `npm test` | Runs the unit suites, then the gate verifier. Fails if a DB-backed suite was skipped (i.e. PostgreSQL must be reachable). |
+| `npm run test:db-required` | Strict: fails fast with `REQUIRE_DB=1 but the database is unavailable` instead of skipping. Use in CI. |
+| `npm run test:no-db` | Tolerates a missing database, exits 0, and prints exactly which suites did not run. Does not claim database coverage. |
+| `npm run test:db-gate -- [unit\|integration\|all]` | Re-runs the verifier alone against an existing `DB_GATE_DIR`. Defaults to `unit`. |
+
+Markers are written to a unique `.db-gate/run-*` directory per invocation
+(cleared on success, retained on failure) so concurrent runs cannot interfere.
+
 ### Security boundaries / limitations
 
 * Git: HTTPS-only, allowlisted hosts, no embedded credentials, no

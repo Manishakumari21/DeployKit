@@ -6,6 +6,7 @@ import path from "node:path";
 import pool from "../db/database.js";
 import { RealDeploymentExecutor } from "./deploymentPipeline.js";
 import { PipelineError } from "../deployments/deploymentErrors.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -107,12 +108,12 @@ async function expectPreflightFailure(
 }
 
 test("empty repository fails preflight before building", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("workers/deploymentPreflight.db.unit.test.ts", dbAvailable))) return;
   await expectPreflightFailure({}, "PREFLIGHT_MISSING_INPUTS");
 });
 
 test("Node.js repository without a Dockerfile requires configuration", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("workers/deploymentPreflight.db.unit.test.ts", dbAvailable))) return;
   await expectPreflightFailure(
     { "package.json": '{"name":"app"}', "package-lock.json": "{}" },
     "PREFLIGHT_NEEDS_CONFIG"
@@ -120,7 +121,7 @@ test("Node.js repository without a Dockerfile requires configuration", async () 
 });
 
 test("conflicting lockfiles fail preflight before building", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("workers/deploymentPreflight.db.unit.test.ts", dbAvailable))) return;
   await expectPreflightFailure(
     { "package.json": "{}", "package-lock.json": "{}", "yarn.lock": "" },
     "PREFLIGHT_CONFLICTING_LOCKFILES"
@@ -128,7 +129,7 @@ test("conflicting lockfiles fail preflight before building", async () => {
 });
 
 test("Dockerfile repository passes preflight and reaches the build", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("workers/deploymentPreflight.db.unit.test.ts", dbAvailable))) return;
   const workspace = makeWorkspace({ Dockerfile: "FROM scratch\n" });
   const project = await createProject(`preflight-ok-${Date.now()}`);
   try {

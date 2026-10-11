@@ -4,6 +4,7 @@ import pool from "../db/database.js";
 import { recordDeploymentEvent } from "./deploymentEvents.js";
 import { redactSecrets } from "../services/deploymentLogService.js";
 import { redactForLog } from "../agents/edgeJobSchema.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -30,7 +31,7 @@ test("log redactor and edge redactor are a single implementation", () => {
 });
 
 test("deployment event messages are redacted before persistence", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("deployments/deploymentEvents.db.unit.test.ts", dbAvailable))) return;
   const project = (
     await pool.query(
       `INSERT INTO projects (name, repository_url, branch) VALUES ($1, 'https://github.com/acme/app.git', 'main') RETURNING *`,

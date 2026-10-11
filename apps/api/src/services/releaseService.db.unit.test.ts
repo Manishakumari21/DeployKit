@@ -7,6 +7,7 @@ import {
   createRelease,
   getActiveRelease,
 } from "./releaseService.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -51,7 +52,7 @@ async function countActive(projectId: string): Promise<number> {
 }
 
 test("sequential activations leave exactly one active release", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("services/releaseService.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const project = await createProject(`rel-seq-${Date.now()}`);
@@ -103,7 +104,7 @@ test("sequential activations leave exactly one active release", async () => {
 });
 
 test("failed activation leaves the old active release intact", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("services/releaseService.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const project = await createProject(`rel-fail-${Date.now()}`);
@@ -146,7 +147,7 @@ test("failed activation leaves the old active release intact", async () => {
 });
 
 test("activation rejects releases from another project", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("services/releaseService.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const projectA = await createProject(`rel-own-a-${Date.now()}`);
@@ -180,7 +181,7 @@ test("activation rejects releases from another project", async () => {
 });
 
 test("activation scopes the deployment update to the project", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("services/releaseService.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const projectA = await createProject(`rel-scope-a-${Date.now()}`);
@@ -214,7 +215,7 @@ test("activation scopes the deployment update to the project", async () => {
 });
 
 test("concurrent activations serialize to exactly one active release", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("services/releaseService.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const project = await createProject(`rel-conc-${Date.now()}`);
@@ -254,7 +255,7 @@ test("concurrent activations serialize to exactly one active release", async () 
 });
 
 test("repeat release creation for one deployment is idempotent", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("services/releaseService.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const project = await createProject(`rel-dup-${Date.now()}`);
@@ -286,7 +287,7 @@ test("repeat release creation for one deployment is idempotent", async () => {
 });
 
 test("release creation validates digest, sha and ownership", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("services/releaseService.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const project = await createProject(`rel-val-${Date.now()}`);

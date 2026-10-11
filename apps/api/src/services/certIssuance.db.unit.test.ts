@@ -25,6 +25,7 @@ import { NginxGatewayRouter } from "../infrastructure/gateway/nginxGatewayRouter
 import type { RouteTarget, TrafficRouter } from "../infrastructure/gateway/trafficRouter.js";
 import { FakeAcmeClient, SelfSignedAcmeClient } from "../tls/acmeClient.js";
 import { fullchainPath, privateKeyPath } from "../tls/certPaths.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -146,7 +147,8 @@ async function fakeAcmeWithRealMaterial(domain: string): Promise<FakeAcmeClient>
 }
 
 test("successful issuance installs files atomically and marks issued", async () => {
-  if (!(await dbAvailable()) || !(await opensslAvailable())) return;
+  if (!(await gateDb("services/certIssuance.db.unit.test.ts", dbAvailable))) return;
+  if (!(await opensslAvailable())) return;
   const env = await makeTempEnv();
   const { row } = await makeVerifiedDomain("ok").catch(async (e) => {
     await cleanupEnv(env);
@@ -191,7 +193,8 @@ test("successful issuance installs files atomically and marks issued", async () 
 });
 
 test("ACME failure records failed without touching files or gateway", async () => {
-  if (!(await dbAvailable()) || !(await opensslAvailable())) return;
+  if (!(await gateDb("services/certIssuance.db.unit.test.ts", dbAvailable))) return;
+  if (!(await opensslAvailable())) return;
   const env = await makeTempEnv();
   const { row } = await makeVerifiedDomain("acmefail");
   try {
@@ -219,7 +222,8 @@ test("ACME failure records failed without touching files or gateway", async () =
 });
 
 test("gateway HTTPS failure restores previous files and keeps serving", async () => {
-  if (!(await dbAvailable()) || !(await opensslAvailable())) return;
+  if (!(await gateDb("services/certIssuance.db.unit.test.ts", dbAvailable))) return;
+  if (!(await opensslAvailable())) return;
   const env = await makeTempEnv();
   const { row } = await makeVerifiedDomain("gwfail");
   try {
@@ -274,7 +278,7 @@ test("gateway HTTPS failure restores previous files and keeps serving", async ()
 });
 
 test("orphan certificate directories are reclaimed, live ones kept", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/certIssuance.db.unit.test.ts", dbAvailable))) return;
   const env = await makeTempEnv();
   const { row } = await makeVerifiedDomain("gc");
   try {
@@ -297,7 +301,8 @@ test("orphan certificate directories are reclaimed, live ones kept", async () =>
 });
 
 test("maintenance sweep issues due claims end to end", async () => {
-  if (!(await dbAvailable()) || !(await opensslAvailable())) return;
+  if (!(await gateDb("services/certIssuance.db.unit.test.ts", dbAvailable))) return;
+  if (!(await opensslAvailable())) return;
   const env = await makeTempEnv();
   const { row } = await makeVerifiedDomain("sweep");
   try {

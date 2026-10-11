@@ -7,6 +7,7 @@ import app from "../app.js";
 import { createUser } from "./userService.js";
 import { createProject } from "./projectService.js";
 import { SESSION_COOKIE_NAME } from "../config/sessionConfig.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -70,7 +71,7 @@ async function login(base: string, email: string): Promise<string> {
 }
 
 async function setup(): Promise<{ base: string; alice: string; bob: string; owned: string; legacy: string } | null> {
-  if (!(await dbAvailable())) return null;
+  if (!(await gateDb("services/domainAuth.db.unit.test.ts", dbAvailable))) return null;
   if (!server) {
     server = app.listen(0);
     await new Promise<void>((r) => server!.once("listening", r));

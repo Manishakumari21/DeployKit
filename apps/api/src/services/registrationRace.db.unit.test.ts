@@ -6,12 +6,18 @@ import type { AddressInfo } from "node:net";
 
 import pool from "../db/database.js";
 import app from "../app.js";
+import { gateDb } from "../test/dbGate.js";
 
 let server: ReturnType<typeof app.listen> | null = null;
 let base = "";
+// Set only once gateDb has confirmed a usable database connection, so the
+// teardown DELETE never runs against an unreachable database.
+let dbEstablished = false;
 
 test.after(async () => {
-  await pool.query(`DELETE FROM users WHERE email LIKE 'phase10-race-%'`);
+  if (dbEstablished) {
+    await pool.query(`DELETE FROM users WHERE email LIKE 'phase10-race-%'`);
+  }
   if (server) {
     await new Promise<void>((resolve, reject) =>
       server!.close((e: unknown) => (e ? reject(e) : resolve()))
@@ -21,6 +27,16 @@ test.after(async () => {
 });
 
 test("concurrent first registrations admit exactly one account", async (t) => {
+  const dbAvailable = await gateDb("services/registrationRace.db.unit.test.ts", async () => {
+    try {
+      await pool.query("SELECT 1");
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  if (!dbAvailable) return;
+  dbEstablished = true;
   const usersBefore = (await pool.query(`SELECT COUNT(*)::int AS n FROM users`)).rows[0].n;
   if (usersBefore !== 0) {
     t.skip("users table is not empty; cannot test the empty-table bootstrap window");

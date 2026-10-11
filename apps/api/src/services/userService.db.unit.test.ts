@@ -16,6 +16,7 @@ import {
   verifyPassword,
   UserError,
 } from "./userService.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -74,7 +75,7 @@ test("validatePassword enforces the length policy", () => {
 });
 
 test("valid user creation returns a public DTO without any hash", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/userService.db.unit.test.ts", dbAvailable))) return;
   const email = uniqueEmail("create");
   try {
     const user = await createUser({ email, password: "correct-horse-123" });
@@ -90,7 +91,7 @@ test("valid user creation returns a public DTO without any hash", async () => {
 });
 
 test("email is stored normalized", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/userService.db.unit.test.ts", dbAvailable))) return;
   const email = uniqueEmail("norm");
   const mixed = email.replace("@", "@").toUpperCase();
   try {
@@ -107,7 +108,7 @@ test("email is stored normalized", async () => {
 });
 
 test("duplicate email is rejected including case variants", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/userService.db.unit.test.ts", dbAvailable))) return;
   const email = uniqueEmail("dup");
   try {
     const user = await createUser({ email, password: "correct-horse-123" });
@@ -125,7 +126,7 @@ test("duplicate email is rejected including case variants", async () => {
 });
 
 test("database enforces email uniqueness below the application layer", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/userService.db.unit.test.ts", dbAvailable))) return;
   const email = uniqueEmail("dbuniq");
   const hash = await hashPassword("correct-horse-123");
   const first = await pool.query(
@@ -155,7 +156,7 @@ test("database enforces email uniqueness below the application layer", async () 
 });
 
 test("password is hashed with bcrypt and verifies correctly", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/userService.db.unit.test.ts", dbAvailable))) return;
   const email = uniqueEmail("hash");
   const password = "correct-horse-123";
   try {
@@ -176,7 +177,7 @@ test("password is hashed with bcrypt and verifies correctly", async () => {
 });
 
 test("invalid email and weak password are rejected without touching the DB", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/userService.db.unit.test.ts", dbAvailable))) return;
   await assert.rejects(
     createUser({ email: "not-an-email", password: "correct-horse-123" }),
     (e: unknown) => e instanceof UserError && e.code === "INVALID_EMAIL"
@@ -188,7 +189,7 @@ test("invalid email and weak password are rejected without touching the DB", asy
 });
 
 test("lookup by email is case-insensitive and by id works; unknown returns null", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/userService.db.unit.test.ts", dbAvailable))) return;
   const email = uniqueEmail("lookup");
   try {
     const created = await createUser({ email, password: "correct-horse-123" });

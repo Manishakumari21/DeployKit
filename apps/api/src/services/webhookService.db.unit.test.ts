@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import pool from "../db/database.js";
 import { handleGitHubWebhook, WebhookError } from "./webhookService.js";
 import { linkProjectRepository } from "./githubLinkService.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -44,7 +45,7 @@ async function cleanup(projectId?: string): Promise<void> {
 }
 
 test("push to a linked repo creates a github_push deployment with exact SHA", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/webhookService.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`wh-link-${Date.now()}`);
   try {
     await linkProjectRepository({
@@ -70,7 +71,7 @@ test("push to a linked repo creates a github_push deployment with exact SHA", as
 });
 
 test("repeat delivery does not create a duplicate deployment", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/webhookService.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`wh-dedup-${Date.now()}`);
   try {
     await linkProjectRepository({
@@ -104,7 +105,7 @@ test("repeat delivery does not create a duplicate deployment", async () => {
 });
 
 test("wrong branch, disabled auto_deploy, and unlinked repos are ignored", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/webhookService.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`wh-branch-${Date.now()}`);
   try {
     await linkProjectRepository({
@@ -141,7 +142,7 @@ test("wrong branch, disabled auto_deploy, and unlinked repos are ignored", async
 });
 
 test("unsupported events are ignored and bad SHAs rejected", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/webhookService.db.unit.test.ts", dbAvailable))) return;
   const ignored = await handleGitHubWebhook({
     deliveryId: `t-${Date.now()}-ping`,
     event: "ping",
@@ -159,7 +160,7 @@ test("unsupported events are ignored and bad SHAs rejected", async () => {
 });
 
 test("installation mismatch does not deploy", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/webhookService.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`wh-inst-${Date.now()}`);
   try {
     await linkProjectRepository({

@@ -21,6 +21,7 @@ import {
   getAgentMeController,
   postAgentHeartbeatController,
 } from "../controllers/agentController.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -269,7 +270,7 @@ async function authedContext(token: string) {
 }
 
 test("valid Bearer token authenticates through the real middleware", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentAuthentication.unit.test.ts", dbAvailable))) return;
   const made = await makeAgent("mw-valid");
   try {
     const req = fakeReq({ headers: { authorization: `Bearer ${made.token}` } });
@@ -288,7 +289,7 @@ test("valid Bearer token authenticates through the real middleware", async () =>
 });
 
 test("invalid, revoked, and expired credentials are rejected with 401", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentAuthentication.unit.test.ts", dbAvailable))) return;
   const made = await makeAgent("mw-reject");
   try {
     const attempt = async (token: string) => {
@@ -315,7 +316,7 @@ test("invalid, revoked, and expired credentials are rejected with 401", async ()
 });
 
 test("a revoked agent is rejected with 401", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentAuthentication.unit.test.ts", dbAvailable))) return;
   const made = await makeAgent("mw-agent-revoked");
   try {
     assert.equal(await revokeAgent(made.agentId), true);
@@ -332,7 +333,7 @@ test("a revoked agent is rejected with 401", async () => {
 });
 
 test("GET /me returns the safe identity and ignores request input", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentAuthentication.unit.test.ts", dbAvailable))) return;
   const made = await makeAgent("me");
   const rogue = await makeProject(uniqueName("me-rogue"));
   try {
@@ -369,7 +370,7 @@ test("GET /me returns the safe identity and ignores request input", async () => 
 });
 
 test("GET /me requires authentication and handles a vanished agent", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentAuthentication.unit.test.ts", dbAvailable))) return;
   const made = await makeAgent("me-gone");
   try {
     const anon = fakeRes();
@@ -387,7 +388,7 @@ test("GET /me requires authentication and handles a vanished agent", async () =>
 });
 
 test("heartbeat stamps version and heartbeat time", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentAuthentication.unit.test.ts", dbAvailable))) return;
   const made = await makeAgent("hb");
   try {
     const context = await authedContext(`Bearer ${made.token}`);
@@ -418,7 +419,7 @@ test("heartbeat stamps version and heartbeat time", async () => {
 });
 
 test("a revoked agent cannot heartbeat and is never resurrected", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentAuthentication.unit.test.ts", dbAvailable))) return;
   const made = await makeAgent("hb-revoked");
   try {
     const context = await authedContext(`Bearer ${made.token}`);
@@ -445,7 +446,7 @@ test("a revoked agent cannot heartbeat and is never resurrected", async () => {
 });
 
 test("malformed heartbeat versions are rejected with 400", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentAuthentication.unit.test.ts", dbAvailable))) return;
   const made = await makeAgent("hb-bad");
   try {
     const context = await authedContext(`Bearer ${made.token}`);
@@ -466,7 +467,7 @@ test("malformed heartbeat versions are rejected with 400", async () => {
 });
 
 test("heartbeat without authentication is rejected", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentAuthentication.unit.test.ts", dbAvailable))) return;
   const fake = fakeRes();
   await postAgentHeartbeatController(
     fakeReq({ headers: {}, body: { version: "1.0.0" } }),
@@ -477,7 +478,7 @@ test("heartbeat without authentication is rejected", async () => {
 });
 
 test("unexpected heartbeat failures return a safe 500", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentAuthentication.unit.test.ts", dbAvailable))) return;
   const made = await makeAgent("hb-500");
   try {
     const context = await authedContext(`Bearer ${made.token}`);

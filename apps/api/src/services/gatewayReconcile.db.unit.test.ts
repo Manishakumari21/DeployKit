@@ -6,6 +6,7 @@ import {
   reconcileProjectGateway,
 } from "./gatewayService.js";
 import type { RouteTarget } from "../infrastructure/gateway/trafficRouter.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -104,7 +105,7 @@ async function setupActiveProject(tag: string, digest = DIGEST_A) {
 }
 
 test("reconciliation converges a stale gateway to the database active release", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/gatewayReconcile.db.unit.test.ts", dbAvailable))) return;
   const { project, release } = await setupActiveProject("converge");
   const fake = fakeRouter();
   try {
@@ -124,7 +125,7 @@ test("reconciliation converges a stale gateway to the database active release", 
 });
 
 test("stale reconciliation cannot overwrite a newer active release", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/gatewayReconcile.db.unit.test.ts", dbAvailable))) return;
   const { project, release: releaseA } = await setupActiveProject("stale", DIGEST_A);
   const depB = await createDeployment(project.id);
   const releaseB = await createRelease(depB.id, project.id, DIGEST_B, "healthy");
@@ -149,7 +150,7 @@ test("stale reconciliation cannot overwrite a newer active release", async () =>
 });
 
 test("no active release is a no-op that never touches the gateway", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/gatewayReconcile.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`gw-none-${Date.now()}`);
   const fake = fakeRouter();
   try {
@@ -163,7 +164,7 @@ test("no active release is a no-op that never touches the gateway", async () => 
 });
 
 test("unavailable gateway surfaces the error for the caller to retry", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/gatewayReconcile.db.unit.test.ts", dbAvailable))) return;
   const { project } = await setupActiveProject("down");
   const fake = fakeRouter();
   fake.failSync = true;
@@ -178,7 +179,7 @@ test("unavailable gateway surfaces the error for the caller to retry", async () 
 });
 
 test("startup-style sweep reconciles, skips, and counts failures without throwing", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/gatewayReconcile.db.unit.test.ts", dbAvailable))) return;
   const ok = await setupActiveProject("sweep-ok");
   const stuck = await setupActiveProject("sweep-stuck");
   await pool.query(`UPDATE runtime_instances SET status = 'stopped' WHERE release_id = $1`, [

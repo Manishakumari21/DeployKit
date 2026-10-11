@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import pool from "../db/database.js";
 import { handleGitHubWebhook } from "./webhookService.js";
 import { linkProjectRepository } from "./githubLinkService.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -62,7 +63,7 @@ async function cleanup(projectIds: string[]): Promise<void> {
 }
 
 test("concurrent duplicate deliveries create exactly one deployment", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/webhookService.recovery.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`whrec-conc-${Date.now()}`);
   try {
     await linkProjectRepository({
@@ -86,7 +87,7 @@ test("concurrent duplicate deliveries create exactly one deployment", async () =
 });
 
 test("crashed delivery (persisted, never processed) resumes on redelivery", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/webhookService.recovery.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`whrec-crash-${Date.now()}`);
   try {
     await linkProjectRepository({
@@ -122,7 +123,7 @@ test("crashed delivery (persisted, never processed) resumes on redelivery", asyn
 });
 
 test("failed delivery can resume and succeed later", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/webhookService.recovery.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`whrec-fail-${Date.now()}`);
   try {
     await linkProjectRepository({
@@ -150,7 +151,7 @@ test("failed delivery can resume and succeed later", async () => {
 });
 
 test("already-processed delivery returns duplicate without new deployment", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/webhookService.recovery.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`whrec-done-${Date.now()}`);
   try {
     await linkProjectRepository({
@@ -180,7 +181,7 @@ test("already-processed delivery returns duplicate without new deployment", asyn
 });
 
 test("stale processing lease is reclaimed; fresh lease is respected", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/webhookService.recovery.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`whrec-lease-${Date.now()}`);
   try {
     await linkProjectRepository({

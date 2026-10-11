@@ -15,6 +15,7 @@ import {
   NginxGatewayRouter,
   routeFileName,
 } from "../infrastructure/gateway/nginxGatewayRouter.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -40,7 +41,7 @@ function targetFor(release: string) {
 }
 
 test("domain follows active release; failed change keeps old route; delete removes alias", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/domainE2E.db.unit.test.ts", dbAvailable))) return;
   const work = await mkdtemp(path.join(os.tmpdir(), "deploykit-e2e-gw-"));
   const logPath = path.join(work, "docker.log");
   await writeFile(logPath, "");

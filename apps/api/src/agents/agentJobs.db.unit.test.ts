@@ -24,6 +24,7 @@ import {
   heartbeatAgentJobController,
 } from "../controllers/agentController.js";
 import { createDeploymentController } from "../controllers/deploymentController.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -119,7 +120,7 @@ function fakeReq(init: {
 }
 
 test("an agent claims its own project's targeted job", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("claim"));
   try {
     const { agent } = await makeAgent(project.id, "a1");
@@ -159,7 +160,7 @@ test("an agent claims its own project's targeted job", async () => {
 });
 
 test("another project's agent cannot claim the job", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const home = await makeProject(uniqueName("home"));
   const away = await makeProject(uniqueName("away"));
   try {
@@ -175,7 +176,7 @@ test("another project's agent cannot claim the job", async () => {
 });
 
 test("an agent cannot claim a job targeted at a different agent", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("twoagents"));
   try {
     const first = await makeAgent(project.id, "first");
@@ -189,7 +190,7 @@ test("an agent cannot claim a job targeted at a different agent", async () => {
 });
 
 test("central jobs are invisible to agents and still claimed centrally", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("central"));
   try {
     const { agent } = await makeAgent(project.id, "edge");
@@ -209,7 +210,7 @@ test("central jobs are invisible to agents and still claimed centrally", async (
 });
 
 test("a revoked agent cannot claim new work", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("revokedclaim"));
   try {
     const { agent } = await makeAgent(project.id, "doomed");
@@ -231,7 +232,7 @@ test("a revoked agent cannot claim new work", async () => {
 });
 
 test("an expired lease becomes reclaimable by the same agent", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("reclaim"));
   try {
     const { agent } = await makeAgent(project.id, "re");
@@ -255,7 +256,7 @@ test("an expired lease becomes reclaimable by the same agent", async () => {
 });
 
 test("a valid lease cannot be stolen or double-claimed", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("nosteal"));
   const otherProject = await makeProject(uniqueName("nosteal-other"));
   try {
@@ -272,7 +273,7 @@ test("a valid lease cannot be stolen or double-claimed", async () => {
 });
 
 test("concurrent claims converge on exactly one winner", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("race"));
   try {
     const { agent } = await makeAgent(project.id, "racer");
@@ -299,7 +300,7 @@ test("concurrent claims converge on exactly one winner", async () => {
 });
 
 test("heartbeat extends only the owning agent's lease", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("hb"));
   const otherProject = await makeProject(uniqueName("hb-other"));
   try {
@@ -330,7 +331,7 @@ test("heartbeat extends only the owning agent's lease", async () => {
 });
 
 test("completion records success without faking activation", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("complete"));
   try {
     const { agent } = await makeAgent(project.id, "finisher");
@@ -372,7 +373,7 @@ test("completion records success without faking activation", async () => {
 });
 
 test("completion is rejected for non-owners and stale leases", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("complete-no"));
   const otherProject = await makeProject(uniqueName("complete-no-other"));
   try {
@@ -400,7 +401,7 @@ test("completion is rejected for non-owners and stale leases", async () => {
 });
 
 test("reported failures reuse retry then terminal semantics", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("fail"));
   const terminalProject = await makeProject(uniqueName("fail-terminal"));
   try {
@@ -439,7 +440,7 @@ test("reported failures reuse retry then terminal semantics", async () => {
 });
 
 test("failure reporting is rejected for non-owners", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("fail-no"));
   const otherProject = await makeProject(uniqueName("fail-no-other"));
   try {
@@ -459,7 +460,7 @@ test("failure reporting is rejected for non-owners", async () => {
 });
 
 test("target validation rejects unknown, cross-project, and revoked agents", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const home = await makeProject(uniqueName("t-home"));
   const away = await makeProject(uniqueName("t-away"));
   try {
@@ -510,7 +511,7 @@ test("target validation rejects unknown, cross-project, and revoked agents", asy
 });
 
 test("claim and job endpoints expose no secrets", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("secrets"));
   try {
     const { agent, token } = await makeAgent(project.id, "quiet");
@@ -554,7 +555,7 @@ test("claim and job endpoints expose no secrets", async () => {
 });
 
 test("claim endpoint returns a clean empty result when no work exists", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("empty"));
   try {
     const { context } = await makeAgent(project.id, "idle");
@@ -572,7 +573,7 @@ test("claim endpoint returns a clean empty result when no work exists", async ()
 });
 
 test("job endpoints validate input and map errors to status codes", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("mapping"));
   const otherProject = await makeProject(uniqueName("mapping-other"));
   try {
@@ -662,7 +663,7 @@ test("job endpoints validate input and map errors to status codes", async () => 
 });
 
 test("targeted creation through the controller enforces ownership", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const home = await makeProject(uniqueName("c-home"));
   const away = await makeProject(uniqueName("c-away"));
   try {
@@ -736,7 +737,7 @@ async function makeRelease(
 }
 
 test("edge agent claims its own targeted job with a fail-closed null image", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("edgeclaim"));
   try {
     const { agent } = await makeAgent(project.id, "owner");
@@ -757,7 +758,7 @@ test("edge agent claims its own targeted job with a fail-closed null image", asy
 });
 
 test("claim resolves the trusted image from the deployment's own release", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("ownrelease"));
   try {
     const { agent } = await makeAgent(project.id, "runner");
@@ -784,7 +785,7 @@ test("claim resolves the trusted image from the deployment's own release", async
 });
 
 test("claim resolves the trusted image from the rollback target release", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("rollbackimg"));
   try {
     const { agent } = await makeAgent(project.id, "rollbacker");
@@ -819,7 +820,7 @@ test("claim resolves the trusted image from the rollback target release", async 
 });
 
 test("missing artifacts fail closed with a null image", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("noartifact"));
   try {
     const { agent } = await makeAgent(project.id, "empty");
@@ -858,7 +859,7 @@ test("missing artifacts fail closed with a null image", async () => {
 });
 
 test("malformed digests and repositories fail closed and are never returned", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("malformed"));
   try {
     const { agent } = await makeAgent(project.id, "strict");
@@ -897,7 +898,7 @@ test("malformed digests and repositories fail closed and are never returned", as
 });
 
 test("cross-project release artifacts never leak into another project's claim", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const home = await makeProject(uniqueName("xhome"));
   const away = await makeProject(uniqueName("xaway"));
   try {
@@ -940,7 +941,7 @@ test("cross-project release artifacts never leak into another project's claim", 
 });
 
 test("client-supplied digests are never adopted; mismatches are rejected", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("substitution"));
   try {
     const { agent } = await makeAgent(project.id, "honest");

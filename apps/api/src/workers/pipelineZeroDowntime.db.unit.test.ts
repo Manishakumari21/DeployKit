@@ -9,6 +9,7 @@ import { RealDeploymentExecutor } from "./deploymentPipeline.js";
 import { getDeploymentById } from "../services/deploymentService.js";
 import { getReleaseById } from "../services/releaseService.js";
 import { getProjectGateway } from "../services/gatewayService.js";
+import { gateDb } from "../test/dbGate.js";
 
 const PREFLIGHT_WORKSPACE = mkdtempSync(path.join(os.tmpdir(), "deploykit-preflight-"));
 writeFileSync(path.join(PREFLIGHT_WORKSPACE, "Dockerfile"), "FROM scratch\n");
@@ -177,7 +178,7 @@ function executorWith(
 }
 
 test("unhealthy release never switches traffic and old release stays active", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("workers/pipelineZeroDowntime.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const project = await createProject(`zdt-keep-${Date.now()}`);
@@ -235,7 +236,7 @@ test("unhealthy release never switches traffic and old release stays active", as
 });
 
 test("traffic switches only after the new release is healthy", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("workers/pipelineZeroDowntime.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const project = await createProject(`zdt-order-${Date.now()}`);
@@ -271,7 +272,7 @@ test("traffic switches only after the new release is healthy", async () => {
 });
 
 test("worker restart resumes a stuck deployment without rebuilding", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("workers/pipelineZeroDowntime.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const project = await createProject(`zdt-resume-${Date.now()}`);
@@ -362,7 +363,7 @@ test("worker restart resumes a stuck deployment without rebuilding", async () =>
 });
 
 test("cleanup of superseded runtimes is idempotent", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("workers/pipelineZeroDowntime.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const project = await createProject(`zdt-clean-${Date.now()}`);

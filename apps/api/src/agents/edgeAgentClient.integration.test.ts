@@ -15,6 +15,7 @@ import {
   EdgeAgentClient,
   EdgeApiDefinitiveError,
 } from "./edgeAgentClient.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -58,7 +59,7 @@ async function makeProject(name: string): Promise<{ id: string }> {
 }
 
 test("client paths match the server mount and round-trip over HTTP", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/edgeAgentClient.integration.test.ts", dbAvailable))) return;
   const project = await makeProject(`edgehttp-${Date.now()}`);
   const { baseUrl, close } = await startServer();
   try {
@@ -98,7 +99,7 @@ test("client paths match the server mount and round-trip over HTTP", async () =>
 });
 
 test("revoked credentials are rejected over HTTP as definitive", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("agents/edgeAgentClient.integration.test.ts", dbAvailable))) return;
   const project = await makeProject(`edgehttp-auth-${Date.now()}`);
   const { baseUrl, close } = await startServer();
   try {

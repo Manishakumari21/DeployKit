@@ -8,6 +8,7 @@ import { RealDeploymentExecutor } from "./deploymentPipeline.js";
 import { claimNextJob, recoverExpiredJobs } from "./deploymentQueue.js";
 import { BuildExecutorError } from "../infrastructure/build/buildxBuildExecutor.js";
 import { PIPELINE_ERROR_CODES } from "../deployments/deploymentErrors.js";
+import { gateDb } from "../test/dbGate.js";
 
 const PREFLIGHT_WORKSPACE = mkdtempSync(path.join(os.tmpdir(), "deploykit-preflight-"));
 writeFileSync(path.join(PREFLIGHT_WORKSPACE, "Dockerfile"), "FROM scratch\n");
@@ -96,7 +97,7 @@ function executorWith(runtime: ReturnType<typeof fakeRuntime>) {
 }
 
 test("crash during build recovers via lease and resumes to active exactly once", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("workers/workerCrashRecovery.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`crash-build-${Date.now()}`);
   try {
     const dep = await createQueuedDeployment(project.id);
@@ -121,7 +122,7 @@ test("crash during build recovers via lease and resumes to active exactly once",
 });
 
 test("duplicate execution never creates conflicting active releases", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("workers/workerCrashRecovery.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`crash-dup-${Date.now()}`);
   try {
     const d1 = await createQueuedDeployment(project.id);
@@ -143,7 +144,7 @@ test("duplicate execution never creates conflicting active releases", async () =
 });
 
 test("cancelled deployment refuses execution with typed DEPLOYMENT_CANCELLED", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("workers/workerCrashRecovery.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`crash-cancel-${Date.now()}`);
   try {
     const dep = await createQueuedDeployment(project.id);
@@ -165,7 +166,7 @@ test("cancelled deployment refuses execution with typed DEPLOYMENT_CANCELLED", a
 });
 
 test("aborted build signal maps to typed DEPLOYMENT_CANCELLED", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("workers/workerCrashRecovery.db.unit.test.ts", dbAvailable))) return;
   const project = await createProject(`crash-abort-${Date.now()}`);
   try {
     const dep = await createQueuedDeployment(project.id, SHA);

@@ -7,6 +7,7 @@ import {
   failJob,
   failJobTerminal,
 } from "./deploymentQueue.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -60,7 +61,7 @@ async function jobRow(id: string) {
 }
 
 test("retryable failure persists the typed error code and requeues", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("workers/deploymentRetry.db.unit.test.ts", dbAvailable))) return;
   const { project, claimed, worker } = await setupRunningJob("typed");
   try {
     const outcome = await failJob(
@@ -82,7 +83,7 @@ test("retryable failure persists the typed error code and requeues", async () =>
 });
 
 test("retryable failure without a code keeps the generic retry code", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("workers/deploymentRetry.db.unit.test.ts", dbAvailable))) return;
   const { project, claimed, worker } = await setupRunningJob("generic");
   try {
     const outcome = await failJob(
@@ -100,7 +101,7 @@ test("retryable failure without a code keeps the generic retry code", async () =
 });
 
 test("retry exhaustion persists the typed code and stops", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("workers/deploymentRetry.db.unit.test.ts", dbAvailable))) return;
   const { project, claimed, worker } = await setupRunningJob("exhaust");
   try {
     await pool.query(
@@ -126,7 +127,7 @@ test("retry exhaustion persists the typed code and stops", async () => {
 });
 
 test("permanent failure terminates immediately with the typed code", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("workers/deploymentRetry.db.unit.test.ts", dbAvailable))) return;
   const { project, claimed, worker } = await setupRunningJob("terminal");
   try {
     await failJobTerminal(
@@ -147,7 +148,7 @@ test("permanent failure terminates immediately with the typed code", async () =>
 });
 
 test("failure from a stale worker is rejected and changes nothing", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("workers/deploymentRetry.db.unit.test.ts", dbAvailable))) return;
   const { project, claimed, worker } = await setupRunningJob("stale");
   try {
     await assert.rejects(

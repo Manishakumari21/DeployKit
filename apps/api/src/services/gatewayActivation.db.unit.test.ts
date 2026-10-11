@@ -9,6 +9,7 @@ import {
   markRelease,
 } from "./releaseService.js";
 import { getProjectGateway } from "./gatewayService.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -73,7 +74,7 @@ async function releaseFor(deploymentId: string, projectId: string, healthy: bool
 }
 
 test("non-healthy release never replaces the active release", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("services/gatewayActivation.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const project = await createProject(`gw-pending-${Date.now()}`);
@@ -96,7 +97,7 @@ test("non-healthy release never replaces the active release", async () => {
 });
 
 test("healthy release switches traffic and retires the old release", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("services/gatewayActivation.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const project = await createProject(`gw-switch-${Date.now()}`);
@@ -127,7 +128,7 @@ test("healthy release switches traffic and retires the old release", async () =>
 });
 
 test("repeated activation of the same release is idempotent", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("services/gatewayActivation.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const project = await createProject(`gw-idem-${Date.now()}`);
@@ -148,7 +149,7 @@ test("repeated activation of the same release is idempotent", async () => {
 });
 
 test("concurrent activations serialize to one active release", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("services/gatewayActivation.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const project = await createProject(`gw-conc-${Date.now()}`);
@@ -186,7 +187,7 @@ test("concurrent activations serialize to one active release", async () => {
 });
 
 test("cross-project activation is rejected", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("services/gatewayActivation.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const projectA = await createProject(`gw-x-a-${Date.now()}`);
@@ -209,7 +210,7 @@ test("cross-project activation is rejected", async () => {
 });
 
 test("terminal releases cannot transition", async () => {
-  if (!(await dbAvailable())) {
+  if (!(await gateDb("services/gatewayActivation.db.unit.test.ts", dbAvailable))) {
     return;
   }
   const project = await createProject(`gw-term-${Date.now()}`);

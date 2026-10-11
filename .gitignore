@@ -28,6 +28,8 @@ id_rsa*
 
 # Local data & OS noise
 postgres-data/
+# Database test-gate markers (per-run, recreated by scripts/run-unit-tests.ts)
+.db-gate/
 *.sqlite
 *.db
 *.log

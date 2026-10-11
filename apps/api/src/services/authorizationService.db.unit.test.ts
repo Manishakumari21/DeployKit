@@ -13,6 +13,7 @@ import {
   requireProjectMembership,
   requireProjectRole,
 } from "./authorizationService.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -75,7 +76,7 @@ async function isDenied(promise: Promise<unknown>): Promise<boolean> {
 }
 
 test("owner is authorized; get/has/require agree", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/authorizationService.db.unit.test.ts", dbAvailable))) return;
   const user = await makeUser("owner");
   const project = await makeProject(`authz-own-${Date.now()}`, user.id);
   try {
@@ -99,7 +100,7 @@ test("owner is authorized; get/has/require agree", async () => {
 });
 
 test("non-member is denied on every primitive", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/authorizationService.db.unit.test.ts", dbAvailable))) return;
   const owner = await makeUser("own1");
   const stranger = await makeUser("stranger");
   const project = await makeProject(`authz-str-${Date.now()}`, owner.id);
@@ -120,7 +121,7 @@ test("non-member is denied on every primitive", async () => {
 });
 
 test("unknown project, unknown user, and empty ids all deny", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/authorizationService.db.unit.test.ts", dbAvailable))) return;
   const user = await makeUser("known");
   const project = await makeProject(`authz-unk-${Date.now()}`, user.id);
   const missing = "00000000-0000-0000-0000-000000000000";
@@ -139,7 +140,7 @@ test("unknown project, unknown user, and empty ids all deny", async () => {
 });
 
 test("unowned legacy project denies even its creator-era callers", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/authorizationService.db.unit.test.ts", dbAvailable))) return;
   const user = await makeUser("legacy");
   const project = await makeProject(`authz-leg-${Date.now()}`);
   try {
@@ -164,7 +165,7 @@ test("unowned legacy project denies even its creator-era callers", async () => {
 });
 
 test("unknown required role denies instead of throwing a 500", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/authorizationService.db.unit.test.ts", dbAvailable))) return;
   const user = await makeUser("role");
   const project = await makeProject(`authz-role-${Date.now()}`, user.id);
   try {

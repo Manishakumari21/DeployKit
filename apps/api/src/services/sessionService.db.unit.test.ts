@@ -14,6 +14,7 @@ import {
   revokeSessionById,
   SessionError,
 } from "./sessionService.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -47,7 +48,7 @@ async function cleanup(): Promise<void> {
 }
 
 test("creates a session with a 256-bit hex token and ~7d expiry", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/sessionService.db.unit.test.ts", dbAvailable))) return;
   const user = await makeUser("create");
   try {
     const session = await createSession(user.id);
@@ -62,7 +63,7 @@ test("creates a session with a 256-bit hex token and ~7d expiry", async () => {
 });
 
 test("raw token is stored only as a SHA-256 digest", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/sessionService.db.unit.test.ts", dbAvailable))) return;
   const user = await makeUser("digest");
   try {
     const session = await createSession(user.id);
@@ -78,7 +79,7 @@ test("raw token is stored only as a SHA-256 digest", async () => {
 });
 
 test("valid session resolves to the correct user", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/sessionService.db.unit.test.ts", dbAvailable))) return;
   const user = await makeUser("resolve");
   try {
     const session = await createSession(user.id);
@@ -92,7 +93,7 @@ test("valid session resolves to the correct user", async () => {
 });
 
 test("unknown, malformed, and empty tokens resolve to null", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/sessionService.db.unit.test.ts", dbAvailable))) return;
   assert.equal(await resolveSession("0".repeat(64)), null);
   assert.equal(await resolveSession("not-a-token"), null);
   assert.equal(await resolveSession(""), null);
@@ -101,7 +102,7 @@ test("unknown, malformed, and empty tokens resolve to null", async () => {
 });
 
 test("expired sessions are rejected", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/sessionService.db.unit.test.ts", dbAvailable))) return;
   const user = await makeUser("expired");
   try {
     const session = await createSession(user.id);
@@ -115,7 +116,7 @@ test("expired sessions are rejected", async () => {
 });
 
 test("revoked sessions are rejected and revocation is idempotent", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/sessionService.db.unit.test.ts", dbAvailable))) return;
   const user = await makeUser("revoke");
   try {
     const session = await createSession(user.id);
@@ -129,7 +130,7 @@ test("revoked sessions are rejected and revocation is idempotent", async () => {
 });
 
 test("revokeSessionById invalidates without the token", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/sessionService.db.unit.test.ts", dbAvailable))) return;
   const user = await makeUser("byid");
   try {
     const session = await createSession(user.id);
@@ -142,7 +143,7 @@ test("revokeSessionById invalidates without the token", async () => {
 });
 
 test("deleting a user cascades their sessions", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/sessionService.db.unit.test.ts", dbAvailable))) return;
   const user = await makeUser("cascade");
   const session = await createSession(user.id);
   await pool.query(`DELETE FROM users WHERE id = $1`, [user.id]);
@@ -155,7 +156,7 @@ test("deleting a user cascades their sessions", async () => {
 });
 
 test("deleteExpiredSessions removes only expired rows", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/sessionService.db.unit.test.ts", dbAvailable))) return;
   const user = await makeUser("sweep");
   try {
     const live = await createSession(user.id);
@@ -173,7 +174,7 @@ test("deleteExpiredSessions removes only expired rows", async () => {
 });
 
 test("sessions cannot be created for unknown users", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/sessionService.db.unit.test.ts", dbAvailable))) return;
   const before = (await pool.query(`SELECT COUNT(*)::int AS n FROM sessions`)).rows[0].n;
   await assert.rejects(
     createSession("00000000-0000-0000-0000-000000000000"),

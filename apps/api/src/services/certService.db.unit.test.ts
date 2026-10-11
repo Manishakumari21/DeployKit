@@ -19,6 +19,7 @@ import {
   markExpiredCertificates,
   requestCertificate,
 } from "./certService.js";
+import { gateDb } from "../test/dbGate.js";
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -71,7 +72,7 @@ async function teardown(): Promise<void> {
 }
 
 test("request arms pending, rejects unverified, refuses duplicate work", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/certService.db.unit.test.ts", dbAvailable))) return;
   try {
     const { domainId } = await makeVerifiedDomain("req");
     const armed = await requestCertificate(domainId);
@@ -91,7 +92,7 @@ test("request arms pending, rejects unverified, refuses duplicate work", async (
 });
 
 test("issued rows near expiry are claimed and moved to renewing", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/certService.db.unit.test.ts", dbAvailable))) return;
   try {
     const soon = await makeVerifiedDomain("soon");
     const later = await makeVerifiedDomain("later");
@@ -115,7 +116,7 @@ test("issued rows near expiry are claimed and moved to renewing", async () => {
 });
 
 test("concurrent renewal claims serialize to a single winner", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/certService.db.unit.test.ts", dbAvailable))) return;
   try {
     const { domainId } = await makeVerifiedDomain("race");
     await pool.query(
@@ -134,7 +135,7 @@ test("concurrent renewal claims serialize to a single winner", async () => {
 });
 
 test("issued marking is compare-and-set; failures revert or record", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/certService.db.unit.test.ts", dbAvailable))) return;
   try {
     const { domainId } = await makeVerifiedDomain("mark");
     await requestCertificate(domainId);
@@ -178,7 +179,7 @@ test("issued marking is compare-and-set; failures revert or record", async () =>
 });
 
 test("expiry sweeper marks projects and deletion removes TLS metadata", async () => {
-  if (!(await dbAvailable())) return;
+  if (!(await gateDb("services/certService.db.unit.test.ts", dbAvailable))) return;
   try {
     const { domainId, projectId } = await makeVerifiedDomain("exp");
     await pool.query(

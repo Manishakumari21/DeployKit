@@ -8,6 +8,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
 
+    ports:
+      - "127.0.0.1:5433:5432"
+
     volumes:
       - deploykit-db:/var/lib/postgresql
 
@@ -22,6 +25,8 @@ services:
       retries: 10
       start_period: 5s
 
+    restart: unless-stopped
+
   api:
     build:
       context: ./apps/api
@@ -32,6 +37,7 @@ services:
     environment:
       PORT: 3000
       DATABASE_URL: ${DATABASE_URL}
+      DEPLOYKIT_ALLOW_PUBLIC_REGISTRATION: "true"
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
@@ -182,6 +188,9 @@ services:
     # network only, no host ports published by default.
     image: registry:2.8.3
     container_name: deploykit-registry
+
+    ports:
+      - "127.0.0.1:5000:5000"
 
     environment:
       REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY: /var/lib/registry

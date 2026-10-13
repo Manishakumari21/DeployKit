@@ -1,0 +1,83 @@
+name: CI
+
+# Enforces the database test gate (see README "Database test gate") against a
+# real, ephemeral PostgreSQL instance so DB-backed suites can never be silently
+# skipped and reported as passing.
+#
+# Deliberately absent: any deploy, release, registry, push, or Docker-daemon
+# step. Docker-dependent suites (test:build, test:registry, runtime
+# integration) need a Docker daemon and are out of scope here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Least privilege: this workflow only needs to read the repository.
+permissions:
+  contents: read
+
+jobs:
+  api-and-web-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          # Ephemeral, throwaway CI credentials - not secrets, not shared.
+          POSTGRES_USER: deploykit_ci
+          POSTGRES_PASSWORD: deploykit_ci
+          POSTGRES_DB: deploykit_ci
+        ports:
+          - 5432:5432
+        # The job does not start until PostgreSQL reports ready.
+        options: >-
+          --health-cmd "pg_isready -U deploykit_ci -d deploykit_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://deploykit_ci:deploykit_ci@localhost:5432/deploykit_ci
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            apps/api/package-lock.json
+            apps/web/package-lock.json
+
+      - name: Install API dependencies
+        working-directory: apps/api
+        run: npm ci
+
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: API typecheck / build
+        working-directory: apps/api
+        run: npm run build
+
+      # Required before the DB-backed suites: they query real tables, and
+      # db:migrate is a no-op once the schema is current.
+      - name: Initialize test database schema
+        working-directory: apps/api
+        run: npm run db:migrate
+
+      # Strict mode: REQUIRE_DB=1. An unreachable database fails loudly here
+      # rather than skipping; there is deliberately no no-db fallback.
+      - name: API tests (database required)
+        working-directory: apps/api
+        run: npm run test:db-required
+
+      - name: Web tests
+        working-directory: apps/web
+        run: npm test

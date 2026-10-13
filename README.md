@@ -186,6 +186,29 @@ suite did not run.
 Markers are written to a unique `.db-gate/run-*` directory per invocation
 (cleared on success, retained on failure) so concurrent runs cannot interfere.
 
+#### Database migrations
+
+The DB-backed suites need a migrated schema. `npm run db:migrate` applies
+`database/migrations/*.sql` in lexical order, one transaction per file, and
+records applied files in `schema_migrations` so re-running is safe. It requires
+`DATABASE_URL` explicitly and never guesses a database, so it cannot migrate a
+developer database by accident. `001`/`002`/`004` are not idempotent, which is
+why the applied-file record exists.
+
+```bash
+cd apps/api
+DATABASE_URL=postgresql://<user>:<password>@localhost:5432/<database> npm run db:migrate
+```
+
+A session-scoped advisory lock serializes concurrent runners, so two
+processes cannot apply the same file. `DEPLOYKIT_MIGRATIONS_DIR` overrides the
+migrations directory; it exists so failure paths can be exercised with
+fixtures and is unset in normal use and in CI.
+
+CI (`.github/workflows/ci.yml`) runs `build -> db:migrate -> test:db-required`
+against an ephemeral PostgreSQL service, so a skipped DB-backed suite fails the
+job instead of passing silently.
+
 ### Security boundaries / limitations
 
 * Git: HTTPS-only, allowlisted hosts, no embedded credentials, no

@@ -1,19 +1,4 @@
-// Manual edge-agent enrollment (control-plane operator use only).
-//
-// There is intentionally no public enrollment endpoint: creating agents and
-// issuing credentials requires control-plane access (DATABASE_URL) and is
-// performed by the project owner/operator. This script reuses the existing
-// service mechanism (createAgent + createEnrollmentCredential: 256-bit
-// opaque token, SHA-256 digest storage). The raw token is printed ONCE for
-// handoff to the edge host; only its digest is stored.
-//
-// Usage (from apps/api, with DATABASE_URL set):
-//   npx tsx scripts/enroll-agent.ts --project <project-uuid> --name <agent-name> [--expires <ISO timestamp>]
-//
-// Rotation: run again (or rotateCredential path) and replace the token on
-// the edge host, then revoke the old credential.
-// Revocation: revokeCredential(credentialId) or revokeAgent(agentId) via
-// the same service module; the agent stops at the next authenticated call.
+
 
 import { createAgent, createEnrollmentCredential } from "../src/agents/agentService.js";
 

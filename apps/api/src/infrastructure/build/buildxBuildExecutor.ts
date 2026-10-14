@@ -289,7 +289,7 @@ async function runBuild(
       if (onLog && buffer.trim()) {
         try {
           onLog(buffer.trim().slice(0, 4000));
-        } catch { /* ignore */ }
+        } catch {  }
       }
     });
   } catch (e) {

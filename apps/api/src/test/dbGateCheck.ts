@@ -27,8 +27,6 @@ if (dir === null) {
 
 const expected = gatedSuitesForScope(scope);
 
-// Never report success when nothing was actually gated for this scope, so an
-// empty registry or a wrong scope cannot make the gate pass vacuously.
 if (expected.length === 0) {
   console.error(
     `db-gate: no database suites are registered for scope "${scope}"; ` +

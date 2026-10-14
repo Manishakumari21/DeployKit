@@ -10,8 +10,7 @@ import { gateDb } from "../test/dbGate.js";
 
 let server: ReturnType<typeof app.listen> | null = null;
 let base = "";
-// Set only once gateDb has confirmed a usable database connection, so the
-// teardown DELETE never runs against an unreachable database.
+
 let dbEstablished = false;
 
 test.after(async () => {

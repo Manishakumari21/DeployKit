@@ -1,21 +1,5 @@
-/**
- * Unit-test runner with database-gate enforcement.
- *
- * Why a script instead of `DB_GATE_DIR=.db-gate tsx --test ...` in
- * package.json: inline environment assignment is shell syntax and does not
- * work on Windows cmd/powershell. Spawning tsx with an explicit `env` object
- * keeps the scripts cross-platform and guarantees the variables reach the
- * test subprocess.
- *
- * Modes:
- *   --mode=enforce (default) run unit tests, then fail if any gated database
- *                              suite did not actually execute.
- *   --mode=no-db              allow database suites to skip safely; report
- *                              exactly which ones did not run. Never claims
- *                              database tests passed.
- *   --mode=require-db         REQUIRE_DB=1: fail loudly and early when
- *                              PostgreSQL is unavailable instead of skipping.
- */
+
+
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import path from "node:path";
@@ -38,10 +22,6 @@ function parseMode(argv: string[]): Mode {
 
 const mode = parseMode(process.argv.slice(2));
 
-// Scope the gate to this run only. A unique per-run directory means concurrent
-// `npm test` invocations (for example no-db and db-required at the same time)
-// cannot delete each other's markers, and stale markers from an earlier run can
-// never satisfy the verifier. Only this run's own directory is ever removed.
 mkdirSync(GATE_ROOT, { recursive: true });
 const GATE_DIR = mkdtempSync(path.join(GATE_ROOT, "run-"));
 
@@ -59,8 +39,6 @@ if (tests.error) {
   process.exit(2);
 }
 
-// If the tests themselves failed, report that first; the gate result is only
-// meaningful as an additional signal on an otherwise green run.
 const testsOk = tests.status === 0;
 
 function runGate(scope: string): number {
@@ -79,8 +57,8 @@ function runGate(scope: string): number {
 let exitCode = testsOk ? 0 : (tests.status ?? 1);
 
 if (mode === "no-db") {
-  // Report what did not run, but do not fail: the caller explicitly asked for
-  // a run that tolerates a missing database.
+
+
   const gate = spawnSync(
     process.execPath,
     [TSX_CLI, "src/test/dbGateCheck.ts", "unit"],
@@ -100,14 +78,11 @@ if (mode === "no-db") {
     );
   }
 } else if (testsOk) {
-  // enforce / require-db: an unexpected database skip is a failure.
+
   const gateExit = runGate("unit");
   if (gateExit !== 0 && exitCode === 0) exitCode = gateExit;
 }
 
-// Clean up this run's marker directory on success. On failure it is left in
-// place so the recorded markers can be inspected. Only this run's own unique
-// directory is ever removed; concurrent runs are left untouched.
 if (existsSync(GATE_DIR)) {
   if (exitCode === 0) {
     rmSync(GATE_DIR, { recursive: true, force: true });
@@ -115,8 +90,7 @@ if (existsSync(GATE_DIR)) {
     console.log(`\ndb-gate: markers for this run left in ${GATE_DIR}`);
   }
 }
-// Drop the shared root only once it is empty, so a failed or concurrent run
-// never has its markers removed.
+
 if (existsSync(GATE_ROOT) && readdirSync(GATE_ROOT).length === 0) {
   rmSync(GATE_ROOT, { recursive: true, force: true });
 }

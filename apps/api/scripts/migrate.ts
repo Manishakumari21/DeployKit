@@ -1,23 +1,4 @@
-// Apply database/migrations/*.sql in lexical (numeric) order.
-//
-// Why this exists: the DB-backed test suites require a migrated schema, and the
-// repository had no supported way to build one from empty. Compose only wires a
-// volume; it never applies the SQL. Tests must not be "fixed" by weakening them,
-// so a deterministic, re-runnable initializer is required before CI.
-//
-// Deliberately minimal, and deliberately NOT implicit:
-//   * DATABASE_URL must be set explicitly. This script never guesses a
-//     developer database, so it cannot migrate one by accident.
-//   * Applied files are recorded in `schema_migrations`, so re-running is safe.
-//     This matters because 001/002/004 are NOT idempotent (plain CREATE TABLE /
-//     CREATE INDEX with no IF NOT EXISTS) and would otherwise error confusingly.
-//   * Each file runs in its own transaction, so a failure leaves no half-applied
-//     schema and is reported with the file that failed.
-//
-// Usage (from apps/api, with DATABASE_URL set to the target database):
-//   npx tsx scripts/migrate.ts
-//
-// Re-running is expected and safe: already-applied files are skipped.
+
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
@@ -26,10 +7,6 @@ import pg from "pg";
 
 const { Client } = pg;
 
-// scripts/ -> apps/api/ -> apps/ -> <repo root>
-// DEPLOYKIT_MIGRATIONS_DIR overrides the location; it exists so migration
-// failure paths can be exercised against fixtures without editing the real
-// migrations. Unset (the normal case) always uses the repository directory.
 const MIGRATIONS_DIR = process.env.DEPLOYKIT_MIGRATIONS_DIR
   ? path.resolve(process.env.DEPLOYKIT_MIGRATIONS_DIR)
   : path.resolve(
@@ -63,9 +40,9 @@ async function main(): Promise<number> {
     return 1;
   }
 
-  // Serialize concurrent migration processes. Without this, two runners can
-  // both read `schema_migrations`, both decide the same file is pending, and
-  // both try to apply it. The lock is session-scoped and released on exit.
+
+
+
   const MIGRATION_LOCK_ID = 4_217_311_902;
   try {
     await client.query("SELECT pg_advisory_lock($1)", [MIGRATION_LOCK_ID]);

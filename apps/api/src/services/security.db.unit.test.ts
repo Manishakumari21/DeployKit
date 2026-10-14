@@ -39,12 +39,10 @@ process.env.DEPLOYKIT_AUTH_RATE_LIMIT_MAX_ATTEMPTS = "10000";
 process.env.DEPLOYKIT_AUTH_RATE_LIMIT_EMAIL_MAX_ATTEMPTS = "1000";
 delete process.env.DEPLOYKIT_ALLOW_PUBLIC_REGISTRATION;
 
-// Set only once gateDb has confirmed a usable database connection. Teardown
-// must never issue cleanup queries against an unreachable database.
 let dbEstablished = false;
 
 test.after(async () => {
-  // Environment is restored regardless of database availability.
+
   for (const [key, value] of Object.entries(savedEnv)) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;

@@ -10,8 +10,8 @@ export interface LogConfig {
 export const DEFAULT_LOG_CONFIG: LogConfig = {
   retentionDays: 30,
   maxLinesPerDeployment: 2000,
-  maxBytesPerDeployment: 1024 * 1024, // 1 MiB per deployment
-  maxMessageBytes: 8 * 1024, // 8 KiB per line
+  maxBytesPerDeployment: 1024 * 1024,
+  maxMessageBytes: 8 * 1024,
 };
 
 const CEILINGS: LogConfig = {

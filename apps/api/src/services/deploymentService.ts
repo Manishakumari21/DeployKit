@@ -5,6 +5,7 @@ import {
 } from "../deployments/deploymentStateMachine.js";
 import { recordDeploymentEvent } from "../deployments/deploymentEvents.js";
 import { AgentError, getAgentById } from "../agents/agentService.js";
+import { isEdgeBuildEnabled } from "../workers/deploymentQueue.js";
 
 export type DeploymentTrigger =
   | "manual"
@@ -265,14 +266,15 @@ export async function createDeployment(
         deployment_id,
         status,
         attempts,
-        max_attempts
+        max_attempts,
+        job_phase
       )
-      VALUES ($1, 'queued', 0, 3)
+      VALUES ($1, 'queued', 0, 3, $2)
       ON CONFLICT (deployment_id)
       DO NOTHING
       RETURNING *
       `,
-      [deployment.id]
+      [deployment.id, targetAgentId !== null && isEdgeBuildEnabled() ? "build" : "execute"]
     );
 
     if (jobResult.rows.length > 0) {

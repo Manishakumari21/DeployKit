@@ -288,6 +288,14 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     if (row.trigger === "rollback") {
       return this.executeRollback(context, row);
     }
+
+
+
+
+    if (typeof row.target_agent_id === "string") {
+      return this.executeEdgeImageBuild(context, row);
+    }
+
     await dlog(
       row.project_id as string,
       context.deploymentId,
@@ -394,6 +402,237 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       branch: (row.branch as string) ?? "main",
       previousActiveId: previousActive?.id ?? null,
     });
+  }
+
+
+
+  private async executeEdgeImageBuild(
+    context: DeploymentExecutionContext,
+    row: Record<string, unknown>
+  ): Promise<DeploymentExecutionResult> {
+    const projectId = row.project_id as string;
+    const repositoryUrl = row.repository_url as string;
+    const branch = (row.branch as string) ?? "main";
+    const pinnedSha =
+      typeof row.commit_sha === "string" && /^[0-9a-f]{40}$/i.test(row.commit_sha)
+        ? (row.commit_sha as string).toLowerCase()
+        : null;
+    const authToken = await this.resolveGitHubToken(projectId);
+
+
+
+
+    const registry = getOptionalRegistryConfig();
+    if (!registry) {
+      await dlog(
+        projectId,
+        context.deploymentId,
+        "build",
+        "error",
+        "edge build requires a configured registry"
+      );
+      throw new PipelineError(
+        PIPELINE_ERROR_CODES.BUILD_FAILED,
+        "Edge-targeted deployments require DEPLOYKIT_REGISTRY_HOST to build a trusted image",
+        { retryable: false }
+      );
+    }
+
+    await this.ensureStatus(
+      context.deploymentId,
+      ["cloning", "queued"],
+      "building",
+      "deployment.build_started",
+      "Edge image build started"
+    );
+
+    const policy = getBuildPolicy();
+    let result: { commitSha: string; imageRepository: string; imageDigest: string };
+
+    try {
+      await this.assertNotCancelled(context.deploymentId, context.signal);
+      await dlog(
+        projectId,
+        context.deploymentId,
+        "git",
+        "info",
+        `cloning repository branch '${branch}' for edge image build`
+      );
+
+      result = await this.checkout(
+        {
+          repositoryUrl,
+          branch,
+          targetCommitSha: pinnedSha,
+          authToken,
+          signal: context.signal,
+          onLog: (e) => {
+            void safeAppendLog({
+              deploymentId: context.deploymentId,
+              projectId,
+              source: "git",
+              level: e.level,
+              message: e.message,
+            });
+          },
+        },
+        async ({ commitSha, workspace }) => {
+          await this.assertNotCancelled(context.deploymentId, context.signal);
+          await dlog(
+            projectId,
+            context.deploymentId,
+            "git",
+            "info",
+            `checkout complete at ${commitSha.slice(0, 12)}`
+          );
+          await this.runPreflight(projectId, context.deploymentId, workspace, context.signal);
+
+          const imageRepository = registryRepositoryForProject(registry, projectId);
+          const imageTag = registryTagForDeployment(context.deploymentId, commitSha);
+
+          await this.ensureStatus(
+            context.deploymentId,
+            ["building"],
+            "pushing",
+            "deployment.push_started",
+            "Edge image will be pushed to the image registry"
+          );
+
+          const buildLines: string[] = [];
+          let build;
+          try {
+            build = await this.buildExecutor.build({
+              workspace,
+              imageRepository,
+              imageTag,
+              commitSha,
+              policy,
+              push: true,
+              cacheTag: BUILD_CACHE_TAG,
+              signal: context.signal,
+              onLog: (line) => {
+                if (buildLines.length < 500) buildLines.push(line);
+              },
+            });
+          } catch (error) {
+            if (buildLines.length > 0) {
+              await appendOutput({
+                deploymentId: context.deploymentId,
+                projectId,
+                source: "build",
+                level: "info",
+                output: buildLines.join("\n"),
+              });
+            }
+            if (error instanceof BuildExecutorError) {
+              if (error.code === "BUILD_CANCELLED" || context.signal?.aborted) {
+                await dlog(projectId, context.deploymentId, "build", "warn", "edge build cancelled");
+                throw new PipelineError(
+                  PIPELINE_ERROR_CODES.DEPLOYMENT_CANCELLED,
+                  "Deployment was cancelled during edge build",
+                  { retryable: false }
+                );
+              }
+              if (error.details) {
+                await appendOutput({
+                  deploymentId: context.deploymentId,
+                  projectId,
+                  source: "build",
+                  level: "error",
+                  output: error.details.slice(0, 8000),
+                });
+              }
+              await dlog(
+                projectId,
+                context.deploymentId,
+                "build",
+                "error",
+                `edge build failed: ${error.code}`
+              );
+              throw new PipelineError(
+                error.code === "BUILD_TIMEOUT"
+                  ? PIPELINE_ERROR_CODES.BUILD_TIMEOUT
+                  : PIPELINE_ERROR_CODES.BUILD_FAILED,
+                redactForLog(error.message),
+                {
+                  retryable: error.code === "BUILD_TIMEOUT",
+                  details: error.details?.slice(0, 2000),
+                }
+              );
+            }
+            if (context.signal?.aborted) {
+              throw new PipelineError(
+                PIPELINE_ERROR_CODES.DEPLOYMENT_CANCELLED,
+                "Deployment was cancelled during edge build",
+                { retryable: false }
+              );
+            }
+            throw error;
+          }
+
+          await this.assertNotCancelled(context.deploymentId, context.signal);
+          if (buildLines.length > 0) {
+            await appendOutput({
+              deploymentId: context.deploymentId,
+              projectId,
+              source: "build",
+              level: "info",
+              output: buildLines.join("\n"),
+            });
+          }
+
+
+          const digest = (build.imageDigest ?? "").trim().toLowerCase();
+          if (!/^sha256:[0-9a-f]{64}$/.test(digest)) {
+            throw new PipelineError(
+              PIPELINE_ERROR_CODES.BUILD_FAILED,
+              "Edge build did not produce a verified immutable image digest",
+              { retryable: false }
+            );
+          }
+
+          await dlog(
+            projectId,
+            context.deploymentId,
+            "build",
+            "info",
+            `edge image pushed: ${digest.slice(0, 19)}`
+          );
+
+          return { commitSha, imageRepository, imageDigest: digest };
+        }
+      );
+    } catch (error) {
+      if (error instanceof SourceCheckoutError) {
+        if (error.code === "GIT_CANCELLED" || context.signal?.aborted) {
+          throw new PipelineError(
+            PIPELINE_ERROR_CODES.DEPLOYMENT_CANCELLED,
+            "Deployment was cancelled during source checkout",
+            { retryable: false }
+          );
+        }
+        await dlog(
+          projectId,
+          context.deploymentId,
+          "git",
+          "error",
+          `checkout failed: ${redactForLog(error.message).slice(0, 500)}`
+        );
+        throw new PipelineError(
+          PIPELINE_ERROR_CODES.CLONE_FAILED,
+          redactForLog(error.message),
+          { retryable: false }
+        );
+      }
+      throw error;
+    }
+
+    return {
+      commitSha: result.commitSha,
+      imageRepository: result.imageRepository,
+      imageDigest: result.imageDigest,
+      edgeImageOnly: true,
+    };
   }
 
   private async executeBuild(

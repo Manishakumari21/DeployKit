@@ -155,11 +155,107 @@ over TCP.
 - **No remote-agent E2E has been run.** Unit + PostgreSQL integration
   only; Docker behavior is proven by fakes plus the shared
   `DockerRuntimeManager` integration suite (needs a daemon).
-- Fresh manual edge deployments have no trusted image and fail closed;
-  central builds do not run for edge targets.
+- Fresh manual edge deployments have no trusted image and fail closed
+  **unless** the Phase 12.6B.1 build phase is enabled (see §10).
 - Edge release activation, traffic switching, and rollback are **not**
   implemented: a succeeded edge job means a healthy local container, not
   served traffic.
 - Private registry credential delivery is **not** implemented:
   unauthenticated pulls only.
 - No dashboard/rollout integration (deferred to Phase 12.6).
+- **In-flight agent cancellation is not server-authoritative.** Cancelling an
+  edge deployment clears the job lease, and the agent discovers this on its
+  next heartbeat and reports `EDGE_LEASE_STALE`. There is no dedicated
+  cancellation signal, so the agent is not told "this was cancelled" and does
+  not distinguish it from a lost lease. The agent's local `AbortSignal`
+  (SIGTERM/shutdown) is process-local and is **not** a server-authoritative
+  cancellation mechanism. Detection is bounded by the heartbeat interval
+  (default 10 s).
+
+### Edge job completion and deployment status
+
+When an agent reports a successful edge job, the control plane records
+successful **local execution** and writes a `deployment.agent_completed`
+event. That event — not the deployment status — is the authoritative record
+of a completed edge deployment.
+
+- The deployment status is intentionally **not** transitioned to `active`
+  merely because the local container reported healthy. `active` is reserved
+  for deployments that have been activated and are serving traffic.
+- Release activation, traffic switching, and rollback remain separate,
+  unimplemented capabilities (see the limitations above).
+- Consequently the deployment row is left at a non-terminal status
+  (typically `cloning`) once the job succeeds. That status does **not** by
+  itself communicate completion, and can be confusing to read.
+- This does not block further work: the per-project concurrency guard only
+  matches deployments whose job is still `queued` or `running`, so a new
+  deployment can be created as soon as the edge job has succeeded.
+
+A truthful terminal status distinct from `active` would improve this
+reporting, but that is new status modelling and is deliberately left to a
+separately approved design.
+
+## 10. Edge image build (Phase 12.6B.1, opt-in)
+
+Edge-targeted deployments are excluded from the central deployment worker
+(`target_agent_id IS NULL`), so they had no path to a trusted image and always
+failed closed with `EDGE_IMAGE_CONTRACT_MISSING`. The build phase closes that
+gap **without** adding activation.
+
+Enabled with `DEPLOYKIT_EDGE_BUILD_ENABLED=true` (default `false`).
+
+| Stage | Owner | Effect |
+| --- | --- | --- |
+| Build claim | central worker | Job moves to `job_phase='build'`; `build_attempts` incremented; a `lease_token` is minted. |
+| Build | central worker | Checkout → preflight → Buildx `--push` → verified `sha256:` digest read from the build metadata. |
+| Hand-off | central worker | `completeEdgeBuildPhase` atomically persists the digest, flips the job to `job_phase='execute'` and requeues it. **No release row is created and nothing is deployed.** |
+| Execution | edge agent | The agent may only claim `job_phase='execute'` jobs that have a digest. |
+
+Guarantees:
+
+- **Registry required.** Without `DEPLOYKIT_REGISTRY_HOST` the build fails
+  closed before checkout; no default registry, image or credential is invented.
+- **Immutable and trusted.** The digest must match `sha256:[0-9a-f]{64}` and the
+  repository must be registry-qualified. Mutable tags are rejected.
+- **No race.** A build claim requires `job_phase='build'`; an agent claim
+  requires `job_phase='execute'`. Neither can take work the other holds, and
+  anti-stealing of an edge job from the central worker still comes from the
+  existing `target_agent_id IS NULL` claim filter. A job with no trusted image
+  is still claimed by the agent (with `image: null`) and fails closed in the
+  executor — see §9.
+- **Stale owners cannot mutate.** Build completion and failure are fenced by
+  `lease_token` as well as `locked_by`, so a worker that lost its lease cannot
+  hand off or fail the job afterwards.
+- **Separate retry budget.** Build retries use `build_attempts` /
+  `max_build_attempts`. The execution budget (`attempts` / `max_attempts`) and
+  the `deployment_attempts` audit table are never touched by the build path.
+- **First write wins.** If a digest was already persisted, a later build does
+  not overwrite it; it still hands the job to the execution phase.
+
+Rollout order: apply `018_edge_build_phase.sql` **before** deploying code that
+references `job_phase`; the deployment worker then runs with the flag off, and
+the flag is enabled per environment afterwards.
+
+### Disabling the flag after it has been enabled
+
+Turning `DEPLOYKIT_EDGE_BUILD_ENABLED` back off does **not** strand jobs that
+were created while it was on. On each worker poll the central worker demotes
+**queued** build-phase jobs to the execute phase and records a
+`deployment.edge_build_demoted` event for each one:
+
+- Only `queued` jobs are demoted. A `running` build is left alone, so an
+  in-flight build finishes or fails on its own terms rather than having its
+  lease stolen.
+- Demotion changes only `job_phase` (plus scheduling timestamps). Lease fields,
+  cancellation state and the deployment's own status are untouched, and no
+  image metadata is invented.
+- The demoted job then fails closed through the normal image contract: the
+  agent claims it, finds no trusted digest, and rejects execution with
+  `EDGE_IMAGE_CONTRACT_MISSING`. The project is not left blocked.
+- This is idempotent — a job already demoted is not demoted or re-evented
+  again.
+
+Pre-existing `deployment.edge_build_demoted` events are therefore the record of
+a build that was abandoned because the feature was switched off, not a build
+failure. Use the build and execution retry budgets (not this event) to judge
+build reliability.

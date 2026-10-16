@@ -31,18 +31,13 @@ export const DB_GATED_SUITES: readonly string[] = [
   "workers/deploymentPreflight.db.unit.test.ts",
   "workers/deploymentQueue.db.unit.test.ts",
   "workers/deploymentRetry.db.unit.test.ts",
+  "workers/edgeBuild.db.unit.test.ts",
   "workers/pipelineZeroDowntime.db.unit.test.ts",
   "workers/workerCrashRecovery.db.unit.test.ts",
 ];
 
 export type GateScope = "unit" | "integration" | "all";
 
-/**
- * The gated registry intentionally spans both unit and integration suites,
- * but a given test run only discovers one class of files. Verifying the full
- * registry against a unit-only run would always report the integration suite
- * as missing, so the verifier must scope itself to what the run discovers.
- */
 export function gatedSuitesForScope(
   scope: GateScope = "all",
   suites: readonly string[] = DB_GATED_SUITES
@@ -75,7 +70,7 @@ export function markDbSuite(suite: string, executed: boolean): void {
       JSON.stringify({ suite, executed, at: new Date().toISOString() })
     );
   } catch {
-    // Marker recording must never break the test run itself.
+
   }
 }
 

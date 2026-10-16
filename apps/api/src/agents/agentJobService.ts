@@ -385,6 +385,15 @@ async function claimAgentJobAttempt(
       JOIN deployments d ON d.id = j.deployment_id
       WHERE d.target_agent_id = $1
         AND d.project_id = $2
+        -- Phase 12.6B.1: an agent may only claim work that has been handed
+        -- over to the execution phase. completeEdgeBuildPhase writes the
+        -- verified digest and flips job_phase in one transaction, so this
+        -- predicate is what prevents the agent racing the build worker.
+        --
+        -- A job with no trusted image is still claimed (image = null) and
+        -- fails closed in the executor with EDGE_IMAGE_CONTRACT_MISSING; that
+        -- contract is deliberate and must not be narrowed here.
+        AND j.job_phase = 'execute'
         AND (
           (
             j.status = 'queued'

@@ -14,6 +14,10 @@ export interface DeploymentExecutionResult {
   duplicateConverged?: {
     adoptedReleaseId: string;
   };
+
+
+
+  edgeImageOnly?: true;
 }
 
 export interface DeploymentExecutor {

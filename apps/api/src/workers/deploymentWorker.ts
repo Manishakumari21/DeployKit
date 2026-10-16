@@ -6,6 +6,13 @@ import {
   failJob,
   failJobTerminal,
   recoverExpiredJobs,
+  claimNextEdgeBuildJob,
+  completeEdgeBuildPhase,
+  demoteEdgeBuildJobsWhenDisabled,
+  extendEdgeBuildLease,
+  failEdgeBuildPhase,
+  isEdgeBuildEnabled,
+  EdgeBuildError,
 } from "./deploymentQueue.js";
 import pool from "../db/database.js";
 import type { DeploymentExecutor } from "./deploymentExecutor.js";
@@ -29,6 +36,7 @@ const LEASE_RENEWAL_MS = Math.max(
   1_000,
   Math.floor(LEASE_MS / 3)
 );
+
 
 const CERT_POLL_MS = Math.max(
   10_000,
@@ -70,6 +78,26 @@ async function runCertSweep(): Promise<void> {
 
 let shuttingDown = false;
 let activeAbort: AbortController | null = null;
+
+export const EDGE_BUILD_ABORT_REASONS = {
+  deploymentCancelled: "deployment_cancelled",
+  workerShutdown: "worker_shutdown",
+  leaseLost: "lease_lost",
+  leaseRenewalUncertain: "lease_renewal_uncertain",
+} as const;
+
+type EdgeBuildAbortReason =
+  (typeof EDGE_BUILD_ABORT_REASONS)[keyof typeof EDGE_BUILD_ABORT_REASONS];
+
+const MAX_CONSECUTIVE_RENEWAL_FAILURES = 3;
+
+async function settleQuietly(op: Promise<void> | null): Promise<void> {
+  if (op === null) return;
+  try {
+    await op;
+  } catch {
+  }
+}
 
 const executor: DeploymentExecutor = new RealDeploymentExecutor();
 
@@ -289,6 +317,245 @@ async function processJob() {
   }
 }
 
+export interface EdgeBuildJobDependencies {
+  executor?: DeploymentExecutor;
+  extendLease?: typeof extendEdgeBuildLease;
+  claim?: typeof claimNextEdgeBuildJob;
+  queryDeploymentStatus?: (deploymentId: string) => Promise<string | undefined>;
+}
+
+export async function processEdgeBuildJob(
+  deps: EdgeBuildJobDependencies = {}
+) {
+  if (!isEdgeBuildEnabled()) {
+    return false;
+  }
+
+  const buildExecutor = deps.executor ?? executor;
+  const extendLease = deps.extendLease ?? extendEdgeBuildLease;
+  const claim = deps.claim ?? claimNextEdgeBuildJob;
+  const readDeploymentStatus =
+    deps.queryDeploymentStatus ??
+    (async (deploymentId: string) => {
+      const current = await pool.query(
+        `SELECT status FROM deployments WHERE id = $1`,
+        [deploymentId]
+      );
+      return current.rows[0]?.status as string | undefined;
+    });
+
+  const job = await claim(WORKER_ID, LEASE_MS);
+  if (!job) {
+    return false;
+  }
+
+  log("info", "edge_build.job_claimed", {
+    jobId: job.id,
+    deploymentId: job.deploymentId,
+    buildAttempt: job.buildAttempt,
+    maxBuildAttempts: job.maxBuildAttempts,
+  });
+
+  let leaseTimer: NodeJS.Timeout | undefined;
+  let cancelWatcher: NodeJS.Timeout | undefined;
+  const abort = new AbortController();
+  activeAbort = abort;
+
+  let abortReason: EdgeBuildAbortReason | null = null;
+  const requestAbort = (reason: EdgeBuildAbortReason) => {
+    if (abortReason !== null) {
+      return;
+    }
+    abortReason = reason;
+    log("info", "edge_build.abort_requested", {
+      jobId: job.id,
+      deploymentId: job.deploymentId,
+      reason,
+    });
+    abort.abort();
+  };
+
+  let renewalOp: Promise<void> | null = null;
+  let watcherOp: Promise<void> | null = null;
+  let consecutiveRenewalFailures = 0;
+
+  try {
+    leaseTimer = setInterval(() => {
+      if (renewalOp !== null) {
+        return;
+      }
+      renewalOp = (async () => {
+        try {
+          const renewed = await extendLease(
+            job.id,
+            WORKER_ID,
+            job.leaseToken,
+            LEASE_MS
+          );
+          if (renewed) {
+            consecutiveRenewalFailures = 0;
+            return;
+          }
+          log("error", "edge_build.lease_lost", {
+            jobId: job.id,
+            deploymentId: job.deploymentId,
+          });
+          requestAbort(EDGE_BUILD_ABORT_REASONS.leaseLost);
+        } catch (error) {
+          consecutiveRenewalFailures += 1;
+          log("error", "edge_build.lease_renewal_failed", {
+            jobId: job.id,
+            deploymentId: job.deploymentId,
+            consecutiveFailures: consecutiveRenewalFailures,
+            error: redactForLog(
+              error instanceof Error ? error.message : "Unknown error"
+            ).slice(0, 200),
+          });
+          if (consecutiveRenewalFailures >= MAX_CONSECUTIVE_RENEWAL_FAILURES) {
+            log("error", "edge_build.lease_renewal_uncertain", {
+              jobId: job.id,
+              deploymentId: job.deploymentId,
+              consecutiveFailures: consecutiveRenewalFailures,
+            });
+            requestAbort(EDGE_BUILD_ABORT_REASONS.leaseRenewalUncertain);
+          }
+        }
+      })().finally(() => {
+        renewalOp = null;
+      });
+    }, LEASE_RENEWAL_MS);
+
+    cancelWatcher = setInterval(() => {
+      if (watcherOp !== null) {
+        return;
+      }
+      watcherOp = (async () => {
+        try {
+          const currentStatus = await readDeploymentStatus(job.deploymentId);
+          if (currentStatus === "cancelled") {
+            log("info", "edge_build.cancel_requested", {
+              jobId: job.id,
+              deploymentId: job.deploymentId,
+            });
+            requestAbort(EDGE_BUILD_ABORT_REASONS.deploymentCancelled);
+          }
+        } catch {
+        }
+      })().finally(() => {
+        watcherOp = null;
+      });
+    }, 2000);
+
+    const result = await buildExecutor.execute({
+      deploymentId: job.deploymentId,
+      jobId: job.id,
+      attempt: job.buildAttempt,
+      maxAttempts: job.maxBuildAttempts,
+      signal: abort.signal,
+    });
+
+    if (!result.edgeImageOnly) {
+      throw new EdgeBuildError(
+        "EDGE_BUILD_UNEXPECTED_RESULT",
+        "Edge build produced a non-build-only result; refusing to hand off"
+      );
+    }
+
+    const outcome = await completeEdgeBuildPhase(
+      job.id,
+      job.deploymentId,
+      WORKER_ID,
+      job.leaseToken,
+      {
+        imageRepository: result.imageRepository,
+        imageDigest: result.imageDigest,
+        commitSha: result.commitSha,
+      }
+    );
+
+    log("info", "edge_build.job_handed_off", {
+      jobId: job.id,
+      deploymentId: job.deploymentId,
+      outcome,
+      imageDigest: result.imageDigest,
+    });
+    return true;
+  } catch (error) {
+    if (
+      error instanceof EdgeBuildError &&
+      error.code === "BUILD_LEASE_NOT_OWNED"
+    ) {
+      requestAbort(EDGE_BUILD_ABORT_REASONS.leaseLost);
+    }
+
+    const reason: EdgeBuildAbortReason | null =
+      abortReason ?? (shuttingDown ? EDGE_BUILD_ABORT_REASONS.workerShutdown : null);
+
+    if (reason !== null) {
+      log("info", "edge_build.aborted", {
+        jobId: job.id,
+        deploymentId: job.deploymentId,
+        reason,
+      });
+      return true;
+    }
+
+    const cancelled =
+      error instanceof PipelineError &&
+      error.code === "DEPLOYMENT_CANCELLED";
+
+    if (cancelled) {
+      log("info", "edge_build.cancelled", {
+        jobId: job.id,
+        deploymentId: job.deploymentId,
+      });
+      return true;
+    }
+
+    const code =
+      error instanceof EdgeBuildError
+        ? error.code
+        : error instanceof PipelineError
+          ? error.code
+          : "EDGE_BUILD_FAILED";
+    const message =
+      error instanceof Error ? error.message : "Unknown edge build error";
+
+    try {
+      const outcome = await failEdgeBuildPhase(
+        job.id,
+        job.deploymentId,
+        WORKER_ID,
+        job.leaseToken,
+        redactForLog(message).slice(0, 2000),
+        code
+      );
+      log("info", "edge_build.job_failed", {
+        jobId: job.id,
+        deploymentId: job.deploymentId,
+        outcome,
+        code,
+      });
+    } catch (failError) {
+      log("error", "edge_build.fail_report_failed", {
+        jobId: job.id,
+        deploymentId: job.deploymentId,
+        error:
+          failError instanceof Error ? failError.message : "Unknown error",
+      });
+    }
+    return true;
+  } finally {
+    if (leaseTimer) clearInterval(leaseTimer);
+    if (cancelWatcher) clearInterval(cancelWatcher);
+    await settleQuietly(renewalOp);
+    await settleQuietly(watcherOp);
+    if (activeAbort === abort) {
+      activeAbort = null;
+    }
+  }
+}
+
 async function run() {
   if (process.env.DEPLOYMENT_WORKER_ENABLED !== "true") {
     log(
@@ -343,7 +610,19 @@ async function run() {
 
       const processed = await processJob();
 
-      if (!processed) {
+
+
+      const builtEdge = isEdgeBuildEnabled() ? await processEdgeBuildJob() : false;
+
+      const demoted = await demoteEdgeBuildJobsWhenDisabled();
+      if (demoted.length > 0) {
+        log("info", "edge_build.jobs_demoted", {
+          count: demoted.length,
+          jobIds: demoted.slice(0, 50),
+        });
+      }
+
+      if (!processed && !builtEdge) {
         await runCertSweep();
         await sleep(POLL_INTERVAL_MS);
       }
@@ -379,16 +658,18 @@ function requestShutdown(signal: string) {
   }
 }
 
-process.on("SIGTERM", () => requestShutdown("SIGTERM"));
-process.on("SIGINT", () => requestShutdown("SIGINT"));
+if (require.main === module) {
+  process.on("SIGTERM", () => requestShutdown("SIGTERM"));
+  process.on("SIGINT", () => requestShutdown("SIGINT"));
 
-run().catch((error) => {
-  log("error", "worker.fatal_error", {
-    error:
-      error instanceof Error
-        ? error.stack ?? error.message
-        : "Unknown worker error",
+  run().catch((error) => {
+    log("error", "worker.fatal_error", {
+      error:
+        error instanceof Error
+          ? error.stack ?? error.message
+          : "Unknown worker error",
+    });
+
+    process.exitCode = 1;
   });
-
-  process.exitCode = 1;
-});
+}

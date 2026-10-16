@@ -91,14 +91,21 @@ export function sha256Hex(value: string): string {
 }
 
 export function desiredBuildkitdToml(registry: RegistryConfig | null): string {
-  if (!registry || !registry.insecure) {
+  if (!registry) {
     return BASE_BUILDKITD_TOML;
   }
   const host = registry.registryHost;
   if (/["'\r\n]/.test(host)) {
     throw new BootstrapError("REGISTRY_CONFIG_INVALID", "Registry host cannot be rendered into BuildKit config");
   }
-  return `${BASE_BUILDKITD_TOML}\n[registry."${host}"]\n  http = true\n`;
+  if (registry.insecure) {
+    return `${BASE_BUILDKITD_TOML}\n[registry."${host}"]\n  http = true\n`;
+  }
+  if (host.split(":")[0].toLowerCase() === "deploykit-registry-tls") {
+    const caPath = "/certs/deploykit-registry-tls/ca.crt";
+    return `${BASE_BUILDKITD_TOML}\n[registry."${host}"]\n  ca = ["${caPath}"]\n`;
+  }
+  return BASE_BUILDKITD_TOML;
 }
 
 export function buildkitdTomlPath(configDir: string): string {
@@ -154,21 +161,103 @@ function parseRegistryHost(host: string): { hostname: string; port: number } {
   return { hostname: trimmed, port: 5000 };
 }
 
+const BUILDER_NETWORK_NAME_PATTERN = /^[a-z0-9][a-z0-9_.-]{0,62}$/;
+
+export function parseBuilderNetworks(raw: string): string[] {
+  const value = raw.trim();
+  if (value === "") {
+    throw new BootstrapError(
+      "BUILDER_NETWORK_CONFIG_INVALID",
+      "DEPLOYKIT_BUILDER_NETWORKS is set but empty; provide a comma-separated list of Docker network names"
+    );
+  }
+
+  const entries = value.split(",");
+  const networks: string[] = [];
+  const seen = new Set<string>();
+
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index].trim().toLowerCase();
+    if (entry === "") {
+      throw new BootstrapError(
+        "BUILDER_NETWORK_CONFIG_INVALID",
+        `DEPLOYKIT_BUILDER_NETWORKS entry ${index + 1} is empty; entries must be non-empty Docker network names`
+      );
+    }
+    if (!BUILDER_NETWORK_NAME_PATTERN.test(entry)) {
+      throw new BootstrapError(
+        "BUILDER_NETWORK_CONFIG_INVALID",
+        `DEPLOYKIT_BUILDER_NETWORKS entry ${index + 1} is not a valid Docker network name ` +
+          `(allowed: lowercase letters, digits, dot, dash, underscore; max 63 characters)`
+      );
+    }
+    if (seen.has(entry)) {
+      throw new BootstrapError(
+        "BUILDER_NETWORK_CONFIG_INVALID",
+        `DEPLOYKIT_BUILDER_NETWORKS entry ${index + 1} duplicates an earlier network name`
+      );
+    }
+    seen.add(entry);
+    networks.push(entry);
+  }
+
+  return networks;
+}
+
+function explicitBuilderNetworks(): string[] | null {
+  const raw = process.env.DEPLOYKIT_BUILDER_NETWORKS;
+  if (raw === undefined) return null;
+  return parseBuilderNetworks(raw);
+}
+
+async function assertDockerNetworksExist(
+  binary: string,
+  networks: string[],
+  env: NodeJS.ProcessEnv
+): Promise<void> {
+  for (const network of networks) {
+    const result = await runCommand(binary, ["network", "inspect", network], 15_000, env);
+    if (result.code !== 0) {
+      throw new BootstrapError(
+        "BUILDER_NETWORK_UNAVAILABLE",
+        `Docker network '${network}' from DEPLOYKIT_BUILDER_NETWORKS does not exist. ` +
+          `Create it first (for example 'docker network create ${network}') or remove it from the configuration. ` +
+          `Refusing to continue with a different network set.`
+      );
+    }
+  }
+}
+
 async function workerContainerNetworks(
   binary: string,
   env: NodeJS.ProcessEnv
 ): Promise<{ networks: string[]; discovered: boolean }> {
-  const fallback = [runtimeNetworkName()];
+  let discovered = false;
+  let names: string[] = [];
+
   try {
     const result = await runCommand(binary, ["inspect", os.hostname()], 15_000, env);
-    if (result.code !== 0) return { networks: fallback, discovered: false };
-    const parsed = JSON.parse(result.stdout) as Array<{ NetworkSettings?: { Networks?: Record<string, unknown> } }>;
-    const names = Object.keys(parsed[0]?.NetworkSettings?.Networks ?? {});
-    if (!names.length) return { networks: fallback, discovered: false };
-    return { networks: names, discovered: true };
+    if (result.code === 0) {
+      const parsed = JSON.parse(result.stdout) as Array<{ NetworkSettings?: { Networks?: Record<string, unknown> } }>;
+      names = Object.keys(parsed[0]?.NetworkSettings?.Networks ?? {});
+      discovered = names.length > 0;
+    }
   } catch {
-    return { networks: fallback, discovered: false };
+    discovered = false;
+    names = [];
   }
+
+  if (discovered) {
+    return { networks: names, discovered: true };
+  }
+
+  const explicit = explicitBuilderNetworks();
+  if (explicit === null) {
+    return { networks: [runtimeNetworkName()], discovered: false };
+  }
+
+  await assertDockerNetworksExist(binary, explicit, env);
+  return { networks: explicit, discovered: false };
 }
 
 async function builderContainerName(
@@ -189,6 +278,22 @@ async function builderContainerName(
   } catch {
     return null;
   }
+}
+
+export type BuilderEnsureAction = "create" | "reuse" | "recreate" | "conflict";
+
+export interface BuilderEnsureState {
+  builderRegistered: boolean;
+  builderContainerExists: boolean;
+  markerSha: string | null;
+  desiredSha: string;
+}
+
+export function resolveBuilderEnsureAction(state: BuilderEnsureState): BuilderEnsureAction {
+  if (!state.builderRegistered) {
+    return state.builderContainerExists ? "conflict" : "create";
+  }
+  return state.markerSha === state.desiredSha ? "reuse" : "recreate";
 }
 
 async function containerNetworks(
@@ -304,29 +409,49 @@ export async function bootstrapWorker(): Promise<BootstrapResult> {
     await writeFile(markerPath, `${desiredSha}\n`, "utf8");
   };
   const inspectExisting = await runCommand(binary, ["buildx", "inspect", builder], 30_000, env);
-  if (inspectExisting.code !== 0) {
+  const builderRegistered = inspectExisting.code === 0;
+  const builderContainer = await builderContainerName(binary, builder, env);
+
+  let markerSha: string | null = null;
+  try {
+    markerSha = (await readFile(markerPath, "utf8")).trim();
+  } catch {
+    markerSha = null;
+  }
+
+  const action = resolveBuilderEnsureAction({
+    builderRegistered,
+    builderContainerExists: builderContainer !== null,
+    markerSha,
+    desiredSha,
+  });
+
+  if (action === "conflict" && builderContainer !== null) {
+    lifecycleEvent("BOOTSTRAPPING", { step: "builder_conflict", builder, container: builderContainer });
+    throw new BootstrapError(
+      "BUILDER_CONTAINER_UNMANAGED",
+      `BuildKit container '${builderContainer}' already exists but builder '${builder}' is not registered in buildx. ` +
+        `Refusing to create or replace it. Register the existing container with ` +
+        `'docker buildx create --name ${builder} docker-container://${builderContainer} --bootstrap', ` +
+        `or set DEPLOYKIT_BUILDER_NAME to an unused builder name.`
+    );
+  }
+
+  if (action === "create") {
     lifecycleEvent("BOOTSTRAPPING", { step: "builder_create", builder, reason: "missing" });
     await createBuilder();
+  } else if (action === "recreate") {
+    lifecycleEvent("BOOTSTRAPPING", { step: "builder_recreate", builder, reason: "buildkitd config changed" });
+    const removed = await runCommand(binary, ["buildx", "rm", builder], 60_000, env);
+    if (removed.code !== 0) {
+      throw new BootstrapError(
+        "BUILDER_RECREATE_FAILED",
+        `Failed to remove stale builder ${builder}: ${removed.stderr.slice(0, 500) || `exit ${removed.code}`}`
+      );
+    }
+    await createBuilder();
   } else {
-    let marker: string | null = null;
-    try {
-      marker = (await readFile(markerPath, "utf8")).trim();
-    } catch {
-      marker = null;
-    }
-    if (marker !== desiredSha) {
-      lifecycleEvent("BOOTSTRAPPING", { step: "builder_recreate", builder, reason: "buildkitd config changed" });
-      const removed = await runCommand(binary, ["buildx", "rm", builder], 60_000, env);
-      if (removed.code !== 0) {
-        throw new BootstrapError(
-          "BUILDER_RECREATE_FAILED",
-          `Failed to remove stale builder ${builder}: ${removed.stderr.slice(0, 500) || `exit ${removed.code}`}`
-        );
-      }
-      await createBuilder();
-    } else {
-      lifecycleEvent("BOOTSTRAPPING", { step: "builder_reused", builder });
-    }
+    lifecycleEvent("BOOTSTRAPPING", { step: "builder_reused", builder });
   }
 
   lifecycleEvent("BOOTSTRAPPING", { step: "builder_bootstrap", builder });

@@ -237,6 +237,7 @@ services:
       - deploykit-certs:/etc/nginx/certs:ro
 
     networks:
+      - default
       - runtime
 
 networks:

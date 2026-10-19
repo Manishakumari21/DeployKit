@@ -5,11 +5,18 @@ import {
   BootstrapError,
   buildkitdMarkerPath,
   buildkitdTomlPath,
+  buildxRegistryCaConfigPath,
+  buildxRegistryCaContainerPath,
+  buildxRegistryCaSourcePath,
   desiredBuildkitdToml,
   parseBuilderNetworks,
+  provisionBuildxRegistryCa,
   resolveBuilderEnsureAction,
   sha256Hex,
 } from "./workerBootstrap.js";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 test("bootstrap fails closed when Docker CLI is missing", async () => {
   process.env.DEPLOYKIT_DOCKER_BINARY = "definitely-not-a-docker-binary-xyz";

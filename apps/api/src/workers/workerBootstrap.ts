@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import net from "node:net";
 import os from "node:os";
@@ -102,10 +102,76 @@ export function desiredBuildkitdToml(registry: RegistryConfig | null): string {
     return `${BASE_BUILDKITD_TOML}\n[registry."${host}"]\n  http = true\n`;
   }
   if (host.split(":")[0].toLowerCase() === "deploykit-registry-tls") {
-    const caPath = "/certs/deploykit-registry-tls/ca.crt";
+    const caPath = buildxRegistryCaSourcePath(host);
     return `${BASE_BUILDKITD_TOML}\n[registry."${host}"]\n  ca = ["${caPath}"]\n`;
   }
   return BASE_BUILDKITD_TOML;
+}
+
+export function registryHostname(registryHost: string): string {
+  const trimmed = registryHost.trim();
+  const lastColon = trimmed.lastIndexOf(":");
+  if (lastColon > 0 && /^[0-9]+$/.test(trimmed.slice(lastColon + 1))) {
+    return trimmed.slice(0, lastColon);
+  }
+  return trimmed;
+}
+
+export function buildxRegistryCaDirectoryName(registryHost: string): string {
+  const trimmed = registryHost.trim();
+  if (!trimmed || /["'\r\n]/.test(trimmed)) {
+    throw new BootstrapError("REGISTRY_CONFIG_INVALID", "Invalid registry host for BuildKit CA provisioning");
+  }
+  return trimmed;
+}
+
+export function buildxRegistryCaSourcePath(registryHost: string): string {
+  return path.posix.join("/certs", registryHostname(registryHost), "ca.crt");
+}
+
+export function buildxRegistryCaContainerPath(registryHost: string): string {
+  return path.posix.join("/etc/buildkit/certs", buildxRegistryCaDirectoryName(registryHost).replace(/[^a-zA-Z0-9.-]+/g, "_"), "ca.crt");
+}
+
+export function buildxRegistryCaConfigPath(configDir: string, registryHost: string): string {
+  return path.join(configDir, "certs", buildxRegistryCaDirectoryName(registryHost), "ca.crt");
+}
+
+export interface BuildxRegistryCaProvisionResult {
+  containerCaPath: string;
+  caSha256: string;
+}
+
+export async function provisionBuildxRegistryCa(
+  configDir: string,
+  registryHost: string,
+  sourceCaPath: string = buildxRegistryCaSourcePath(registryHost)
+): Promise<BuildxRegistryCaProvisionResult> {
+  const containerCaPath = buildxRegistryCaContainerPath(registryHost);
+  const targetCaPath = buildxRegistryCaConfigPath(configDir, registryHost);
+  let caPem: string;
+  try {
+    caPem = await readFile(sourceCaPath, "utf8");
+  } catch (error) {
+    throw new BootstrapError(
+      "REGISTRY_CA_UNAVAILABLE",
+      `Registry CA certificate is unavailable: ${error instanceof Error ? error.message.slice(0, 300) : String(error)}`
+    );
+  }
+  if (
+    !caPem.includes("-----BEGIN CERTIFICATE-----") ||
+    !caPem.includes("-----END CERTIFICATE-----") ||
+    caPem.includes("PRIVATE KEY")
+  ) {
+    throw new BootstrapError("REGISTRY_CA_INVALID", "Registry CA certificate is missing or malformed");
+  }
+  await mkdir(path.dirname(targetCaPath), { recursive: true, mode: 0o700 });
+  await writeFile(targetCaPath, caPem, { encoding: "utf8", mode: 0o644 });
+  await chmod(targetCaPath, 0o644);
+  return {
+    containerCaPath,
+    caSha256: sha256Hex(caPem),
+  };
 }
 
 export function buildkitdTomlPath(configDir: string): string {
@@ -360,8 +426,13 @@ export async function bootstrapWorker(): Promise<BootstrapResult> {
   const env = bootstrapEnv(configDir);
 
   const registry = loadRegistryConfig();
+  let registryCaSha = "";
+  if (registry && !registry.insecure && registry.registryHost.split(":")[0].toLowerCase() === "deploykit-registry-tls") {
+    const provisioned = await provisionBuildxRegistryCa(configDir, registry.registryHost);
+    registryCaSha = provisioned.caSha256;
+  }
   const desiredToml = desiredBuildkitdToml(registry);
-  const desiredSha = sha256Hex(desiredToml);
+  const desiredSha = sha256Hex(`${desiredToml}\n${registryCaSha}`);
   const tomlPath = buildkitdTomlPath(configDir);
   const markerPath = buildkitdMarkerPath(configDir);
 

@@ -101,7 +101,7 @@ services:
       DEPLOYKIT_GATEWAY_CONTAINER: dk-gateway
       DEPLOYKIT_GATEWAY_ROUTES_DIR: /gateway-routes
       DEPLOYKIT_GATEWAY_HOST: dk-gateway
-      DEPLOYKIT_REGISTRY_HOST: ${DEPLOYKIT_REGISTRY_HOST:-}
+      DEPLOYKIT_REGISTRY_HOST: ${DEPLOYKIT_REGISTRY_HOST:-deploykit-registry-tls:443}
       DEPLOYKIT_REGISTRY_NAMESPACE: ${DEPLOYKIT_REGISTRY_NAMESPACE:-deploykit}
       DEPLOYKIT_REGISTRY_INSECURE: ${DEPLOYKIT_REGISTRY_INSECURE:-false}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
@@ -237,8 +237,10 @@ services:
       - deploykit-certs:/etc/nginx/certs:ro
 
     networks:
-      - default
-      - runtime
+      default:
+        aliases:
+          - deploykit-registry-tls
+      runtime: {}
 
 networks:
   default:

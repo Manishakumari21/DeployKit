@@ -3,6 +3,7 @@
 import crypto from "node:crypto";
 import pool from "../db/database.js";
 import { getSessionLifetimeMs } from "../config/sessionConfig.js";
+import { hashSecret } from "../security/tokenHasher.js";
 
 export const SESSION_TOKEN_BYTES = 32;
 
@@ -31,7 +32,7 @@ export interface ResolvedSession {
 }
 
 export function hashSessionToken(token: string): string {
-  return crypto.createHash("sha256").update(token, "utf8").digest("hex");
+  return hashSecret(token);
 }
 
 function isDbCode(error: unknown, code: string): boolean {

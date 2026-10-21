@@ -1207,49 +1207,58 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     const needsMarking =
       storedStatus !== "healthy" && storedStatus !== "active";
 
-    if (shouldPullImage(input.imageRepository)) {
-      await dlog(input.projectId, input.deploymentId, "registry", "info", `pulling ${input.imageRepository}@${input.imageDigest.slice(0, 19)}`);
-      try {
-        await this.runtimeManager.pull(
-          digestReference(input.imageRepository, input.imageDigest),
-          context.signal
-        );
-        await dlog(input.projectId, input.deploymentId, "registry", "info", "image pull complete");
-      } catch (error) {
-        if (
-          (error instanceof RuntimeManagerError && error.code === "RUNTIME_CANCELLED") ||
-          context.signal?.aborted
-        ) {
+    try {
+      if (shouldPullImage(input.imageRepository)) {
+        await dlog(input.projectId, input.deploymentId, "registry", "info", `pulling ${input.imageRepository}@${input.imageDigest.slice(0, 19)}`);
+        try {
+          await this.runtimeManager.pull(
+            digestReference(input.imageRepository, input.imageDigest),
+            context.signal
+          );
+          await dlog(input.projectId, input.deploymentId, "registry", "info", "image pull complete");
+        } catch (error) {
+          if (
+            (error instanceof RuntimeManagerError && error.code === "RUNTIME_CANCELLED") ||
+            context.signal?.aborted
+          ) {
+            throw new PipelineError(
+              PIPELINE_ERROR_CODES.DEPLOYMENT_CANCELLED,
+              "Deployment was cancelled during image pull",
+              { retryable: false }
+            );
+          }
+          const retryable =
+            error instanceof RuntimeManagerError &&
+            (error.code === "DOCKER_TIMEOUT" ||
+              /timeout|refused|unavailable/i.test(
+                error instanceof Error ? error.message : ""
+              ));
+          await dlog(
+            input.projectId,
+            input.deploymentId,
+            "registry",
+            "error",
+            `image pull failed: ${redactForLog(
+              error instanceof Error ? error.message : "unknown error"
+            ).slice(0, 300)}`
+          );
           throw new PipelineError(
-            PIPELINE_ERROR_CODES.DEPLOYMENT_CANCELLED,
-            "Deployment was cancelled during image pull",
-            { retryable: false }
+            PIPELINE_ERROR_CODES.RUNTIME_FAILED,
+            error instanceof Error
+              ? `Image pull failed: ${redactForLog(error.message).slice(0, 300)}`
+              : "Image pull failed",
+            { retryable }
           );
         }
-        const retryable =
-          error instanceof RuntimeManagerError &&
-          (error.code === "DOCKER_TIMEOUT" ||
-            /timeout|refused|unavailable/i.test(
-              error instanceof Error ? error.message : ""
-            ));
-        throw new PipelineError(
-          PIPELINE_ERROR_CODES.RUNTIME_FAILED,
-          error instanceof Error
-            ? `Image pull failed: ${redactForLog(error.message).slice(0, 300)}`
-            : "Image pull failed",
-          { retryable }
-        );
       }
-    }
 
-    await this.assertNotCancelled(input.deploymentId, context.signal);
+      await this.assertNotCancelled(input.deploymentId, context.signal);
 
-    const containerPort = await discoverExposedPort(imageRef);
-    await dlog(input.projectId, input.deploymentId, "runtime", "info", `starting container ${containerName} on port ${containerPort}`);
+      const containerPort = await discoverExposedPort(imageRef);
+      await dlog(input.projectId, input.deploymentId, "runtime", "info", `starting container ${containerName} on port ${containerPort}`);
 
-    await this.runtimeManager.remove(containerName).catch(() => undefined);
+      await this.runtimeManager.remove(containerName).catch(() => undefined);
 
-    try {
       const spec = {
         containerName,
         imageReference: imageRef,

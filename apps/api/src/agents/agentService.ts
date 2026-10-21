@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import pool from "../db/database.js";
 import { withTransaction } from "../db/transaction.js";
+import { hashSecret } from "../security/tokenHasher.js";
 
 export const AGENT_TOKEN_BYTES = 32;
 export const MAX_AGENT_NAME_LENGTH = 100;
@@ -64,7 +65,7 @@ const AGENT_STATUSES: readonly string[] = [
 ];
 
 export function hashAgentToken(token: string): string {
-  return crypto.createHash("sha256").update(token, "utf8").digest("hex");
+  return hashSecret(token);
 }
 
 function isDbCode(error: unknown, code: string): boolean {

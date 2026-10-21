@@ -23,6 +23,8 @@ export const NON_TERMINAL_DEPLOYMENT_STATUSES = [
   "deploying",
 ] as const;
 
+export const MAX_DEFERRED_DEPLOYMENTS = 5;
+
 export class DeploymentConflictError extends Error {
   readonly code = "DEPLOYMENT_CONFLICT";
   readonly status = 409;
@@ -42,6 +44,7 @@ export interface CreateDeploymentInput {
   commitSha?: string | null;
 
   targetAgentId?: string | null;
+  deferWhenBusy?: boolean;
 }
 
 export async function createDeployment(
@@ -177,8 +180,25 @@ export async function createDeployment(
     );
 
     if (activeResult.rows.length > 0) {
-      await client.query("ROLLBACK");
-      throw new DeploymentConflictError(activeResult.rows[0].id);
+      if (!input.deferWhenBusy) {
+        await client.query("ROLLBACK");
+        throw new DeploymentConflictError(activeResult.rows[0].id);
+      }
+      const pendingResult = await client.query(
+        `
+        SELECT COUNT(*)::int AS n
+        FROM deployments d
+        JOIN deployment_jobs j ON j.deployment_id = d.id
+        WHERE d.project_id = $1
+          AND d.status = ANY($2)
+          AND j.status IN ('queued', 'running')
+        `,
+        [input.projectId, [...NON_TERMINAL_DEPLOYMENT_STATUSES]]
+      );
+      if ((pendingResult.rows[0]?.n ?? 0) >= MAX_DEFERRED_DEPLOYMENTS) {
+        await client.query("ROLLBACK");
+        throw new DeploymentConflictError(activeResult.rows[0].id);
+      }
     }
 
     if (input.idempotencyKey) {

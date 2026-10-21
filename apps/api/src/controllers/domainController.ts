@@ -106,31 +106,11 @@ export async function verifyDomainController(req: Request, res: Response): Promi
   }
   try {
     const { row } = await verifyDomain(domainId);
-    try {
-      const { syncProjectGateway } = await import("../services/gatewayService.js");
-      const { NginxGatewayRouter } = await import(
-        "../infrastructure/gateway/nginxGatewayRouter.js"
-      );
-      await syncProjectGateway(projectId, new NginxGatewayRouter(), 10_000);
-    } catch (error) {
-      if (
-        error instanceof TrafficRouterError &&
-        (error.code === "NO_ACTIVE_ROUTE" || error.code === "ROUTE_NOT_READY")
-      ) {
-        if (error.code === "NO_ACTIVE_ROUTE") {
-          res.json(toPublicDomain(row));
-          return;
-        }
-      }
-      console.error("Domain gateway convergence error");
-      res.status(502).json({
-        error: "Domain verified but gateway route failed",
-        code: "GATEWAY_SYNC_FAILED",
-        domain: toPublicDomain(row),
-      });
-      return;
-    }
-    res.json(toPublicDomain(row));
+    const { enqueueGatewaySync } = await import(
+      "../workers/gatewaySyncQueue.js"
+    );
+    await enqueueGatewaySync(projectId, "domain_verified");
+    res.json({ ...toPublicDomain(row), gateway_sync: "pending" });
   } catch (error) {
     if (error instanceof DomainError && error.code === "VERIFICATION_EXPIRED") {
       const rotated = (error as unknown as { rotated?: { row: DomainRow; verificationToken: string } })

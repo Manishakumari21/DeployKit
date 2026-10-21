@@ -48,6 +48,8 @@ export interface RuntimeManager {
 
   pull(reference: string, signal?: AbortSignal): Promise<void>;
 
+  isRunning?(containerName: string): Promise<boolean>;
+
   containerLogs?(containerName: string, tailLines?: number): Promise<string>;
 }
 

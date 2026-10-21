@@ -5,6 +5,7 @@ import {
   extendJobLease,
   failJob,
   failJobTerminal,
+  releaseJobLease,
   recoverExpiredJobs,
   claimNextEdgeBuildJob,
   completeEdgeBuildPhase,
@@ -20,6 +21,12 @@ import { RealDeploymentExecutor } from "./deploymentPipeline.js";
 import { PipelineError } from "../deployments/deploymentErrors.js";
 import { redactForLog } from "../agents/edgeJobSchema.js";
 import { BootstrapError, bootstrapWorker } from "./workerBootstrap.js";
+import {
+  claimNextGatewaySyncJob,
+  completeGatewaySyncJob,
+  failGatewaySyncJob,
+  recoverExpiredGatewaySyncJobs,
+} from "./gatewaySyncQueue.js";
 
 const WORKER_ID =
   process.env.WORKER_ID ?? `worker-${randomUUID()}`;
@@ -42,6 +49,61 @@ const CERT_POLL_MS = Math.max(
   10_000,
   Number(process.env.DEPLOYKIT_CERT_POLL_INTERVAL_MS ?? 60_000)
 );
+
+const GATEWAY_RECONCILE_INTERVAL_MS = Math.max(
+  5_000,
+  Number(process.env.DEPLOYKIT_GATEWAY_RECONCILE_INTERVAL_MS ?? 60_000)
+);
+
+const RUNTIME_HEALTH_INTERVAL_MS = Math.max(
+  5_000,
+  Number(process.env.DEPLOYKIT_RUNTIME_HEALTH_INTERVAL_MS ?? 60_000)
+);
+
+export interface IntervalSweep<T> {
+  sweep(now?: number): Promise<T | null>;
+  reset(): void;
+}
+
+export function createIntervalSweep<T>(
+  intervalMs: number,
+  run: () => Promise<T>
+): IntervalSweep<T> {
+  let lastRunAt: number | null = null;
+  return {
+    async sweep(now: number = Date.now()): Promise<T | null> {
+      if (lastRunAt !== null && now - lastRunAt < intervalMs) {
+        return null;
+      }
+      lastRunAt = now;
+      return await run();
+    },
+    reset(): void {
+      lastRunAt = null;
+    },
+  };
+}
+
+const gatewaySweep = createIntervalSweep<{
+  reconciled: number;
+  skipped: number;
+  failed: number;
+  superseded: number;
+}>(GATEWAY_RECONCILE_INTERVAL_MS, async () => {
+  const { reconcileActiveGateways } = await import("../services/gatewayService.js");
+  return await reconcileActiveGateways();
+});
+
+const runtimeHealthSweep = createIntervalSweep<{
+  checked: number;
+  healthy: number;
+  unhealthy: number;
+  skipped: number;
+  failed: number;
+}>(RUNTIME_HEALTH_INTERVAL_MS, async () => {
+  const { checkActiveRuntimeHealth } = await import("./runtimeHealthMonitor.js");
+  return await checkActiveRuntimeHealth();
+});
 
 let certSweepInProgress = false;
 let lastCertSweepAt = 0;
@@ -78,6 +140,35 @@ async function runCertSweep(): Promise<void> {
 
 let shuttingDown = false;
 let activeAbort: AbortController | null = null;
+
+async function runPeriodicSweeps(): Promise<void> {
+  try {
+    const gateway = await gatewaySweep.sweep();
+    if (
+      gateway &&
+      (gateway.reconciled > 0 ||
+        gateway.failed > 0 ||
+        gateway.superseded > 0)
+    ) {
+      log("info", "worker.gateway_reconciled", { ...gateway });
+    }
+  } catch (error) {
+    log("error", "worker.gateway_reconcile_failed", {
+      error: error instanceof Error ? error.message.slice(0, 300) : "Unknown error",
+    });
+  }
+
+  try {
+    const health = await runtimeHealthSweep.sweep();
+    if (health && (health.unhealthy > 0 || health.failed > 0)) {
+      log("error", "worker.runtime_unhealthy", { ...health });
+    }
+  } catch (error) {
+    log("error", "worker.runtime_health_check_failed", {
+      error: error instanceof Error ? error.message.slice(0, 300) : "Unknown error",
+    });
+  }
+}
 
 export const EDGE_BUILD_ABORT_REASONS = {
   deploymentCancelled: "deployment_cancelled",
@@ -133,11 +224,47 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
-async function processJob() {
-  const job = await claimNextJob(
-    WORKER_ID,
-    LEASE_MS
-  );
+export interface DeploymentJobDependencies {
+  executor?: DeploymentExecutor;
+  claim?: typeof claimNextJob;
+  extendLease?: typeof extendJobLease;
+  complete?: typeof completeJob;
+  fail?: typeof failJob;
+  failTerminal?: typeof failJobTerminal;
+  release?: typeof releaseJobLease;
+  readDeploymentStatus?: (deploymentId: string) => Promise<string | undefined>;
+  isShuttingDown?: () => boolean;
+  leaseMs?: number;
+  leaseRenewalMs?: number;
+  cancelPollMs?: number;
+}
+
+export async function processDeploymentJob(
+  deps: DeploymentJobDependencies = {}
+) {
+  const jobExecutor = deps.executor ?? executor;
+  const claim = deps.claim ?? claimNextJob;
+  const extendLease = deps.extendLease ?? extendJobLease;
+  const complete = deps.complete ?? completeJob;
+  const fail = deps.fail ?? failJob;
+  const failTerminal = deps.failTerminal ?? failJobTerminal;
+  const release = deps.release ?? releaseJobLease;
+  const readDeploymentStatus =
+    deps.readDeploymentStatus ??
+    (async (deploymentId: string) => {
+      const current = await pool.query(
+        `SELECT status FROM deployments WHERE id = $1`,
+        [deploymentId]
+      );
+      return current.rows[0]?.status as string | undefined;
+    });
+  const leaseMs = deps.leaseMs ?? LEASE_MS;
+  const leaseRenewalMs =
+    deps.leaseRenewalMs ?? Math.max(1_000, Math.floor(leaseMs / 3));
+  const cancelPollMs = deps.cancelPollMs ?? 2_000;
+  const shutdownCheck = deps.isShuttingDown ?? (() => shuttingDown);
+
+  const job = await claim(WORKER_ID, leaseMs);
 
   if (!job) {
     return false;
@@ -152,45 +279,75 @@ async function processJob() {
 
   let leaseTimer: NodeJS.Timeout | undefined;
   let cancelWatcher: NodeJS.Timeout | undefined;
+  let leaseLost = false;
+  let consecutiveRenewalFailures = 0;
   const abort = new AbortController();
   activeAbort = abort;
 
   try {
     leaseTimer = setInterval(async () => {
       try {
-        const renewed = await extendJobLease(
+        const renewed = await extendLease(
           job.id,
           WORKER_ID,
           job.leaseToken,
-          LEASE_MS
+          leaseMs
         );
 
         if (!renewed) {
-          log("error", "deployment.lease_lost", {
-            jobId: job.id,
-            deploymentId: job.deploymentId,
-          });
+          consecutiveRenewalFailures = 0;
+          let deploymentStatus: string | undefined;
+          try {
+            deploymentStatus = await readDeploymentStatus(job.deploymentId);
+          } catch {
+          }
+          if (deploymentStatus === "cancelled") {
+            log("info", "deployment.cancel_requested", {
+              jobId: job.id,
+              deploymentId: job.deploymentId,
+            });
+          } else {
+            leaseLost = true;
+            log("error", "deployment.lease_lost", {
+              jobId: job.id,
+              deploymentId: job.deploymentId,
+            });
+          }
+          abort.abort();
+          return;
         }
+        consecutiveRenewalFailures = 0;
       } catch (error) {
+        consecutiveRenewalFailures += 1;
         log("error", "deployment.lease_renewal_failed", {
           jobId: job.id,
           deploymentId: job.deploymentId,
+          consecutiveFailures: consecutiveRenewalFailures,
           error:
             error instanceof Error
               ? error.message
               : "Unknown error",
         });
+        if (consecutiveRenewalFailures >= MAX_CONSECUTIVE_RENEWAL_FAILURES) {
+          leaseLost = true;
+          log("error", "deployment.lease_renewal_uncertain", {
+            jobId: job.id,
+            deploymentId: job.deploymentId,
+            consecutiveFailures: consecutiveRenewalFailures,
+          });
+          abort.abort();
+        }
       }
-    }, LEASE_RENEWAL_MS);
+    }, leaseRenewalMs);
 
     cancelWatcher = setInterval(async () => {
       try {
-        if (shuttingDown) {
+        if (shutdownCheck()) {
           abort.abort();
           return;
         }
-        const current = await pool.query(`SELECT status FROM deployments WHERE id = $1`, [job.deploymentId]);
-        if (current.rows[0]?.status === "cancelled") {
+        const current = await readDeploymentStatus(job.deploymentId);
+        if (current === "cancelled") {
           log("info", "deployment.cancel_requested", {
             jobId: job.id,
             deploymentId: job.deploymentId,
@@ -199,9 +356,9 @@ async function processJob() {
         }
       } catch {
       }
-    }, 2000);
+    }, cancelPollMs);
 
-    const result = await executor.execute({
+    const result = await jobExecutor.execute({
       deploymentId: job.deploymentId,
       jobId: job.id,
       attempt: job.attempts,
@@ -224,7 +381,7 @@ async function processJob() {
         deploymentId: job.deploymentId,
         adoptedReleaseId: adopted,
       });
-      await failJobTerminal(
+      await failTerminal(
         job.id,
         job.deploymentId,
         WORKER_ID,
@@ -235,7 +392,7 @@ async function processJob() {
       return true;
     }
 
-    await completeJob(job.id, job.deploymentId, WORKER_ID, job.leaseToken);
+    await complete(job.id, job.deploymentId, WORKER_ID, job.leaseToken);
 
     log("info", "deployment.job_completed", {
       jobId: job.id,
@@ -264,19 +421,45 @@ async function processJob() {
       code === "BUILD_CANCELLED" ||
       abort.signal.aborted
     ) {
+      let current: string | undefined;
       try {
-        const current = await pool.query(`SELECT status FROM deployments WHERE id = $1`, [job.deploymentId]);
-        if (current.rows[0]?.status === "cancelled") {
-          log("info", "deployment.cancel_acknowledged", {
-            jobId: job.id,
-            deploymentId: job.deploymentId,
-          });
-          return true;
-        }
+        current = await readDeploymentStatus(job.deploymentId);
       } catch {
       }
-      if (shuttingDown || abort.signal.aborted) {
-        log("info", "deployment.aborted_shutdown", {
+      if (current === "cancelled") {
+        log("info", "deployment.cancel_acknowledged", {
+          jobId: job.id,
+          deploymentId: job.deploymentId,
+        });
+        return true;
+      }
+      if (shutdownCheck() || abort.signal.aborted) {
+        if (shutdownCheck() && !leaseLost) {
+          try {
+            const released = await release(
+              job.id,
+              job.deploymentId,
+              WORKER_ID,
+              job.leaseToken,
+              "Worker is shutting down; lease released for immediate pickup"
+            );
+            log("info", "deployment.lease_released", {
+              jobId: job.id,
+              deploymentId: job.deploymentId,
+              released,
+            });
+          } catch (releaseError) {
+            log("error", "deployment.lease_release_failed", {
+              jobId: job.id,
+              deploymentId: job.deploymentId,
+              error:
+                releaseError instanceof Error
+                  ? releaseError.message
+                  : "Unknown error",
+            });
+          }
+        }
+        log("info", leaseLost ? "deployment.aborted_lease_lost" : "deployment.aborted_shutdown", {
           jobId: job.id,
           deploymentId: job.deploymentId,
         });
@@ -286,7 +469,7 @@ async function processJob() {
 
     try {
       if (error instanceof PipelineError && !error.retryable) {
-        await failJobTerminal(
+        await failTerminal(
           job.id,
           job.deploymentId,
           WORKER_ID,
@@ -295,7 +478,7 @@ async function processJob() {
           code
         );
       } else {
-        await failJob(job.id, job.deploymentId, WORKER_ID, job.leaseToken, `${code}: ${message}`, code);
+        await fail(job.id, job.deploymentId, WORKER_ID, job.leaseToken, `${code}: ${message}`, code);
       }
     } catch (failError) {
       log("error", "deployment.fail_recording_failed", {
@@ -318,6 +501,86 @@ async function processJob() {
       clearInterval(cancelWatcher);
     }
   }
+}
+
+export interface GatewaySyncJobDependencies {
+  claim?: typeof claimNextGatewaySyncJob;
+  complete?: typeof completeGatewaySyncJob;
+  fail?: typeof failGatewaySyncJob;
+  sync?: (projectId: string) => Promise<unknown>;
+  readRawConfig?: (projectId: string) => Promise<string | null>;
+}
+
+export async function processGatewaySyncJob(
+  deps: GatewaySyncJobDependencies = {}
+): Promise<boolean> {
+  const claim = deps.claim ?? claimNextGatewaySyncJob;
+  const complete = deps.complete ?? completeGatewaySyncJob;
+  const fail = deps.fail ?? failGatewaySyncJob;
+
+  const job = await claim(WORKER_ID, LEASE_MS);
+  if (!job) {
+    return false;
+  }
+
+  log("info", "gateway_sync.job_claimed", {
+    jobId: job.id,
+    projectId: job.projectId,
+    reason: job.reason,
+    attempt: job.attempts,
+    maxAttempts: job.maxAttempts,
+  });
+
+  const sync =
+    deps.sync ??
+    (async (projectId: string) => {
+      const { syncProjectGateway } = await import("../services/gatewayService.js");
+      const { NginxGatewayRouter } = await import(
+        "../infrastructure/gateway/nginxGatewayRouter.js"
+      );
+      return await syncProjectGateway(projectId, new NginxGatewayRouter(), 30_000);
+    });
+
+  try {
+    await sync(job.projectId);
+    await complete(job.id, WORKER_ID, job.leaseToken);
+    log("info", "gateway_sync.job_completed", {
+      jobId: job.id,
+      projectId: job.projectId,
+    });
+    return true;
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unknown gateway sync error";
+    try {
+      const outcome = await fail(
+        job.id,
+        WORKER_ID,
+        job.leaseToken,
+        redactForLog(message).slice(0, 2000)
+      );
+      log("error", "gateway_sync.job_failed", {
+        jobId: job.id,
+        projectId: job.projectId,
+        outcome,
+        error: redactForLog(message).slice(0, 300),
+      });
+    } catch (failError) {
+      log("error", "gateway_sync.fail_report_failed", {
+        jobId: job.id,
+        projectId: job.projectId,
+        error:
+          failError instanceof Error
+            ? failError.message
+            : "Unknown error",
+      });
+    }
+    return true;
+  }
+}
+
+async function processJob() {
+  return processDeploymentJob();
 }
 
 export interface EdgeBuildJobDependencies {
@@ -596,9 +859,11 @@ async function run() {
   }
 
   try {
-    const { reconcileActiveGateways } = await import("../services/gatewayService.js");
-    const summary = await reconcileActiveGateways();
-    if (summary.reconciled > 0 || summary.failed > 0 || summary.superseded > 0) {
+    const summary = await gatewaySweep.sweep();
+    if (
+      summary &&
+      (summary.reconciled > 0 || summary.failed > 0 || summary.superseded > 0)
+    ) {
       log("info", "worker.gateway_reconciled", { ...summary });
     }
   } catch (error) {
@@ -610,8 +875,10 @@ async function run() {
   while (!shuttingDown) {
     try {
       await recoverExpiredJobs();
+      await recoverExpiredGatewaySyncJobs();
 
       const processed = await processJob();
+      const synced = await processGatewaySyncJob();
 
 
 
@@ -625,8 +892,9 @@ async function run() {
         });
       }
 
-      if (!processed && !builtEdge) {
+      if (!processed && !builtEdge && !synced) {
         await runCertSweep();
+        await runPeriodicSweeps();
         await sleep(POLL_INTERVAL_MS);
       }
     } catch (error) {

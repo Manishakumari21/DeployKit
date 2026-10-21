@@ -3,6 +3,7 @@ import { promises as dns } from "node:dns";
 import pool from "../db/database.js";
 import { normalizeDomain } from "../domains/domainName.js";
 import { DomainError } from "../domains/domainName.js";
+import { hashSecret } from "../security/tokenHasher.js";
 
 export type DomainStatus =
   | "pending"
@@ -47,7 +48,7 @@ const VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
 const DNS_TIMEOUT_MS = 5000;
 
 export function hashVerificationToken(token: string): string {
-  return crypto.createHash("sha256").update(token, "utf8").digest("hex");
+  return hashSecret(token);
 }
 
 function isUniqueViolation(error: unknown): boolean {

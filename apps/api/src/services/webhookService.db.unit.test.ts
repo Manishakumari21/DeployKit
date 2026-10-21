@@ -179,3 +179,96 @@ test("installation mismatch does not deploy", async () => {
     await cleanup(project.id);
   }
 });
+
+test("a push during a running deployment is queued instead of dropped", async () => {
+  if (!(await gateDb("services/webhookService.db.unit.test.ts", dbAvailable))) return;
+  const project = await createProject(`wh-busy-${Date.now()}`);
+  try {
+    await linkProjectRepository({
+      projectId: project.id,
+      installationId: "555",
+      repositoryFullName: "acme/busy-app",
+      autoDeploy: true,
+    });
+
+    const running = await pool.query(
+      `INSERT INTO deployments (project_id, status, trigger, branch, commit_sha)
+       VALUES ($1, 'building', 'manual', 'main', $2) RETURNING *`,
+      [project.id, SHA_A]
+    );
+    await pool.query(
+      `INSERT INTO deployment_jobs (deployment_id, status, attempts, max_attempts)
+       VALUES ($1, 'running', 1, 3)`,
+      [running.rows[0].id]
+    );
+
+    const outcome = await handleGitHubWebhook({
+      deliveryId: `t-${Date.now()}-busy`,
+      event: "push",
+      rawBody: pushBody("acme/busy-app", "main", SHA_B),
+    });
+
+    assert.equal(
+      outcome.status,
+      "processed",
+      "a push must not be dropped while a deployment is running"
+    );
+    const deploymentId = (outcome as { deploymentId: string }).deploymentId;
+    const row = (
+      await pool.query(
+        `SELECT status, trigger, commit_sha FROM deployments WHERE id = $1`,
+        [deploymentId]
+      )
+    ).rows[0];
+    assert.equal(row.status, "queued");
+    assert.equal(row.trigger, "github_push");
+    assert.equal(row.commit_sha, SHA_B);
+
+    const job = await pool.query(
+      `SELECT status FROM deployment_jobs WHERE deployment_id = $1`,
+      [deploymentId]
+    );
+    assert.equal(job.rows[0].status, "queued");
+
+    const delivery = await pool.query(
+      `SELECT status FROM github_webhook_deliveries WHERE delivery_id LIKE 't-%' AND status = 'processed'`
+    );
+    assert.ok(
+      (delivery.rowCount ?? 0) >= 1,
+      "the delivery must be recorded as processed"
+    );
+  } finally {
+    await cleanup(project.id);
+  }
+});
+
+test("a manual deployment is still rejected while a deployment is in flight", async () => {
+  if (!(await gateDb("services/webhookService.db.unit.test.ts", dbAvailable))) return;
+  const project = await createProject(`wh-manual-${Date.now()}`);
+  try {
+    const running = await pool.query(
+      `INSERT INTO deployments (project_id, status, trigger, branch, commit_sha)
+       VALUES ($1, 'building', 'manual', 'main', $2) RETURNING *`,
+      [project.id, SHA_A]
+    );
+    await pool.query(
+      `INSERT INTO deployment_jobs (deployment_id, status, attempts, max_attempts)
+       VALUES ($1, 'running', 1, 3)`,
+      [running.rows[0].id]
+    );
+
+    const { createDeployment, DeploymentConflictError } = await import(
+      "./deploymentService.js"
+    );
+    await assert.rejects(
+      createDeployment({
+        projectId: project.id,
+        trigger: "manual",
+        idempotencyKey: null,
+      }),
+      (error: unknown) => error instanceof DeploymentConflictError
+    );
+  } finally {
+    await cleanup(project.id);
+  }
+});

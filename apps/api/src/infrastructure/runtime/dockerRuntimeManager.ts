@@ -334,6 +334,32 @@ export class DockerRuntimeManager
     }
   }
 
+  async isRunning(containerName: string): Promise<boolean> {
+    const name = validateContainerName(containerName);
+    try {
+      const out = await runDocker(
+        this.dockerBinary,
+        [
+          "container",
+          "inspect",
+          "--format",
+          "{{.State.Running}}",
+          name,
+        ],
+        15_000
+      );
+      return out.trim().toLowerCase() === "true";
+    } catch (error) {
+      if (
+        error instanceof RuntimeManagerError &&
+        /no such (object|container|instance)/i.test(error.message)
+      ) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
   async pull(
     reference: string,
     signal?: AbortSignal

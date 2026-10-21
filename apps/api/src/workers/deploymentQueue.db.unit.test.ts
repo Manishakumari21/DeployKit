@@ -10,6 +10,7 @@ import {
   claimNextJob,
   failJob,
   recoverExpiredJobs,
+  releaseJobLease,
 } from "./deploymentQueue.js";
 import { gateDb } from "../test/dbGate.js";
 
@@ -207,6 +208,130 @@ test("an expired edge lease is never stolen by the central worker", async () => 
     assert.ok(second);
     assert.equal(second?.id, first!.id);
     assert.equal(second?.attempts, 2);
+  } finally {
+    await pool.query(`DELETE FROM projects WHERE id = $1`, [project.id]);
+  }
+});
+
+test("releasing a lease requeues the job immediately and clears the lease", async () => {
+  if (!(await gateDb("workers/deploymentQueue.db.unit.test.ts", dbAvailable))) {
+    return;
+  }
+  const project = await createProject(`release-${Date.now()}`);
+  try {
+    const deployment = await createDeployment({
+      projectId: project.id,
+      trigger: "manual",
+      idempotencyKey: null,
+    });
+    const claimed = await claimNextJob("release-worker", 30_000);
+    assert.ok(claimed);
+    assert.equal(claimed?.deploymentId, deployment.id);
+
+    const released = await releaseJobLease(
+      claimed!.id,
+      deployment.id,
+      "release-worker",
+      claimed!.leaseToken,
+      "Worker is shutting down"
+    );
+    assert.equal(released, true);
+
+    const job = await pool.query(
+      `SELECT status, locked_by, lease_expires_at, lease_token FROM deployment_jobs WHERE id = $1`,
+      [claimed!.id]
+    );
+    assert.equal(job.rows[0].status, "queued");
+    assert.equal(job.rows[0].locked_by, null);
+    assert.equal(job.rows[0].lease_expires_at, null);
+    assert.equal(job.rows[0].lease_token, null);
+
+    const dep = await pool.query(
+      `SELECT status, error_code FROM deployments WHERE id = $1`,
+      [deployment.id]
+    );
+    assert.equal(dep.rows[0].status, "queued");
+    assert.equal(dep.rows[0].error_code, "WORKER_LEASE_RELEASED");
+
+    const events = await pool.query(
+      `SELECT event_type FROM deployment_events WHERE deployment_id = $1 AND event_type = 'deployment.lease_released'`,
+      [deployment.id]
+    );
+    assert.equal(events.rowCount, 1);
+  } finally {
+    await pool.query(`DELETE FROM projects WHERE id = $1`, [project.id]);
+  }
+});
+
+test("a stale lease token cannot release a job that was taken over", async () => {
+  if (!(await gateDb("workers/deploymentQueue.db.unit.test.ts", dbAvailable))) {
+    return;
+  }
+  const project = await createProject(`release-fence-${Date.now()}`);
+  try {
+    const deployment = await createDeployment({
+      projectId: project.id,
+      trigger: "manual",
+      idempotencyKey: null,
+    });
+    const claimed = await claimNextJob("fence-worker", 30_000);
+    assert.ok(claimed);
+
+    const released = await releaseJobLease(
+      claimed!.id,
+      deployment.id,
+      "fence-worker",
+      "99999999-9999-9999-9999-999999999999",
+      "stale token"
+    );
+    assert.equal(released, false, "a stale lease token must not release the job");
+
+    const job = await pool.query(
+      `SELECT status, locked_by FROM deployment_jobs WHERE id = $1`,
+      [claimed!.id]
+    );
+    assert.equal(job.rows[0].status, "running");
+    assert.equal(job.rows[0].locked_by, "fence-worker");
+  } finally {
+    await pool.query(`DELETE FROM projects WHERE id = $1`, [project.id]);
+  }
+});
+
+test("a queued follow-up job is not claimed while the project already has a running job", async () => {
+  if (!(await gateDb("workers/deploymentQueue.db.unit.test.ts", dbAvailable))) {
+    return;
+  }
+  const project = await createProject(`serialize-${Date.now()}`);
+  try {
+    const first = await createDeployment({
+      projectId: project.id,
+      trigger: "manual",
+      idempotencyKey: null,
+    });
+    const claimed = await claimNextJob("serialize-worker", 30_000);
+    assert.ok(claimed);
+    assert.equal(claimed?.deploymentId, first.id);
+
+    const second = await createDeployment({
+      projectId: project.id,
+      trigger: "github_push",
+      idempotencyKey: `serialize-${Date.now()}`,
+      deferWhenBusy: true,
+    });
+    assert.ok(second, "a follow-up deployment must be queued, not rejected");
+
+    const next = await claimNextJob("serialize-worker-2", 30_000);
+    assert.equal(
+      next?.deploymentId,
+      undefined,
+      "the worker must not run two deployments of the same project concurrently"
+    );
+
+    const queued = await pool.query(
+      `SELECT status FROM deployment_jobs WHERE deployment_id = $1`,
+      [second.id]
+    );
+    assert.equal(queued.rows[0].status, "queued");
   } finally {
     await pool.query(`DELETE FROM projects WHERE id = $1`, [project.id]);
   }

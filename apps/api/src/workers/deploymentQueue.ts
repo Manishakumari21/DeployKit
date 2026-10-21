@@ -74,6 +74,16 @@ async function claimNextJobAttempt(
             AND j.attempts < j.max_attempts
           )
         )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM deployment_jobs older
+          JOIN deployments od ON od.id = older.deployment_id
+          WHERE od.project_id = d.project_id
+            AND od.target_agent_id IS NULL
+            AND older.id <> j.id
+            AND older.status IN ('queued', 'running')
+            AND (older.created_at, older.id) < (j.created_at, j.id)
+        )
       ORDER BY j.created_at ASC
       FOR UPDATE OF j SKIP LOCKED
       LIMIT 1
@@ -1149,6 +1159,92 @@ export async function recoverExpiredJobs(): Promise<number> {
     await client.query("COMMIT");
 
     return result.rows.length;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function releaseJobLease(
+  jobId: string,
+  deploymentId: string,
+  workerId: string,
+  leaseToken: string,
+  reason = "Worker released the job lease"
+): Promise<boolean> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const owned = await client.query(
+      `
+      SELECT id FROM deployment_jobs
+      WHERE id = $1 AND status = 'running' AND locked_by = $2 AND lease_token = $3
+      FOR UPDATE
+      `,
+      [jobId, workerId, leaseToken]
+    );
+    if (owned.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      return false;
+    }
+    const safeReason = reason.slice(0, 4000);
+    await client.query(
+      `
+      UPDATE deployment_jobs
+      SET
+        status = 'queued',
+        available_at = CURRENT_TIMESTAMP,
+        locked_at = NULL,
+        locked_by = NULL,
+        lease_expires_at = NULL,
+        lease_token = NULL,
+        last_error = $2,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      `,
+      [jobId, safeReason]
+    );
+    const deployment = await client.query(
+      `SELECT status FROM deployments WHERE id = $1 FOR UPDATE`,
+      [deploymentId]
+    );
+    const deploymentStatus = deployment.rows[0]?.status as string | undefined;
+    const canRequeue =
+      deploymentStatus !== undefined &&
+      canTransition(deploymentStatus as never, "queued" as never);
+    if (canRequeue) {
+      await client.query(
+        `
+        UPDATE deployments
+        SET status = 'queued',
+            error_code = $2,
+            error_message = $3,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+        `,
+        [deploymentId, "WORKER_LEASE_RELEASED", safeReason]
+      );
+    }
+    await client.query(
+      `
+      INSERT INTO deployment_events (
+        deployment_id, event_type, status_from, status_to,
+        message, metadata
+      )
+      VALUES ($1,'deployment.lease_released',$2,$3, $4, $5::jsonb)
+      `,
+      [
+        deploymentId,
+        deploymentStatus ?? null,
+        canRequeue ? "queued" : (deploymentStatus ?? null),
+        safeReason,
+        JSON.stringify({ jobId, workerId }),
+      ]
+    );
+    await client.query("COMMIT");
+    return true;
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

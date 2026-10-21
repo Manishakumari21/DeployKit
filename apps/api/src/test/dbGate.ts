@@ -33,6 +33,7 @@ export const DB_GATED_SUITES: readonly string[] = [
   "workers/deploymentRetry.db.unit.test.ts",
   "workers/edgeBuild.db.unit.test.ts",
   "workers/pipelineZeroDowntime.db.unit.test.ts",
+  "workers/runtimeHealthMonitor.db.unit.test.ts",
   "workers/workerCrashRecovery.db.unit.test.ts",
 ];
 

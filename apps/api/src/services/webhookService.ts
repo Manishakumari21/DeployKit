@@ -305,6 +305,7 @@ export async function handleGitHubWebhook(input: {
       trigger: "github_push",
       idempotencyKey,
       commitSha: after,
+      deferWhenBusy: true,
     });
     if (!deployment) {
       await markDelivery(deliveryId, "failed", {
@@ -324,7 +325,8 @@ export async function handleGitHubWebhook(input: {
     if (error instanceof WebhookError) throw error;
     if (error instanceof DeploymentConflictError) {
       await markDelivery(deliveryId, "failed", {
-        error: "Project already has an active deployment",
+        error:
+          "Project already has an active deployment and the deferred queue is full",
         repository: fullName,
         installation: installationId ?? undefined,
       }).catch(() => undefined);

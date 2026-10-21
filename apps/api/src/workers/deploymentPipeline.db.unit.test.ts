@@ -8,6 +8,7 @@ import pool from "../db/database.js";
 import { RealDeploymentExecutor } from "./deploymentPipeline.js";
 import { getDeploymentById } from "../services/deploymentService.js";
 import { getReleaseById } from "../services/releaseService.js";
+import { RuntimeManagerError } from "../infrastructure/runtime/dockerRuntimeManager.js";
 import { gateDb } from "../test/dbGate.js";
 
 const PREFLIGHT_WORKSPACE = mkdtempSync(path.join(os.tmpdir(), "deploykit-preflight-"));
@@ -286,6 +287,78 @@ test("pipeline cleans up new runtime when health fails", async () => {
     );
     assert.equal(runtime.containers.size, 0);
   } finally {
+    await pool.query(`DELETE FROM projects WHERE id = $1`, [project.id]);
+  }
+});
+
+test("registry pull failure marks the release failed instead of leaving it pending", async () => {
+  if (!(await gateDb("workers/deploymentPipeline.db.unit.test.ts", dbAvailable))) {
+    return;
+  }
+  const project = await createProject(`pipepull-${Date.now()}`);
+  const previousEnv = {
+    host: process.env.DEPLOYKIT_REGISTRY_HOST,
+    namespace: process.env.DEPLOYKIT_REGISTRY_NAMESPACE,
+    insecure: process.env.DEPLOYKIT_REGISTRY_INSECURE,
+  };
+  process.env.DEPLOYKIT_REGISTRY_HOST = "localhost:5000";
+  process.env.DEPLOYKIT_REGISTRY_NAMESPACE = "deploykit";
+  process.env.DEPLOYKIT_REGISTRY_INSECURE = "true";
+  try {
+    const deployment = await createDeploymentRow(project.id);
+    const runtime = fakeRuntime();
+    let pullCalls = 0;
+    (runtime as any).pull = async () => {
+      pullCalls++;
+      throw new RuntimeManagerError(
+        "DOCKER_TIMEOUT",
+        "failed to resolve reference: pull timed out"
+      );
+    };
+    const executor = new RealDeploymentExecutor({
+      buildExecutor: fakeBuild() as any,
+      runtimeManager: runtime as any,
+      checkout: (async (_opts: unknown, work: unknown) => {
+        const fn = work as (c: {
+          workspace: string;
+          commitSha: string;
+        }) => Promise<never>;
+        return fn({ workspace: PREFLIGHT_WORKSPACE, commitSha: SHA });
+      }) as never,
+      runtimeNetwork: "deploykit-runtime",
+      gatewayName: "dk-gateway",
+      routeTimeoutMs: 1000,
+      trafficRouter: fakeRouter() as any,
+      healthTimeoutMs: 1000,
+    });
+    await assert.rejects(
+      executor.execute({
+        deploymentId: deployment.id,
+        jobId: "job-pull",
+        attempt: 1,
+        maxAttempts: 3,
+      }),
+      /Image pull failed/
+    );
+    assert.equal(pullCalls, 1);
+    const releases = await pool.query(
+      `SELECT * FROM releases WHERE deployment_id = $1`,
+      [deployment.id]
+    );
+    assert.equal(releases.rowCount, 1);
+    assert.equal(
+      releases.rows[0].status,
+      "failed",
+      "a release whose image could not be pulled must not stay pending"
+    );
+    assert.equal(releases.rows[0].error_code, "RUNTIME_FAILED");
+  } finally {
+    if (previousEnv.host === undefined) delete process.env.DEPLOYKIT_REGISTRY_HOST;
+    else process.env.DEPLOYKIT_REGISTRY_HOST = previousEnv.host;
+    if (previousEnv.namespace === undefined) delete process.env.DEPLOYKIT_REGISTRY_NAMESPACE;
+    else process.env.DEPLOYKIT_REGISTRY_NAMESPACE = previousEnv.namespace;
+    if (previousEnv.insecure === undefined) delete process.env.DEPLOYKIT_REGISTRY_INSECURE;
+    else process.env.DEPLOYKIT_REGISTRY_INSECURE = previousEnv.insecure;
     await pool.query(`DELETE FROM projects WHERE id = $1`, [project.id]);
   }
 });

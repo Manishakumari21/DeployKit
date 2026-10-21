@@ -42,6 +42,34 @@ function toSafeAgentView(agent: Agent): SafeAgentView {
   };
 }
 
+interface SafeClaimedAgentJob {
+  id: string;
+  deploymentId: string;
+  projectId: string;
+  agentId: string;
+  attempts: number;
+  maxAttempts: number;
+  leaseExpiresAt: string | null;
+  branch: string;
+  commitSha: string | null;
+  image: unknown;
+}
+
+function toSafeClaimedAgentJob(job: NonNullable<Awaited<ReturnType<typeof claimAgentJob>>>): SafeClaimedAgentJob {
+  return {
+    id: job.id,
+    deploymentId: job.deploymentId,
+    projectId: job.projectId,
+    agentId: job.agentId,
+    attempts: job.attempts,
+    maxAttempts: job.maxAttempts,
+    leaseExpiresAt: job.leaseExpiresAt,
+    branch: job.branch,
+    commitSha: job.commitSha,
+    image: job.image,
+  };
+}
+
 function agentContext(req: Request) {
   return req.agent ?? null;
 }
@@ -140,7 +168,10 @@ export async function claimAgentJobController(req: Request, res: Response) {
     }
     try {
       const job = await claimAgentJob(context.agentId);
-      return res.status(200).json({ job });
+      if (job === null) {
+        return res.status(200).json({ job: null });
+      }
+      return res.status(200).json({ job: toSafeClaimedAgentJob(job) });
     } catch (error) {
       sendAgentJobError(res, error);
       return;

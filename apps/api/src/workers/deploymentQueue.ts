@@ -10,6 +10,7 @@ export interface ClaimedJob {
   deploymentId: string;
   attempts: number;
   maxAttempts: number;
+  leaseToken: string;
 }
 
 export async function claimNextJob(
@@ -100,13 +101,15 @@ async function claimNextJobAttempt(
         locked_by = $2,
         lease_expires_at =
           CURRENT_TIMESTAMP + ($3 * INTERVAL '1 millisecond'),
+        lease_token = gen_random_uuid(),
         updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
       RETURNING
         id,
         deployment_id,
         attempts,
-        max_attempts
+        max_attempts,
+        lease_token
       `,
       [job.id, workerId, leaseMs]
     );
@@ -215,6 +218,7 @@ async function claimNextJobAttempt(
       deploymentId: claimed.deployment_id,
       attempts: claimed.attempts,
       maxAttempts: claimed.max_attempts,
+      leaseToken: claimed.lease_token,
     };
   } catch (error) {
     await client.query("ROLLBACK");
@@ -225,6 +229,7 @@ async function claimNextJobAttempt(
 export async function extendJobLease(
   jobId: string,
   workerId: string,
+  leaseToken: string,
   leaseMs = DEFAULT_LEASE_MS
 ): Promise<boolean> {
   const result = await pool.query(
@@ -232,14 +237,17 @@ export async function extendJobLease(
     UPDATE deployment_jobs
     SET
       lease_expires_at =
-        CURRENT_TIMESTAMP + ($3 * INTERVAL '1 millisecond'),
+        CURRENT_TIMESTAMP + ($4 * INTERVAL '1 millisecond'),
       updated_at = CURRENT_TIMESTAMP
     WHERE
       id = $1
       AND status = 'running'
       AND locked_by = $2
+      AND lease_token = $3
+      AND lease_expires_at IS NOT NULL
+      AND lease_expires_at > CURRENT_TIMESTAMP
     `,
-    [jobId, workerId, leaseMs]
+    [jobId, workerId, leaseToken, leaseMs]
   );
 
   return result.rowCount === 1;
@@ -837,7 +845,8 @@ export async function demoteEdgeBuildJobsWhenDisabled(): Promise<string[]> {
 export async function completeJob(
   jobId: string,
   deploymentId: string,
-  workerId: string
+  workerId: string,
+  leaseToken: string
 ): Promise<void> {
   const client = await pool.connect();
 
@@ -857,9 +866,12 @@ export async function completeJob(
         id = $1
         AND status = 'running'
         AND locked_by = $2
+        AND lease_token = $3
+        AND lease_expires_at IS NOT NULL
+        AND lease_expires_at > CURRENT_TIMESTAMP
       RETURNING id
       `,
-      [jobId, workerId]
+      [jobId, workerId, leaseToken]
     );
 
     if (jobResult.rows.length !== 1) throw new Error("Deployment job is no longer owned by this worker");
@@ -1036,39 +1048,43 @@ export async function recoverExpiredJobs(): Promise<number> {
 
 
 
-        const recoveryDelaySeconds = isBuildPhase ? 30 : 0;
         await client.query(
-          `
-          UPDATE deployment_jobs
-          SET
-            status = 'queued',
-            job_phase = $2,
-            available_at =
-              CURRENT_TIMESTAMP + ($3 * INTERVAL '1 second'),
-            locked_at = NULL,
-            locked_by = NULL,
-            lease_expires_at = NULL,
-            lease_token = NULL,
-            last_error = $4,
-            updated_at = CURRENT_TIMESTAMP
-          WHERE id = $1
-          `,
-          [
-            job.id,
-            isBuildPhase ? "build" : "execute",
-            recoveryDelaySeconds,
-            isBuildPhase
-              ? "Build lease expired; job recovered for another build attempt"
-              : "Worker lease expired; job recovered",
-          ]
+          `SELECT status FROM deployments WHERE id = $1 FOR UPDATE`,
+          [job.deployment_id]
         );
 
         const canRequeue = canTransition(
           prevStatus as never,
           "queued" as never
         );
-        const nextStatus = canRequeue ? "queued" : prevStatus;
+
         if (canRequeue) {
+          const recoveryDelaySeconds = isBuildPhase ? 30 : 0;
+          await client.query(
+            `
+            UPDATE deployment_jobs
+            SET
+              status = 'queued',
+              job_phase = $2,
+              available_at =
+                CURRENT_TIMESTAMP + ($3 * INTERVAL '1 second'),
+              locked_at = NULL,
+              locked_by = NULL,
+              lease_expires_at = NULL,
+              lease_token = NULL,
+              last_error = $4,
+              updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+            `,
+            [
+              job.id,
+              isBuildPhase ? "build" : "execute",
+              recoveryDelaySeconds,
+              isBuildPhase
+                ? "Build lease expired; job recovered for another build attempt"
+                : "Worker lease expired; job recovered",
+            ]
+          );
           await client.query(
             `
             UPDATE deployments
@@ -1087,7 +1103,30 @@ export async function recoverExpiredJobs(): Promise<number> {
                 : "Worker lease expired; deployment requeued",
             ]
           );
+        } else {
+          await client.query(
+            `
+            UPDATE deployment_jobs
+            SET
+              status = 'failed',
+              locked_at = NULL,
+              locked_by = NULL,
+              lease_expires_at = NULL,
+              lease_token = NULL,
+              last_error = $2,
+              updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+            `,
+            [
+              job.id,
+              isBuildPhase
+                ? "Build lease expired; deployment is terminal"
+                : "Worker lease expired; deployment is terminal",
+            ]
+          );
         }
+
+        const nextStatus = canRequeue ? "queued" : prevStatus;
 
         await client.query(
           `
@@ -1128,6 +1167,7 @@ export async function failJobTerminal(
   jobId: string,
   deploymentId: string,
   workerId: string,
+  leaseToken: string,
   errorMessage: string,
   errorCode = "DEPLOYMENT_FAILED"
 ): Promise<void> {
@@ -1138,9 +1178,12 @@ export async function failJobTerminal(
       `
       SELECT attempts, max_attempts FROM deployment_jobs
       WHERE id = $1 AND status = 'running' AND locked_by = $2
+        AND lease_token = $3
+        AND lease_expires_at IS NOT NULL
+        AND lease_expires_at > CURRENT_TIMESTAMP
       FOR UPDATE
       `,
-      [jobId, workerId]
+      [jobId, workerId, leaseToken]
     );
     if (jobResult.rows.length !== 1) throw new Error("Deployment job is no longer owned by this worker");
     const safeMessage = errorMessage.slice(0, 4000);
@@ -1154,12 +1197,13 @@ export async function failJobTerminal(
       `
       UPDATE deployment_jobs
       SET status = 'failed', locked_at = NULL, locked_by = NULL,
-          lease_expires_at = NULL, last_error = $2,
+          lease_expires_at = NULL, lease_token = NULL, last_error = $2,
           attempts = GREATEST(attempts, max_attempts),
           updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
+        AND lease_token = $3
       `,
-      [jobId, safeMessage]
+      [jobId, safeMessage, leaseToken]
     );
     if (
       previousStatus !== "active" &&
@@ -1203,6 +1247,7 @@ export async function failJob(
   jobId: string,
   deploymentId: string,
   workerId: string,
+  leaseToken: string,
   errorMessage: string,
   errorCode?: string
 ): Promise<"retrying" | "failed"> {
@@ -1221,9 +1266,12 @@ export async function failJob(
         id = $1
         AND status = 'running'
         AND locked_by = $2
+        AND lease_token = $3
+        AND lease_expires_at IS NOT NULL
+        AND lease_expires_at > CURRENT_TIMESTAMP
       FOR UPDATE
       `,
-      [jobId, workerId]
+      [jobId, workerId, leaseToken]
     );
 
     if (jobResult.rows.length !== 1) throw new Error("Deployment job is no longer owned by this worker");
@@ -1264,11 +1312,13 @@ export async function failJob(
           locked_at = NULL,
           locked_by = NULL,
           lease_expires_at = NULL,
+          lease_token = NULL,
           last_error = $3,
           updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
+          AND lease_token = $4
         `,
-        [jobId, backoffSeconds, safeMessage]
+        [jobId, backoffSeconds, safeMessage, leaseToken]
       );
 
       if (
@@ -1352,11 +1402,13 @@ export async function failJob(
         locked_at = NULL,
         locked_by = NULL,
         lease_expires_at = NULL,
+        lease_token = NULL,
         last_error = $2,
         updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
+        AND lease_token = $3
       `,
-      [jobId, safeMessage]
+      [jobId, safeMessage, leaseToken]
     );
 
     if (

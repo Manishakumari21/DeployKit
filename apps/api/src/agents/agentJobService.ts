@@ -32,6 +32,7 @@ export interface ClaimedAgentJob {
   agentId: string;
   attempts: number;
   maxAttempts: number;
+  leaseToken: string;
   leaseExpiresAt: string | null;
   branch: string;
   commitSha: string | null;
@@ -91,6 +92,8 @@ interface OwnedJob {
   maxAttempts: number;
   jobStatus: string;
   lockedBy: string | null;
+  leaseToken: string | null;
+  leaseExpiresAt: string | null;
   deploymentStatus: DeploymentStatus;
   branch: string;
   commitSha: string | null;
@@ -265,6 +268,7 @@ async function loadOwnedJob(
       SELECT j.id, j.deployment_id, j.status AS job_status,
              j.attempts, j.max_attempts,
              j.claimed_agent_id, j.locked_by,
+             j.lease_token, j.lease_expires_at,
              d.project_id, d.status AS deployment_status,
              d.branch, d.commit_sha
       FROM deployment_jobs j
@@ -282,6 +286,8 @@ async function loadOwnedJob(
         max_attempts: number;
         claimed_agent_id: string | null;
         locked_by: string | null;
+        lease_token: string | null;
+        lease_expires_at: string | null;
         project_id: string;
         deployment_status: DeploymentStatus;
         branch: string;
@@ -312,6 +318,8 @@ async function loadOwnedJob(
     maxAttempts: row.max_attempts,
     jobStatus: row.job_status,
     lockedBy: row.locked_by,
+    leaseToken: row.lease_token,
+    leaseExpiresAt: row.lease_expires_at,
     deploymentStatus: row.deployment_status,
     branch: row.branch,
     commitSha: row.commit_sha,
@@ -319,7 +327,13 @@ async function loadOwnedJob(
 }
 
 function requireRunningLease(owned: OwnedJob, agentId: string): void {
-  if (owned.jobStatus !== "running" || owned.lockedBy !== agentId) {
+  if (
+    owned.jobStatus !== "running" ||
+    owned.lockedBy !== agentId ||
+    owned.leaseToken === null ||
+    owned.leaseExpiresAt === null ||
+    Date.parse(owned.leaseExpiresAt) <= Date.now()
+  ) {
     throw new AgentJobError("LEASE_STALE", "Job lease is no longer active", 409);
   }
 }
@@ -432,11 +446,12 @@ async function claimAgentJobAttempt(
             locked_by = $2,
             lease_expires_at =
               CURRENT_TIMESTAMP + ($3 * INTERVAL '1 millisecond'),
+            lease_token = gen_random_uuid(),
             claimed_agent_id = $4,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
         RETURNING id, deployment_id, attempts, max_attempts,
-                  lease_expires_at
+                  lease_token, lease_expires_at
         `,
         [job.id, agentId, leaseMs, agentId]
       )
@@ -445,6 +460,7 @@ async function claimAgentJobAttempt(
       deployment_id: string;
       attempts: number;
       max_attempts: number;
+      lease_token: string;
       lease_expires_at: string | null;
     };
 
@@ -539,6 +555,7 @@ async function claimAgentJobAttempt(
       agentId,
       attempts: updated.attempts,
       maxAttempts: updated.max_attempts,
+      leaseToken: updated.lease_token,
       leaseExpiresAt: updated.lease_expires_at,
       branch: deployment.branch,
       commitSha: deployment.commit_sha,
@@ -598,7 +615,7 @@ export async function heartbeatAgentJob(
   const agent = await requireLiveAgent(validAgent);
   const owned = await loadOwnedJob(validAgent, agent.projectId, jobId);
   requireRunningLease(owned, validAgent);
-  const extended = await extendJobLease(owned.jobId, validAgent, leaseMs);
+  const extended = await extendJobLease(owned.jobId, validAgent, owned.leaseToken as string, leaseMs);
   if (!extended) {
     throw new AgentJobError("LEASE_STALE", "Job lease is no longer active", 409);
   }
@@ -610,7 +627,7 @@ async function reportAgentFailure(
   owned: OwnedJob,
   message: string
 ): Promise<AgentJobCompletion> {
-  const result = await failJob(owned.jobId, owned.deploymentId, agentId, message);
+  const result = await failJob(owned.jobId, owned.deploymentId, agentId, owned.leaseToken as string, message);
   const state = await readJobState(owned.jobId);
   return {
     jobId: owned.jobId,
@@ -684,18 +701,28 @@ export async function completeAgentJob(
         ...(input.commitSha != null ? { commitSha: input.commitSha } : {}),
       },
     });
-    await client.query(
+    const updated = await client.query(
       `
       UPDATE deployment_jobs
       SET status = 'succeeded',
           locked_at = NULL,
           locked_by = NULL,
           lease_expires_at = NULL,
+          lease_token = NULL,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
+        AND status = 'running'
+        AND locked_by = $2
+        AND lease_token = $3
+        AND lease_expires_at IS NOT NULL
+        AND lease_expires_at > CURRENT_TIMESTAMP
+      RETURNING id
       `,
-      [owned.jobId]
+      [owned.jobId, validAgent, owned.leaseToken]
     );
+    if (updated.rows.length !== 1) {
+      throw new AgentJobError("LEASE_STALE", "Job lease is no longer active", 409);
+    }
   }).then(async () => {
     const state = await readJobState(owned.jobId);
     return {

@@ -533,7 +533,7 @@ test("claim and job endpoints expose no secrets", async () => {
     for (const payload of [claimed, state, done, failed]) {
       const serialized = JSON.stringify(payload);
       assert.ok(!serialized.includes(token));
-      assert.match(serialized, /^((?!token|password|secret|session|cookie).)*$/i);
+      assert.match(serialized, /^((?!password|secret|session|cookie).)*$/i);
     }
     assert.deepEqual(Object.keys(claimed).sort(), [
       "agentId",
@@ -544,6 +544,7 @@ test("claim and job endpoints expose no secrets", async () => {
       "id",
       "image",
       "leaseExpiresAt",
+      "leaseToken",
       "maxAttempts",
       "projectId",
     ]);

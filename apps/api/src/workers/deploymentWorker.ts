@@ -161,6 +161,7 @@ async function processJob() {
         const renewed = await extendJobLease(
           job.id,
           WORKER_ID,
+          job.leaseToken,
           LEASE_MS
         );
 
@@ -227,13 +228,14 @@ async function processJob() {
         job.id,
         job.deploymentId,
         WORKER_ID,
+        job.leaseToken,
         `DUPLICATE_EXECUTION_CONVERGED: duplicate execution converged onto release ${adopted}`,
         "DUPLICATE_EXECUTION_CONVERGED"
       );
       return true;
     }
 
-    await completeJob(job.id, job.deploymentId, WORKER_ID);
+    await completeJob(job.id, job.deploymentId, WORKER_ID, job.leaseToken);
 
     log("info", "deployment.job_completed", {
       jobId: job.id,
@@ -288,11 +290,12 @@ async function processJob() {
           job.id,
           job.deploymentId,
           WORKER_ID,
+          job.leaseToken,
           `${code}: ${message}`,
           code
         );
       } else {
-        await failJob(job.id, job.deploymentId, WORKER_ID, `${code}: ${message}`, code);
+        await failJob(job.id, job.deploymentId, WORKER_ID, job.leaseToken, `${code}: ${message}`, code);
       }
     } catch (failError) {
       log("error", "deployment.fail_recording_failed", {

@@ -86,6 +86,7 @@ test("claim increments attempts and records attempt history", async () => {
       claimed!.id,
       claimed!.deploymentId,
       "test-worker-1",
+      claimed!.leaseToken,
       "test failure"
     );
     const events = await getDeploymentEvents(deployment.id);
@@ -153,7 +154,7 @@ test("central worker cannot claim edge-targeted jobs but still claims central on
     assert.ok(claimed);
     assert.equal(claimed?.deploymentId, centralDeployment.id);
 
-    await failJob(claimed!.id, claimed!.deploymentId, "central-iso-probe", "release central job");
+    await failJob(claimed!.id, claimed!.deploymentId, "central-iso-probe", claimed!.leaseToken, "release central job");
     const none = await claimNextJob("central-iso-probe", 30_000);
     assert.equal(none, null);
     const edgeJob = await pool.query(

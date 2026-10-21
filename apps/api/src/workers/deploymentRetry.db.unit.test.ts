@@ -36,10 +36,39 @@ async function setupRunningJob(tag: string) {
     trigger: "manual",
     idempotencyKey: null,
   });
-  const claimed = await claimNextJob(`rt-worker-${tag}`, 30_000);
-  assert.ok(claimed);
+
+  let claimed = null;
+  let worker = "";
+  for (let attempt = 0; attempt < 20 && claimed === null; attempt++) {
+    worker = `rt-worker-${tag}-${Date.now()}-${attempt}`;
+    const candidate = await claimNextJob(worker, 30_000);
+    if (candidate === null) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      continue;
+    }
+    if (candidate.deploymentId === deployment.id) {
+      claimed = candidate;
+      break;
+    }
+    // Reclaiming an expired stale job from an earlier failed run must not
+    // leave it running; failing it preserves the append-only attempt history.
+    try {
+      await failJobTerminal(
+        candidate.id,
+        candidate.deploymentId,
+        worker,
+        candidate.leaseToken,
+        "STALE_TEST_JOB",
+        "STALE_TEST_JOB"
+      );
+    } catch {
+      // Another worker may have already reclaimed it; try the queue again.
+    }
+  }
+
+  assert.ok(claimed, "failed to claim the fixture deployment");
   assert.equal(claimed.deploymentId, deployment.id);
-  return { project, deployment, claimed, worker: `rt-worker-${tag}` };
+  return { project, deployment, claimed, worker };
 }
 
 async function deploymentRow(id: string) {
@@ -68,6 +97,7 @@ test("retryable failure persists the typed error code and requeues", async () =>
       claimed.id,
       claimed.deploymentId,
       worker,
+      claimed.leaseToken,
       "BUILD_FAILED: build blew up",
       "BUILD_FAILED"
     );
@@ -90,6 +120,7 @@ test("retryable failure without a code keeps the generic retry code", async () =
       claimed.id,
       claimed.deploymentId,
       worker,
+      claimed.leaseToken,
       "something broke"
     );
     assert.equal(outcome, "retrying");
@@ -112,6 +143,7 @@ test("retry exhaustion persists the typed code and stops", async () => {
       claimed.id,
       claimed.deploymentId,
       worker,
+      claimed.leaseToken,
       "HEALTH_CHECK_FAILED: still red",
       "HEALTH_CHECK_FAILED"
     );
@@ -134,6 +166,7 @@ test("permanent failure terminates immediately with the typed code", async () =>
       claimed.id,
       claimed.deploymentId,
       worker,
+      claimed.leaseToken,
       "CLONE_FAILED: no such repo",
       "CLONE_FAILED"
     );
@@ -152,11 +185,11 @@ test("failure from a stale worker is rejected and changes nothing", async () => 
   const { project, claimed, worker } = await setupRunningJob("stale");
   try {
     await assert.rejects(
-      failJob(claimed.id, claimed.deploymentId, "impostor", "boom", "BUILD_FAILED"),
+      failJob(claimed.id, claimed.deploymentId, "impostor", claimed.leaseToken, "boom", "BUILD_FAILED"),
       /no longer owned/
     );
     await assert.rejects(
-      failJobTerminal(claimed.id, claimed.deploymentId, "impostor", "boom", "BUILD_FAILED"),
+      failJobTerminal(claimed.id, claimed.deploymentId, "impostor", claimed.leaseToken, "boom", "BUILD_FAILED"),
       /no longer owned/
     );
     const job = await jobRow(claimed.id);

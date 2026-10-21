@@ -51,7 +51,6 @@ function enableFlag(): void {
   process.env.DEPLOYKIT_EDGE_BUILD_ENABLED = "true";
 }
 
-/** Resolves when the executor's signal aborts, then fails like a real abort. */
 function executorThatAborts(onStart?: () => void): DeploymentExecutor {
   return {
     execute: async (ctx) => {
@@ -71,7 +70,6 @@ test("a definitive lease-renewal failure aborts the running executor", async () 
   let executed = false;
   const done = processEdgeBuildJob({
     claim: async () => fakeJob(),
-    // Definitive loss on the very first renewal.
     extendLease: async () => false,
     executor: executorThatAborts(() => {
       executed = true;
@@ -79,7 +77,6 @@ test("a definitive lease-renewal failure aborts the running executor", async () 
     queryDeploymentStatus: async () => "building",
   });
 
-  // The renewal timer fires after LEASE_RENEWAL_MS (lease/3).
   await new Promise((r) => setTimeout(r, 15_000));
 
   assert.ok(executed, "executor should have started");
@@ -90,9 +87,6 @@ test("a lost lease never reaches the hand-off path", async () => {
   if (!(await ready())) return;
   enableFlag();
 
-  // Any call into the real hand-off would require a live DB row; if the code
-  // attempted it, the token/ownership guard would reject. Reaching here with the
-  // injected claim proves the loop returned without touching completion.
   const done = processEdgeBuildJob({
     claim: async () => fakeJob(),
     extendLease: async () => false,
@@ -123,7 +117,6 @@ test("lease-renewal exceptions follow a bounded policy and abort", async () => {
     queryDeploymentStatus: async () => "building",
   });
 
-  // Long enough for the bounded threshold (3 consecutive) to trip and abort.
   await new Promise((r) => setTimeout(r, 45_000));
   await done;
 
@@ -146,8 +139,6 @@ test("a successful renewal resets the consecutive-failure counter", async () => 
     claim: async () => fakeJob(),
     extendLease: async () => {
       calls += 1;
-      // Two transient failures, one success (resets the counter), two more
-      // transient failures, then a definitive loss.
       if (calls === 3) return true;
       if (calls >= 6) return false;
       throw new Error("transient");
@@ -192,8 +183,6 @@ test("lease renewal requests never overlap", async () => {
       if (calls > 3) return false;
       inFlight += 1;
       maxConcurrent = Math.max(maxConcurrent, inFlight);
-      // Deliberately slower than the renewal interval: without the overlap
-      // guard a second renewal would be started while this one is pending.
       await new Promise((r) => setTimeout(r, 25_000));
       inFlight -= 1;
       return true;
@@ -235,7 +224,6 @@ test("deployment cancellation aborts via the watcher without a build failure", a
         throw new Error("aborted");
       },
     },
-    // The watcher polls this; report "cancelled" immediately.
     queryDeploymentStatus: async () => "cancelled",
   });
 

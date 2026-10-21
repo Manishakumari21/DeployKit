@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# Isolated registry integration test for Phase 06.
-# Boots an ephemeral local registry on 127.0.0.1, runs the
-# dockerImageRegistry integration suite against it, then cleans up.
-# Does NOT touch the Compose registry service or any volumes.
 set -euo pipefail
 
 PORT="${REGISTRY_TEST_PORT:-}"

@@ -273,7 +273,6 @@ test("explicit builder networks are not consulted when discovery succeeds", asyn
   assert.ok(discoveredIndex > 0 && explicitIndex > discoveredIndex,
     "explicit configuration must only be read after container discovery fails");
 
-  // Validation must never attach a network.
   const validateStart = src.indexOf("async function assertDockerNetworksExist");
   const validateEnd = src.indexOf("async function workerContainerNetworks");
   const segment = src.slice(validateStart, validateEnd);

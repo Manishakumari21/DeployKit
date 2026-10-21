@@ -122,8 +122,6 @@ test("a newly created edge-targeted deployment starts in the build phase only wh
     );
     return r.rows[0].id as string;
   };
-  // Separate projects: the per-project concurrency guard allows only one
-  // non-terminal deployment at a time.
   const edgeProjectId = await mkProject("edge-off");
   const onProjectId = await mkProject("edge-on");
   const centralProjectId = await mkProject("central");
@@ -136,11 +134,6 @@ test("a newly created edge-targeted deployment starts in the build phase only wh
   };
   const saved = process.env.DEPLOYKIT_EDGE_BUILD_ENABLED;
   try {
-    // Flag OFF (default): the build phase must not engage, so edge deployments
-    // stay in the execution phase and remain claimable by the agent, which
-    // then fails closed with EDGE_IMAGE_CONTRACT_MISSING as before. Creating
-    // them in 'build' while disabled strands the job: no worker claims a build
-    // job and the agent refuses anything that is not 'execute'.
     delete process.env.DEPLOYKIT_EDGE_BUILD_ENABLED;
     assert.equal(isEdgeBuildEnabled(), false);
     const agentOff = await createAgent(edgeProjectId, `phase-off-${stamp}`);
@@ -157,9 +150,6 @@ test("a newly created edge-targeted deployment starts in the build phase only wh
       "with the flag off an edge deployment must stay claimable by the agent"
     );
 
-    // Flag ON: the deployment must start in the build phase, otherwise the
-    // build worker (which requires job_phase = 'build') can never claim it and
-    // the image contract can never be satisfied.
     process.env.DEPLOYKIT_EDGE_BUILD_ENABLED = "true";
     assert.equal(isEdgeBuildEnabled(), true);
     const agentOn = await createAgent(onProjectId, `phase-on-${stamp}`);
@@ -176,7 +166,6 @@ test("a newly created edge-targeted deployment starts in the build phase only wh
       "with the flag on an edge deployment must start in the build phase"
     );
 
-    // Central deployments are never affected by the flag.
     const central = await createDeployment({
       projectId: centralProjectId,
       trigger: "manual",
@@ -709,7 +698,6 @@ test("flag disabled: queued build jobs are demoted with durable events", async (
     assert.equal(row.locked_by, null, "demotion must not take a lease");
     assert.equal(row.lease_token, null);
 
-    // The deployment row itself is untouched, including any image metadata.
     const dep = await pool.query(
       `SELECT status, image_digest, image_repository FROM deployments WHERE id = $1`,
       [f.deploymentId]
@@ -752,7 +740,6 @@ test("repeated demotion is idempotent and writes no duplicate events", async () 
       "the first invocation must demote this job"
     );
 
-    // Later invocations must never re-report this job, whatever else exists.
     const second = await demoteEdgeBuildJobsWhenDisabled();
     const third = await demoteEdgeBuildJobsWhenDisabled();
     assert.ok(
@@ -782,7 +769,6 @@ test("demotion leaves running, cancelled, execute-phase and central jobs alone",
   const executePhase = await createEdgeFixture("demote-execute");
   const central = await createEdgeFixture("demote-central");
   try {
-    // A running build owns a lease; demotion must not steal or alter it.
     await pool.query(
       `UPDATE deployment_jobs
        SET status = 'running',
@@ -794,18 +780,15 @@ test("demotion leaves running, cancelled, execute-phase and central jobs alone",
        WHERE id = $1`,
       [running.jobId]
     );
-    // A cancelled deployment's job is terminal and must stay that way.
     await pool.query(`UPDATE deployments SET status = 'cancelled' WHERE id = $1`, [
       cancelled.deploymentId,
     ]);
     await pool.query(`UPDATE deployment_jobs SET status = 'cancelled' WHERE id = $1`, [
       cancelled.jobId,
     ]);
-    // An already-execute-phase job has nothing to demote.
     await pool.query(`UPDATE deployment_jobs SET job_phase = 'execute' WHERE id = $1`, [
       executePhase.jobId,
     ]);
-    // A central (non edge-targeted) deployment is never an edge build job.
     await pool.query(`UPDATE deployments SET target_agent_id = NULL WHERE id = $1`, [
       central.deploymentId,
     ]);
@@ -874,7 +857,6 @@ test("a demoted job still fails closed: the agent claims it and finds no image",
     const demoted = await demoteEdgeBuildJobsWhenDisabled();
     assert.ok(demoted.includes(f.jobId), "this job must be demoted");
 
-    // Demotion must not invent image metadata.
     const dep = await pool.query(
       `SELECT image_repository, image_digest FROM deployments WHERE id = $1`,
       [f.deploymentId]
@@ -882,8 +864,6 @@ test("a demoted job still fails closed: the agent claims it and finds no image",
     assert.equal(dep.rows[0].image_repository, null);
     assert.equal(dep.rows[0].image_digest, null);
 
-    // The agent can now claim it (execute phase), and gets image = null,
-    // which the executor rejects with EDGE_IMAGE_CONTRACT_MISSING.
     const claimed = await claimAgentJob(f.agentId);
     assert.ok(claimed, "a demoted job must be claimable by the agent");
     assert.equal(claimed.id, f.jobId);

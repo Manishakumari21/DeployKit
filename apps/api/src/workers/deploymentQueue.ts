@@ -59,10 +59,6 @@ async function claimNextJobAttempt(
       FROM deployment_jobs j
       JOIN deployments d ON d.id = j.deployment_id
       WHERE
-        -- Central workers own only untargeted deployments. Jobs whose
-        -- deployment names an edge agent (target_agent_id IS NOT NULL) are
-        -- claimed exclusively through the agent API; without this filter a
-        -- central worker would race (and build for) edge-targeted work.
         d.target_agent_id IS NULL
         AND (
           (
@@ -984,8 +980,6 @@ export async function recoverExpiredJobs(): Promise<number> {
             lease_expires_at = NULL,
             lease_token = NULL,
             last_error = $2,
-            -- Dead-letter whichever budget governs this phase. Build-phase jobs
-            -- must not poison (or consume) the execution budget.
             build_attempts = CASE
               WHEN $3 THEN GREATEST(build_attempts, max_build_attempts)
               ELSE build_attempts

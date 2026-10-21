@@ -50,8 +50,6 @@ async function setupRunningJob(tag: string) {
       claimed = candidate;
       break;
     }
-    // Reclaiming an expired stale job from an earlier failed run must not
-    // leave it running; failing it preserves the append-only attempt history.
     try {
       await failJobTerminal(
         candidate.id,
@@ -62,7 +60,6 @@ async function setupRunningJob(tag: string) {
         "STALE_TEST_JOB"
       );
     } catch {
-      // Another worker may have already reclaimed it; try the queue again.
     }
   }
 

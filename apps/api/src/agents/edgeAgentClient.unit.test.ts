@@ -76,14 +76,6 @@ test("classifies network failure, timeout, and 5xx as transient (never rejection
       init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
     })) as unknown) as typeof fetch,
   });
-  // AbortSignal.timeout() is backed by an unref'd timer, so it does not keep
-  // the event loop alive by itself. A running agent always has its poll loop
-  // holding the loop open, so production is unaffected; this test has no other
-  // pending work, so on some Node versions (observed on Node 22 in CI) the loop
-  // drains before the abort fires and the test is reported as an unsettled
-  // promise. Hold the loop open explicitly until the request settles. This
-  // keeps the assertion on real production behaviour and changes no timeout
-  // semantics in the client itself.
   const keepAlive = setInterval(() => {}, 10);
   try {
     await assert.rejects(hanging.claimJob(), EdgeApiTransientError);
@@ -104,14 +96,10 @@ test("an externally aborted request is transient and never leaks the token", asy
     })) as unknown) as typeof fetch,
   });
 
-  // Uses the caller-owned signal rather than the client's internal timeout, so
-  // this exercises the cancellation branch deterministically without relying on
-  // unref'd timer semantics.
   const pending = client.claimJob(controller.signal);
   controller.abort();
   await assert.rejects(pending, EdgeApiTransientError);
 
-  // An already-aborted signal is rejected before any request is sent.
   const preAborted = new AbortController();
   preAborted.abort();
   await assert.rejects(client.claimJob(preAborted.signal), EdgeApiTransientError);

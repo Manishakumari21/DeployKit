@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import {
   parseProjectDomains,
   renderProjectRoute,
@@ -91,4 +93,27 @@ test("invalid TLS entries are rejected before reaching nginx", () => {
     });
   }
   assert.deepEqual(sanitizeTlsEntries([]), []);
+});
+
+test("static registry TLS route uses HTTP/1.1 proxying for blob uploads", async () => {
+  const content = await readFile(
+    join(process.cwd(), "..", "..", "ops", "gateway", "routes", "deploykit-registry-tls.conf"),
+    "utf8"
+  );
+  assert.match(content, /listen 443 ssl;/);
+  assert.match(content, /server_name deploykit-registry-tls;/);
+  assert.match(
+    content,
+    /ssl_certificate \/etc\/nginx\/certs\/deploykit-registry-tls\/fullchain\.pem;/
+  );
+  assert.match(
+    content,
+    /ssl_certificate_key \/etc\/nginx\/certs\/deploykit-registry-tls\/private-key\.pem;/
+  );
+  assert.match(content, /proxy_pass http:\/\/registry:5000;/);
+  assert.match(content, /proxy_http_version 1\.1;/);
+  assert.match(content, /proxy_set_header Connection "";/);
+  assert.match(content, /proxy_set_header X-Forwarded-Proto \$scheme;/);
+  assert.match(content, /client_max_body_size 0;/);
+  assert.match(content, /proxy_request_buffering off;/);
 });

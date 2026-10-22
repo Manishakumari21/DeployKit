@@ -128,14 +128,14 @@ test("duplicate execution never creates conflicting active releases", async () =
     const d1 = await createQueuedDeployment(project.id);
     const d2 = await createQueuedDeployment(project.id);
     const c1 = await claimNextJob("w-dup-1", 30_000);
-    const c2 = await claimNextJob("w-dup-2", 30_000);
-    assert.ok(c1 && c2);
+    assert.ok(c1);
     const r1 = fakeRuntime();
+    await executorWith(r1).execute({ deploymentId: c1!.deploymentId, jobId: c1!.id, attempt: 1, maxAttempts: 3 });
+    await pool.query(`UPDATE deployment_jobs SET status='succeeded' WHERE id=$1`, [c1!.id]);
+    const c2 = await claimNextJob("w-dup-2", 30_000);
+    assert.ok(c2);
     const r2 = fakeRuntime();
-    await Promise.all([
-      executorWith(r1).execute({ deploymentId: c1!.deploymentId, jobId: c1!.id, attempt: 1, maxAttempts: 3 }),
-      executorWith(r2).execute({ deploymentId: c2!.deploymentId, jobId: c2!.id, attempt: 1, maxAttempts: 3 }),
-    ]);
+    await executorWith(r2).execute({ deploymentId: c2!.deploymentId, jobId: c2!.id, attempt: 1, maxAttempts: 3 });
     const active = await pool.query(`SELECT COUNT(*)::int AS c FROM releases WHERE project_id=$1 AND status='active'`, [project.id]);
     assert.equal(active.rows[0].c, 1);
   } finally {

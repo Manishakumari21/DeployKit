@@ -1,6 +1,7 @@
 import pool from "../db/database.js";
 import { DockerRuntimeManager } from "../infrastructure/runtime/dockerRuntimeManager.js";
 import type { RuntimeManager } from "../infrastructure/runtime/runtimeManager.js";
+import { NginxGatewayRouter } from "../infrastructure/gateway/nginxGatewayRouter.js";
 
 export interface RuntimeHealthSummary {
   checked: number;
@@ -160,6 +161,12 @@ export async function checkActiveRuntimeHealth(
       containerName: row.container_name,
       previousStatus: row.status,
     });
+    try {
+      const router = new NginxGatewayRouter();
+      await router.remove(row.project_id);
+    } catch {
+      // Best-effort cleanup; the unhealthy runtime row remains the source of truth.
+    }
   }
 
   return summary;

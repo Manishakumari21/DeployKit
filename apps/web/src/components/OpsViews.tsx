@@ -257,7 +257,7 @@ export function LogsView({
 
   return (
     <Panel className="overflow-hidden">
-      {/* Terminal chrome */}
+
       <div className="flex items-center gap-1.5 border-b border-edge bg-ink-950 px-4 py-2.5">
         <span aria-hidden className="size-2.5 rounded-full bg-red-400/70" />
         <span aria-hidden className="size-2.5 rounded-full bg-amber-300/70" />

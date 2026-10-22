@@ -185,6 +185,11 @@ export async function reconcileProjectGateway(
   for (let round = 0; round < Math.max(1, maxRounds); round += 1) {
     const target = await resolveActiveRoute(projectId);
     if (!target) {
+      try {
+        await router.remove(projectId);
+      } catch {
+        // Best-effort cleanup of a stale route.
+      }
       return { status: "no-active-route", releaseId: null };
     }
     await syncProjectTarget(projectId, target, { router, timeoutMs });

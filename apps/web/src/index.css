@@ -4,7 +4,7 @@
   --font-sans: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* Launch-control ink: blue-black, single cool family */
+  
   --color-ink-950: #0a0d12;
   --color-ink-900: #0f141b;
   --color-ink-850: #131a23;
@@ -16,7 +16,7 @@
   --color-fog-200: #c3d0de;
   --color-fog-100: #e6edf4;
 
-  /* The single signal accent — phosphor green. Everything "live" is this. */
+  
   --color-signal-300: #7dedb0;
   --color-signal-400: #3ecf8e;
   --color-signal-500: #25a86f;
@@ -72,7 +72,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Blueprint grid backdrop — the console table everything sits on */
+
 .dk-grid-bg {
   background-image:
     linear-gradient(to right, rgb(148 178 205 / 0.055) 1px, transparent 1px),
@@ -81,7 +81,7 @@ body {
   mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, black 30%, transparent 100%);
 }
 
-/* Film grain to break digital flatness */
+
 .dk-noise::after {
   content: "";
   position: fixed;
@@ -92,7 +92,7 @@ body {
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
-/* Glass edge: 1px inner highlight for refraction feel */
+
 .dk-panel {
   background: linear-gradient(180deg, rgb(24 32 44 / 0.72), rgb(15 20 27 / 0.86));
   border: 1px solid var(--color-edge);
@@ -113,7 +113,7 @@ body {
     0 8px 32px -12px rgb(62 207 142 / 0.45);
 }
 
-/* Staggered entry: children cascade in */
+
 .dk-stagger > * {
   animation: var(--animate-rise);
 }
@@ -153,7 +153,7 @@ body {
   background: #31445a;
 }
 
-/* Visible keyboard focus everywhere */
+
 :where(button, a, input, select, [tabindex]):focus-visible {
   outline: 2px solid var(--color-signal-400);
   outline-offset: 2px;

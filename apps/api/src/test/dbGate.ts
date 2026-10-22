@@ -9,6 +9,7 @@ export const DB_GATED_SUITES: readonly string[] = [
   "deployments/deploymentEvents.db.unit.test.ts",
   "services/authentication.db.unit.test.ts",
   "services/authorizationService.db.unit.test.ts",
+  "services/buildConfig.db.unit.test.ts",
   "services/certIssuance.db.unit.test.ts",
   "services/certService.db.unit.test.ts",
   "services/deploymentConcurrency.db.unit.test.ts",

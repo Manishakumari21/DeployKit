@@ -12,6 +12,12 @@ import {
   unlinkProjectGithubController,
 } from "../controllers/githubLinkController.js";
 import {
+  deleteBuildConfigController,
+  detectProjectController,
+  getBuildConfigController,
+  putBuildConfigController,
+} from "../controllers/buildConfigController.js";
+import {
   authenticate,
   requireProjectAccess,
 } from "../middleware/auth.js";
@@ -26,6 +32,11 @@ router.get("/", authenticate, getProjectsController);
 
 router.get("/:id", requireProjectAccess, getProjectController);
 router.delete("/:id", requireProjectAccess, deleteProjectController);
+
+router.get("/:id/build-config", requireProjectAccess, getBuildConfigController);
+router.put("/:id/build-config", requireProjectAccess, putBuildConfigController);
+router.delete("/:id/build-config", requireProjectAccess, deleteBuildConfigController);
+router.post("/:id/detect", requireProjectAccess, detectProjectController);
 
 router.post("/:id/github-link", requireProjectAccess, linkProjectGithubController);
 router.get("/:id/github-link", requireProjectAccess, getProjectGithubLinkController);

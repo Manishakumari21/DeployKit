@@ -1,4 +1,4 @@
-import { lstatSync, realpathSync } from "node:fs";
+import { lstatSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 
@@ -102,48 +102,68 @@ function resolveInside(
   kind: TargetKind,
   allowMissing = false
 ): string {
-  const target =
-    relative === "." ? workspace : path.resolve(workspace, ...relative.split("/"));
-  if (target !== workspace && !target.startsWith(`${workspace}${path.sep}`)) {
+  const segments = relative === "." ? [] : relative.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
     throw new BuildConfigError("PATH_ESCAPE", "Path escapes the repository root");
   }
 
-  let probe = target;
-  while (probe !== workspace && probe.startsWith(`${workspace}${path.sep}`)) {
+  if (segments.length === 0) {
+    if (kind === "file") {
+      throw new BuildConfigError("INVALID_PATH", "Path must be a regular file");
+    }
+    return workspace;
+  }
+
+  const target = path.resolve(workspace, ...segments);
+  const relativeTarget = path.relative(workspace, target);
+  if (relativeTarget.startsWith("..") || path.isAbsolute(relativeTarget)) {
+    throw new BuildConfigError("PATH_ESCAPE", "Path escapes the repository root");
+  }
+
+  let current = workspace;
+  for (let index = 0; index < segments.length; index += 1) {
+    current = path.join(current, segments[index]);
+    const isFinal = index === segments.length - 1;
+
     let stat;
     try {
-      stat = lstatSync(probe);
-    } catch {
-      if (!allowMissing) {
+      stat = lstatSync(current);
+    } catch (error) {
+      const missing = (error as NodeJS.ErrnoException).code === "ENOENT";
+      if (!allowMissing || !missing) {
         throw new BuildConfigError("PATH_NOT_FOUND", "Path does not exist in the repository");
       }
-      probe = path.dirname(probe);
-      continue;
+      return target;
     }
 
     if (stat.isSymbolicLink()) {
       throw new BuildConfigError("SYMLINK_NOT_ALLOWED", "Symbolic links are not allowed");
     }
-    if (realpathOrThrow(probe) !== probe) {
+
+    const canonical = realpathOrThrow(current);
+    if (canonical !== current) {
       throw new BuildConfigError(
         "SYMLINK_NOT_ALLOWED",
         "Path must not traverse symbolic links"
       );
     }
-    if (probe === target) {
-      if (kind === "dir" && !stat.isDirectory()) {
+    const relativeCanonical = path.relative(workspace, canonical);
+    if (relativeCanonical.startsWith("..") || path.isAbsolute(relativeCanonical)) {
+      throw new BuildConfigError("PATH_ESCAPE", "Path escapes the repository root");
+    }
+
+    if (!isFinal) {
+      if (!stat.isDirectory()) {
         throw new BuildConfigError("INVALID_PATH", "Path must be a directory");
       }
-      if (kind === "file" && !stat.isFile()) {
-        throw new BuildConfigError("INVALID_PATH", "Path must be a regular file");
-      }
+    } else if (kind === "dir" ? !stat.isDirectory() : !stat.isFile()) {
+      throw new BuildConfigError(
+        "INVALID_PATH",
+        kind === "dir" ? "Path must be a directory" : "Path must be a regular file"
+      );
     }
-    return target;
   }
 
-  if (kind === "file") {
-    throw new BuildConfigError("INVALID_PATH", "Path must be a regular file");
-  }
   return target;
 }
 
@@ -156,6 +176,9 @@ export function validateBuildConfigAgainstWorkspace(
   let root: string;
   try {
     root = realpathSync(workspace);
+    if (!statSync(root).isDirectory()) {
+      throw new Error("workspace is not a directory");
+    }
   } catch {
     throw new BuildConfigError(
       "WORKSPACE_UNAVAILABLE",

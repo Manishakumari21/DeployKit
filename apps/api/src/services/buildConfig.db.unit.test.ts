@@ -28,9 +28,17 @@ import { withCheckedOutRepository } from "../infrastructure/git/sourceCheckout.j
 import { gateDb } from "../test/dbGate.js";
 
 const SUITE = "services/buildConfig.db.unit.test.ts";
+const SHARED_DATABASE = "deploykit";
+
+async function currentDatabase(): Promise<string> {
+  const result = await pool.query(`SELECT current_database() AS name`);
+  return String(result.rows[0]?.name ?? "");
+}
 
 async function dbAvailable(): Promise<boolean> {
   try {
+    if (!process.env.DATABASE_URL) return false;
+    if ((await currentDatabase()) === SHARED_DATABASE) return false;
     const table = await pool.query(`SELECT to_regclass('public.projects') AS c`);
     if (table.rows[0].c === null) return false;
     const column = await pool.query(
@@ -183,6 +191,19 @@ const explicitNode: BuildConfig = {
   startCommand: "npm start",
   outputDirectory: "build",
 };
+
+// --- Isolation --------------------------------------------------------------
+
+test("database is isolated from the shared deploykit database", async () => {
+  if (!process.env.DATABASE_URL) return;
+  const name = await currentDatabase().catch(() => null);
+  if (name === null) return;
+  assert.notEqual(
+    name,
+    SHARED_DATABASE,
+    "refusing to run against the shared deploykit database"
+  );
+});
 
 // --- Schema -----------------------------------------------------------------
 

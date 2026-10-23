@@ -3,7 +3,13 @@
 // response shapes. Purely filesystem-based; no database required.
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -322,6 +328,167 @@ test("missing output nested under a symlinked ancestor is rejected", () => {
       })
     ),
     "SYMLINK_NOT_ALLOWED"
+  );
+});
+
+test("deeply nested application root and Dockerfile are accepted", () => {
+  const root = workspace({
+    "apps/web/services/api/Dockerfile": "FROM node:20\n",
+  });
+  const result = validateBuildConfigAgainstWorkspace(root, {
+    applicationRoot: "apps/web/services/api",
+    builder: "dockerfile",
+    dockerfilePath: "Dockerfile",
+  });
+  assert.equal(result.config.applicationRoot, "apps/web/services/api");
+  assert.ok(
+    result.dockerfileAbsolute?.endsWith(
+      path.join("apps", "web", "services", "api", "Dockerfile")
+    )
+  );
+});
+
+test("the repository root is accepted as the application root", () => {
+  const root = workspace({ "package.json": "{}" });
+  const result = validateBuildConfigAgainstWorkspace(root, {
+    applicationRoot: ".",
+    builder: "node",
+  });
+  assert.equal(result.applicationRootAbsolute, realpathSync(root));
+});
+
+test("missing nested output directory under an existing ancestor is accepted", () => {
+  const root = workspace({ "package.json": "{}" }, ["build/assets"]);
+  const result = validateBuildConfigAgainstWorkspace(root, {
+    builder: "node",
+    outputDirectory: "build/assets/static",
+  });
+  assert.equal(result.config.outputDirectory, "build/assets/static");
+});
+
+test("output directory nested under a file is rejected", () => {
+  const root = workspace({ build: "not a directory" });
+  assert.equal(
+    errorCode(() =>
+      validateBuildConfigAgainstWorkspace(root, {
+        builder: "node",
+        outputDirectory: "build/assets",
+      })
+    ),
+    "INVALID_PATH"
+  );
+});
+
+test("existing output directory that is a file is rejected", () => {
+  const root = workspace({ dist: "not a directory" });
+  assert.equal(
+    errorCode(() =>
+      validateBuildConfigAgainstWorkspace(root, {
+        builder: "node",
+        outputDirectory: "dist",
+      })
+    ),
+    "INVALID_PATH"
+  );
+});
+
+test("nested Dockerfile under a file is rejected", () => {
+  const root = workspace({ "apps/web/sub": "not a directory" }, ["apps/web"]);
+  assert.equal(
+    errorCode(() =>
+      validateBuildConfigAgainstWorkspace(root, {
+        applicationRoot: "apps/web",
+        builder: "dockerfile",
+        dockerfilePath: "sub/Dockerfile",
+      })
+    ),
+    "INVALID_PATH"
+  );
+});
+
+test("symlinked intermediate directory is rejected for a nested Dockerfile", () => {
+  const outside = mkdtempSync(path.join(tmpdir(), "build-config-outside-"));
+  writeFileSync(path.join(outside, "Dockerfile"), "FROM scratch\n");
+  const root = workspace({}, ["apps/web"]);
+  symlinkSync(outside, path.join(root, "apps/web/sub"), "dir");
+
+  assert.equal(
+    errorCode(() =>
+      validateBuildConfigAgainstWorkspace(root, {
+        applicationRoot: "apps/web",
+        builder: "dockerfile",
+        dockerfilePath: "sub/Dockerfile",
+      })
+    ),
+    "SYMLINK_NOT_ALLOWED"
+  );
+});
+
+test("symlinked intermediate directory is rejected for a missing nested output", () => {
+  const outside = mkdtempSync(path.join(tmpdir(), "build-config-outside-"));
+  const root = workspace({}, ["build"]);
+  symlinkSync(outside, path.join(root, "build/cache"), "dir");
+
+  assert.equal(
+    errorCode(() =>
+      validateBuildConfigAgainstWorkspace(root, {
+        builder: "node",
+        outputDirectory: "build/cache/assets",
+      })
+    ),
+    "SYMLINK_NOT_ALLOWED"
+  );
+});
+
+test("a symlink pointing inside the workspace is still rejected", () => {
+  const root = workspace({}, ["real"]);
+  symlinkSync(path.join(root, "real"), path.join(root, "link"), "dir");
+
+  assert.equal(
+    errorCode(() =>
+      validateBuildConfigAgainstWorkspace(root, {
+        applicationRoot: "link",
+        builder: "node",
+      })
+    ),
+    "SYMLINK_NOT_ALLOWED"
+  );
+});
+
+test("traversal in a nested output path is rejected", () => {
+  const root = workspace({}, ["build"]);
+  assert.equal(
+    errorCode(() =>
+      validateBuildConfigAgainstWorkspace(root, {
+        builder: "node",
+        outputDirectory: "build/../../outside",
+      })
+    ),
+    "INVALID_CONFIG"
+  );
+});
+
+test("missing nested application root is rejected", () => {
+  const root = workspace({}, ["apps"]);
+  assert.equal(
+    errorCode(() =>
+      validateBuildConfigAgainstWorkspace(root, {
+        applicationRoot: "apps/missing/web",
+        builder: "node",
+      })
+    ),
+    "PATH_NOT_FOUND"
+  );
+});
+
+test("workspace that is a file is reported as unavailable", () => {
+  const parent = mkdtempSync(path.join(tmpdir(), "build-config-parent-"));
+  const file = path.join(parent, "workspace");
+  writeFileSync(file, "not a repository");
+
+  assert.equal(
+    errorCode(() => validateBuildConfigAgainstWorkspace(file, { builder: "node" })),
+    "WORKSPACE_UNAVAILABLE"
   );
 });
 

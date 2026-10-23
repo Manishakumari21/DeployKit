@@ -366,6 +366,65 @@ test("missing nested output directory under an existing ancestor is accepted", (
   assert.equal(result.config.outputDirectory, "build/assets/static");
 });
 
+test("output directory is resolved relative to the application root", () => {
+  const root = workspace({}, ["apps/web/dist"]);
+  const result = validateBuildConfigAgainstWorkspace(root, {
+    applicationRoot: "apps/web",
+    builder: "node",
+    outputDirectory: "dist",
+  });
+  assert.equal(
+    result.outputDirectoryAbsolute,
+    path.join(realpathSync(root), "apps", "web", "dist")
+  );
+});
+
+test("symlinked output directory under the application root is rejected", () => {
+  const outside = mkdtempSync(path.join(tmpdir(), "build-config-outside-"));
+  const root = workspace({}, ["apps/web"]);
+  symlinkSync(outside, path.join(root, "apps/web/dist"), "dir");
+
+  assert.equal(
+    errorCode(() =>
+      validateBuildConfigAgainstWorkspace(root, {
+        applicationRoot: "apps/web",
+        builder: "node",
+        outputDirectory: "dist",
+      })
+    ),
+    "SYMLINK_NOT_ALLOWED"
+  );
+});
+
+test("output directory under the application root that is a file is rejected", () => {
+  const root = workspace({ "apps/web/dist": "not a directory" });
+
+  assert.equal(
+    errorCode(() =>
+      validateBuildConfigAgainstWorkspace(root, {
+        applicationRoot: "apps/web",
+        builder: "node",
+        outputDirectory: "dist",
+      })
+    ),
+    "INVALID_PATH"
+  );
+});
+
+test("a root-level output symlink does not affect a different application root", () => {
+  const outside = mkdtempSync(path.join(tmpdir(), "build-config-outside-"));
+  const root = workspace({}, ["apps/web"]);
+  symlinkSync(outside, path.join(root, "dist"), "dir");
+
+  const result = validateBuildConfigAgainstWorkspace(root, {
+    applicationRoot: "apps/web",
+    builder: "node",
+    outputDirectory: "dist",
+  });
+  assert.equal(result.config.outputDirectory, "dist");
+  assert.ok(result.outputDirectoryAbsolute?.endsWith(path.join("apps", "web", "dist")));
+});
+
 test("output directory nested under a file is rejected", () => {
   const root = workspace({ build: "not a directory" });
   assert.equal(
@@ -649,6 +708,59 @@ test("saved explicit config is validated against the checkout without being chan
   assert.equal(response.effective?.buildCommand, "echo custom");
 });
 
+test("detection uses the saved application root instead of the repository root", () => {
+  const root = workspace({
+    "package.json": JSON.stringify({
+      name: "root",
+      scripts: { build: "root-build" },
+    }),
+    "apps/web/package.json": JSON.stringify({
+      name: "web",
+      scripts: { build: "web-build" },
+      devDependencies: { vite: "^5.0.0" },
+    }),
+    "apps/web/vite.config.ts": "export default {};",
+  });
+  const explicit: BuildConfig = {
+    applicationRoot: "apps/web",
+    builder: "node",
+    dockerfilePath: null,
+    buildCommand: null,
+    startCommand: null,
+    outputDirectory: null,
+  };
+
+  const response = runDetectionInWorkspace(root, "a".repeat(40), explicit);
+  assert.equal(response.status, "detected");
+  assert.equal(response.detected?.config.applicationRoot, "apps/web");
+  assert.equal(response.detected?.config.buildCommand, "web-build");
+  assert.ok(
+    response.detected?.evidence.some((entry) => entry.file === "apps/web/package.json")
+  );
+  assert.deepEqual(response.explicitIssues, []);
+  assert.equal(response.effective?.applicationRoot, "apps/web");
+  assert.equal(response.effective?.buildCommand, "web-build");
+});
+
+test("nested monorepo candidates are reported relative to the repository root", () => {
+  const root = workspace({
+    "apps/web/package.json": JSON.stringify({ name: "web" }),
+    "apps/web/packages/lib/package.json": JSON.stringify({ name: "lib" }),
+  });
+  const explicit: BuildConfig = {
+    applicationRoot: "apps/web",
+    builder: "node",
+    dockerfilePath: null,
+    buildCommand: null,
+    startCommand: null,
+    outputDirectory: null,
+  };
+
+  const response = runDetectionInWorkspace(root, "b".repeat(40), explicit);
+  assert.equal(response.status, "ambiguous");
+  assert.deepEqual(response.ambiguous?.candidates, ["apps/web/packages/lib"]);
+});
+
 test("evidence and suggestions are capped in the response", () => {
   const evidence = Array.from({ length: 120 }, (_, i) => ({
     file: `f${i}.json`,
@@ -711,6 +823,7 @@ test("detected config maps builder kinds explicitly", () => {
   };
   assert.equal(detectionToConfig(base).builder, "dockerfile");
   assert.equal(detectionToConfig(base).dockerfilePath, "Dockerfile");
+  assert.equal(detectionToConfig(base, "apps/web").applicationRoot, "apps/web");
   assert.equal(detectionToConfig({ ...base, kind: "rust" }).builder, "rust");
   assert.equal(detectionToConfig({ ...base, kind: "static" }).dockerfilePath, null);
 });

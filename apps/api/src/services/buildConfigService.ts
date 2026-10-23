@@ -84,6 +84,7 @@ export interface ValidatedBuildConfig {
   config: BuildConfig;
   applicationRootAbsolute: string;
   dockerfileAbsolute: string | null;
+  outputDirectoryAbsolute: string | null;
 }
 
 type TargetKind = "dir" | "file";
@@ -199,11 +200,11 @@ export function validateBuildConfigAgainstWorkspace(
         )
       : null;
 
-  if (config.outputDirectory) {
-    resolveInside(root, config.outputDirectory, "dir", true);
-  }
+  const outputDirectoryAbsolute = config.outputDirectory
+    ? resolveInside(applicationRootAbsolute, config.outputDirectory, "dir", true)
+    : null;
 
-  return { config, applicationRootAbsolute, dockerfileAbsolute };
+  return { config, applicationRootAbsolute, dockerfileAbsolute, outputDirectoryAbsolute };
 }
 
 export interface StoredBuildConfig {

@@ -63,6 +63,26 @@ async function main(): Promise<number> {
        )`
     );
 
+    const migrationCount = await client.query<{ count: string }>(
+      "SELECT count(*) FROM schema_migrations"
+    );
+    const applicationTableCount = await client.query<{ count: string }>(
+      `SELECT count(*) FROM information_schema.tables
+       WHERE table_schema = 'public'
+         AND table_type = 'BASE TABLE'
+         AND table_name <> 'schema_migrations'`
+    );
+    if (
+      Number(migrationCount.rows[0]?.count ?? 0) === 0 &&
+      Number(applicationTableCount.rows[0]?.count ?? 0) > 0
+    ) {
+      console.error(
+        "migrate: schema_migrations is empty but application tables exist; refusing to run. " +
+          "Run `npm run db:reconcile -- --check-only`, then `npm run db:reconcile -- --apply`."
+      );
+      return 3;
+    }
+
     const files = readdirSync(MIGRATIONS_DIR)
       .filter((f) => f.endsWith(".sql"))
       .sort();

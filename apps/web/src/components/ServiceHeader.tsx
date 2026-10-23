@@ -1,18 +1,20 @@
-import { GitBranch, RotateCw } from "lucide-react";
+import { GitBranch, Hammer, RotateCw } from "lucide-react";
 import { shortRepo } from "../lib/format";
 import type { ApiDeployment, Project } from "../types";
-import { DeployBtn, Eyebrow, Panel, StatusPill } from "./ui";
+import { DeployBtn, Eyebrow, Panel, QuietBtn, StatusPill } from "./ui";
 
 export function ServiceHeader({
   project,
   live,
   creating,
   onDeploy,
+  onBuildConfig,
 }: {
   project: Project | undefined;
   live: ApiDeployment | undefined;
   creating: boolean;
   onDeploy: () => void;
+  onBuildConfig?: () => void;
 }) {
   if (!project)
     return (
@@ -63,6 +65,12 @@ export function ServiceHeader({
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
+          {onBuildConfig && (
+            <QuietBtn type="button" onClick={onBuildConfig} aria-label="Open build configuration">
+              <Hammer size={14} />
+              Build config
+            </QuietBtn>
+          )}
           <DeployBtn onClick={onDeploy} disabled={creating} aria-label="Redeploy service">
             <RotateCw size={14} className={creating ? "animate-spin-slower" : ""} />
             {creating ? "Deploying…" : "Redeploy"}

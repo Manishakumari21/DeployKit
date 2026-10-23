@@ -170,6 +170,56 @@ test("Create React App classified from react-scripts dependency", () => {
   assert.ok(result.suggestions.some((s) => s.field === "outputDirectory" && s.value === "build"));
 });
 
+test("Vite is classified from a direct package.json script when dependency metadata is absent", () => {
+  const dir = workspace({
+    "package.json": JSON.stringify({
+      name: "app",
+      scripts: { build: "vite build", start: "vite preview" },
+    }),
+  });
+
+  const result = detectStack(dir);
+  assert.equal(result.framework, "vite");
+  assert.equal(result.buildCommand, "vite build");
+  assert.ok(
+    result.evidence.some(
+      (entry) => entry.file === "package.json" && entry.type === "script" && entry.fact.includes("vite")
+    )
+  );
+});
+
+test("quoted framework text in a script is not treated as a direct command", () => {
+  const dir = workspace({
+    "package.json": JSON.stringify({
+      name: "app",
+      scripts: { build: 'echo "prepare && vite build"' },
+    }),
+  });
+
+  const result = detectStack(dir);
+  assert.equal(result.framework, "none");
+});
+
+test("bun.lock evidence names the lockfile that actually exists", () => {
+  const dir = workspace({
+    "package.json": JSON.stringify({ name: "app" }),
+    "bun.lock": "",
+  });
+
+  const result = detectStack(dir);
+  assert.equal(result.packageManager, "bun");
+  assert.ok(
+    result.evidence.some(
+      (entry) => entry.type === "lockfile" && entry.file === "bun.lock"
+    )
+  );
+  assert.ok(
+    !result.evidence.some(
+      (entry) => entry.type === "lockfile" && entry.file === "bun.lockb"
+    )
+  );
+});
+
 // --- Flask / FastAPI ---------------------------------------------------------
 
 test("Flask classified from requirements.txt dependency", () => {
@@ -218,6 +268,46 @@ test("FastAPI classified from source import when requirements.txt lists no frame
   const result = detectStack(dir);
   assert.equal(result.framework, "fastapi");
   assert.ok(result.evidence.some((e) => e.file === "main.py" && e.fact === "imports fastapi"));
+});
+
+test("commented Python dependencies are not treated as framework evidence", () => {
+  const dir = workspace({
+    "requirements.txt": "# fastapi is intentionally disabled\nflask>=2.0\n",
+  });
+
+  const result = detectStack(dir);
+  assert.equal(result.framework, "flask");
+  assert.ok(!result.evidence.some((e) => e.fact.includes('"fastapi"')));
+});
+
+test("a pyproject description mentioning fastapi is not a dependency", () => {
+  const dir = workspace({
+    "pyproject.toml":
+      '[project]\nname = "svc"\ndescription = "fastapi service"\ndependencies = []\n',
+  });
+
+  const result = detectStack(dir);
+  assert.equal(result.framework, "none");
+});
+
+test("commented Python imports are not treated as framework evidence", () => {
+  const dir = workspace({
+    "requirements.txt": "# no framework pinned here\n",
+    "app.py": "# import fastapi\n# from flask import Flask\n",
+  });
+
+  const result = detectStack(dir);
+  assert.equal(result.framework, "none");
+});
+
+test("Pipfile dependencies are parsed by package section", () => {
+  const dir = workspace({
+    Pipfile: '[packages]\nfastapi = "*"\n\n[dev-packages]\n# flask = "*"\n',
+  });
+
+  const result = detectStack(dir);
+  assert.equal(result.framework, "fastapi");
+  assert.ok(result.evidence.some((e) => e.file === "Pipfile" && e.type === "dependency"));
 });
 
 // --- Rust -------------------------------------------------------------------
@@ -346,6 +436,17 @@ test("Monorepo with nested app roots reports candidates and never selects one", 
   assert.equal(codeOf(() => detectStack(dir)), "PREFLIGHT_NEEDS_CONFIG");
 });
 
+test("Nested app roots without a root package.json are ambiguous with candidates", () => {
+  const dir = workspace({
+    "apps/web/package.json": JSON.stringify({ name: "web" }),
+    "services/api/package.json": JSON.stringify({ name: "api" }),
+  });
+
+  const err = errorOf(() => detectStack(dir));
+  assert.equal(err.code, "PREFLIGHT_NEEDS_CONFIG");
+  assert.deepEqual(err.candidates, ["apps/web", "services/api"]);
+});
+
 test("pnpm workspace marker triggers NEEDS_CONFIG", () => {
   const dir = workspace({
     "pnpm-workspace.yaml": "packages:\n  - 'packages/*'\n",
@@ -389,7 +490,7 @@ test("Detection never executes repository scripts", () => {
 
 test("Symlinked framework config is treated as absent, not followed", () => {
   const dir = workspace({
-    "package.json": JSON.stringify({ name: "app", scripts: { build: "vite build" } }),
+    "package.json": JSON.stringify({ name: "app" }),
   });
   // Create a real config then replace with symlink to prove it is not read.
   const target = path.join(dir, "real-config.js");

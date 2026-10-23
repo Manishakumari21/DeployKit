@@ -17,6 +17,7 @@ import {
   getBuildConfigController,
   putBuildConfigController,
 } from "../controllers/buildConfigController.js";
+import { getProjectEventsController } from "../controllers/projectEventController.js";
 import {
   authenticate,
   requireProjectAccess,
@@ -32,6 +33,7 @@ router.get("/", authenticate, getProjectsController);
 
 router.get("/:id", requireProjectAccess, getProjectController);
 router.delete("/:id", requireProjectAccess, deleteProjectController);
+router.get("/:id/events", requireProjectAccess, getProjectEventsController);
 
 router.get("/:id/build-config", requireProjectAccess, getBuildConfigController);
 router.put("/:id/build-config", requireProjectAccess, putBuildConfigController);

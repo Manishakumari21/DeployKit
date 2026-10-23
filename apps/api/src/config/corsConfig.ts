@@ -58,7 +58,7 @@ export function buildCorsOptions(): CorsOptions {
       cb(null, allowed.has(requestOrigin));
     },
     credentials: true,
-    methods: ["GET", "POST", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Idempotency-Key"],
   };
 }

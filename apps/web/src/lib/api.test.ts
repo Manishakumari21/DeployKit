@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { ApiError, cancelDeployment, createDeployment, fetchDeployment, fetchDeploymentEvents, fetchDeploymentLogs, fetchDeployments, fetchProjectMetrics, fetchSession, login, logout, register } from "./api";
+import { ApiError, cancelDeployment, createDeployment, detectProject, fetchBuildConfig, fetchDeployment, fetchDeploymentEvents, fetchDeploymentLogs, fetchDeployments, fetchProjectMetrics, fetchSession, login, logout, register, resetBuildConfig, saveBuildConfig } from "./api";
+import type { BuildConfig } from "./buildConfig";
 import { isCancellableStatus, isTerminalStatus } from "../types";
 
 function mockFetchOnce(body: unknown, ok = true, status = 200) {
@@ -85,6 +86,79 @@ describe("status grouping matches backend state machine", () => {
     expect(isCancellableStatus("building")).toBe(true);
     expect(isCancellableStatus("active")).toBe(false);
     expect(isCancellableStatus("failed")).toBe(false);
+  });
+});
+
+describe("build configuration api client", () => {
+  const config: BuildConfig = {
+    applicationRoot: "apps/web",
+    builder: "dockerfile",
+    dockerfilePath: "Dockerfile",
+    buildCommand: "npm run build",
+    startCommand: null,
+    outputDirectory: "dist",
+  };
+
+  test("fetchBuildConfig uses the project-scoped GET route", async () => {
+    mockFetchOnce({ config: null, updatedAt: null });
+    const out = await fetchBuildConfig("p1");
+    expect(out).toEqual({ config: null, updatedAt: null });
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/projects/p1/build-config", {
+      credentials: "include",
+      signal: undefined,
+    });
+  });
+
+  test("saveBuildConfig PUTs the exact schema body", async () => {
+    mockFetchOnce({ config, updatedAt: "2026-10-23T00:00:00.000Z" });
+    await saveBuildConfig("p1", config);
+    const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe("/api/projects/p1/build-config");
+    expect(init.method).toBe("PUT");
+    expect(init.credentials).toBe("include");
+    expect(init.headers["Content-Type"]).toBe("application/json");
+    expect(JSON.parse(init.body)).toEqual(config);
+  });
+
+  test("resetBuildConfig DELETEs the project-scoped route", async () => {
+    mockFetchOnce({ config: null });
+    await resetBuildConfig("p1");
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/projects/p1/build-config", {
+      method: "DELETE",
+      credentials: "include",
+    });
+  });
+
+  test("detectProject POSTs to the project-scoped route", async () => {
+    mockFetchOnce({
+      status: "unsupported",
+      commitSha: "abcdef1",
+      detected: null,
+      ambiguous: null,
+      unsupported: { code: "NO_STACK", message: "No supported stack detected." },
+      explicit: null,
+      effective: null,
+      explicitIssues: [],
+    });
+    const out = await detectProject("p1");
+    expect(out.status).toBe("unsupported");
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/projects/p1/detect", {
+      method: "POST",
+      credentials: "include",
+      signal: undefined,
+    });
+  });
+
+  test("build configuration errors preserve status and backend code", async () => {
+    mockFetchOnce(
+      { error: "Repository could not be checked out", code: "GIT_TIMEOUT" },
+      false,
+      504
+    );
+    const err = await detectProject("p1").catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(504);
+    expect((err as ApiError).code).toBe("GIT_TIMEOUT");
   });
 });
 

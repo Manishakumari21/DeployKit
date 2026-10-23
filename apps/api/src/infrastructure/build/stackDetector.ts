@@ -91,13 +91,6 @@ const NODE_LOCKFILES: Array<{ file: string; manager: string }> = [
   { file: "bun.lock", manager: "bun" },
 ];
 
-const MANAGER_TO_LOCKFILE: Record<string, string> = {
-  npm: "package-lock.json",
-  yarn: "yarn.lock",
-  pnpm: "pnpm-lock.yaml",
-  bun: "bun.lockb",
-};
-
 const MONOREPO_MARKERS = [
   "pnpm-workspace.yaml",
   "lerna.json",
@@ -151,6 +144,21 @@ function isRegularFile(candidate: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Map each detected package manager to the lockfile that actually exists.
+ * Multiple files for the same manager are treated as one manager; conflicting
+ * managers are rejected later.
+ */
+function detectLockfiles(workspace: string): Map<string, string> {
+  const lockfiles = new Map<string, string>();
+  for (const { file, manager } of NODE_LOCKFILES) {
+    if (isRegularFile(path.join(workspace, file)) && !lockfiles.has(manager)) {
+      lockfiles.set(manager, file);
+    }
+  }
+  return lockfiles;
 }
 
 function isSymlink(candidate: string): boolean {
@@ -354,6 +362,75 @@ function detectNodeFramework(
     return "cra";
   }
 
+  // A direct framework command in package.json scripts is also observed
+  // evidence. Split shell commands while respecting quotes so quoted/echoed
+  // text is not treated as a framework signal.
+  const scriptValues = Object.values(pkg?.scripts ?? {}).filter(
+    (value): value is string => typeof value === "string"
+  );
+  const shellSegments = (script: string): string[] => {
+    const segments: string[] = [];
+    let current = "";
+    let quote: string | null = null;
+    for (let index = 0; index < script.length; index += 1) {
+      const char = script[index];
+      if (quote !== null) {
+        current += char;
+        if (char === "\\" && quote !== "'") {
+          index += 1;
+          current += script[index] ?? "";
+        } else if (char === quote) {
+          quote = null;
+        }
+        continue;
+      }
+      if (char === '"' || char === "'") {
+        quote = char;
+        current += char;
+      } else if (char === ";" || char === "&" || char === "|" || char === "\n") {
+        segments.push(current);
+        current = "";
+      } else {
+        current += char;
+      }
+    }
+    segments.push(current);
+    return segments.map((segment) => segment.trim()).filter(Boolean);
+  };
+  const hasScriptCommand = (command: string, actions: string): boolean =>
+    scriptValues.some((script) =>
+      shellSegments(script).some((segment) =>
+        new RegExp(
+          `^(?:cross-env\\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=\\S+\\s+)*(?:npx\\s+)?${command}\\s+(?:${actions})\\b`
+        ).test(segment)
+      )
+    );
+
+  if (hasScriptCommand("next", "build|start|dev")) {
+    evidence.push({
+      file: "package.json",
+      fact: 'scripts include a "next" command',
+      type: "script",
+    });
+    return "next";
+  }
+  if (hasScriptCommand("vite", "build|preview|dev")) {
+    evidence.push({
+      file: "package.json",
+      fact: 'scripts include a "vite" command',
+      type: "script",
+    });
+    return "vite";
+  }
+  if (hasScriptCommand("react-scripts", "build|start")) {
+    evidence.push({
+      file: "package.json",
+      fact: 'scripts include a "react-scripts" command',
+      type: "script",
+    });
+    return "cra";
+  }
+
   return "none";
 }
 
@@ -465,6 +542,135 @@ function buildNodeSuggestions(
   return suggestions;
 }
 
+/** Remove a Python-style comment while leaving quoted strings intact. */
+function stripPythonComment(line: string): string {
+  let quote: string | null = null;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (quote !== null) {
+      if (char === "\\" && quote !== "'") {
+        index += 1;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === "#") {
+      return line.slice(0, index);
+    }
+  }
+  return line;
+}
+
+function packageNameFromSpec(spec: string): string | null {
+  const match = /^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)/.exec(spec);
+  return match ? match[1].toLowerCase() : null;
+}
+
+function requirementsDependencyNames(content: string): string[] {
+  const names: string[] = [];
+  for (const raw of content.split(/\r?\n/)) {
+    const line = stripPythonComment(raw).trim();
+    if (!line || line.startsWith("-")) continue;
+    const name = packageNameFromSpec(line);
+    if (name) names.push(name);
+  }
+  return names;
+}
+
+function pyprojectDependencyNames(content: string): string[] {
+  const names: string[] = [];
+  let section = "";
+  let inArray = false;
+
+  for (const raw of content.split(/\r?\n/)) {
+    const line = stripPythonComment(raw).trim();
+    if (!line) continue;
+
+    const heading = /^\[([^\]]+)\]$/.exec(line);
+    if (heading) {
+      section = heading[1].trim();
+      inArray = false;
+      continue;
+    }
+
+    const poetryDeps =
+      /^tool\.poetry(?:\.group\.[^.]+)?\.(?:dev-)?dependencies$/.test(section);
+    if (poetryDeps) {
+      const match = /^([A-Za-z0-9][A-Za-z0-9_.-]*)\s*=/.exec(line);
+      if (match) names.push(match[1].toLowerCase());
+      continue;
+    }
+
+    const optionalDeps = section === "project.optional-dependencies";
+    if (optionalDeps || inArray) {
+      if (line.includes("[")) inArray = true;
+      for (const match of line.matchAll(/["']([^"']+)["']/g)) {
+        const name = packageNameFromSpec(match[1]);
+        if (name) names.push(name);
+      }
+      if (line.includes("]")) inArray = false;
+      continue;
+    }
+
+    if (section === "project" && /^dependencies\s*=\s*\[/.test(line)) {
+      inArray = true;
+      for (const match of line.matchAll(/["']([^"']+)["']/g)) {
+        const name = packageNameFromSpec(match[1]);
+        if (name) names.push(name);
+      }
+      if (line.includes("]")) inArray = false;
+    }
+  }
+
+  return names;
+}
+
+function pipfileDependencyNames(content: string): string[] {
+  const names: string[] = [];
+  let section = "";
+
+  for (const raw of content.split(/\r?\n/)) {
+    const line = stripPythonComment(raw).trim();
+    if (!line) continue;
+
+    const heading = /^\[([^\]]+)\]$/.exec(line);
+    if (heading) {
+      section = heading[1].trim();
+      continue;
+    }
+
+    if (section === "packages" || section === "dev-packages") {
+      const match = /^([A-Za-z0-9][A-Za-z0-9_.-]*)\s*=/.exec(line);
+      if (match) names.push(match[1].toLowerCase());
+    }
+  }
+
+  return names;
+}
+
+function pythonDependencyNames(file: string, content: string): string[] {
+  if (file === "requirements.txt") return requirementsDependencyNames(content);
+  if (file === "pyproject.toml") return pyprojectDependencyNames(content);
+  if (file === "Pipfile") return pipfileDependencyNames(content);
+  return [];
+}
+
+function pythonImportFramework(content: string): "fastapi" | "flask" | null {
+  for (const raw of content.split(/\r?\n/)) {
+    const line = stripPythonComment(raw).trim();
+    if (/^from\s+fastapi(?:\.|\s+import\b)/.test(line) || /^import\s+fastapi(?:\.|\b)/.test(line)) {
+      return "fastapi";
+    }
+    if (/^from\s+flask(?:\.|\s+import\b)/.test(line) || /^import\s+flask(?:\.|\b)/.test(line)) {
+      return "flask";
+    }
+  }
+  return null;
+}
+
 function detectPythonFramework(
   workspace: string,
   evidence: DetectionEvidence[]
@@ -472,12 +678,12 @@ function detectPythonFramework(
   for (const file of PYTHON_REQ_FILES) {
     const content = readBounded(path.join(workspace, file));
     if (!content) continue;
-    const lower = content.toLowerCase();
-    if (/\bfastapi\b/.test(lower)) {
+    const names = pythonDependencyNames(file, content);
+    if (names.includes("fastapi")) {
       evidence.push({ file, fact: `"fastapi" listed in ${file}`, type: "dependency" });
       return "fastapi";
     }
-    if (/\bflask\b/.test(lower)) {
+    if (names.includes("flask")) {
       evidence.push({ file, fact: `"flask" listed in ${file}`, type: "dependency" });
       return "flask";
     }
@@ -485,14 +691,10 @@ function detectPythonFramework(
   for (const file of PYTHON_APP_FILES) {
     const content = readBounded(path.join(workspace, file));
     if (!content) continue;
-    const lower = content.toLowerCase();
-    if (/from\s+fastapi\s+import|\bimport\s+fastapi\b/.test(lower)) {
-      evidence.push({ file, fact: "imports fastapi", type: "content" });
-      return "fastapi";
-    }
-    if (/from\s+flask\s+import|\bimport\s+flask\b/.test(lower)) {
-      evidence.push({ file, fact: "imports flask", type: "content" });
-      return "flask";
+    const framework = pythonImportFramework(content);
+    if (framework) {
+      evidence.push({ file, fact: `imports ${framework}`, type: "content" });
+      return framework;
     }
   }
   return "none";
@@ -500,14 +702,15 @@ function detectPythonFramework(
 
 function detectedNode(
   workspace: string,
-  lockManagers: Set<string>,
+  lockfiles: Map<string, string>,
   baseEvidence: DetectionEvidence[]
 ): StackDetection {
   const evidence: DetectionEvidence[] = [...baseEvidence];
-  const packageManager = lockManagers.size === 1 ? [...lockManagers][0] : null;
-  if (packageManager) {
+  const packageManager = lockfiles.size === 1 ? [...lockfiles.keys()][0] : null;
+  const lockfile = packageManager ? lockfiles.get(packageManager) ?? null : null;
+  if (packageManager && lockfile) {
     evidence.push({
-      file: MANAGER_TO_LOCKFILE[packageManager] ?? "lockfile",
+      file: lockfile,
       fact: `${packageManager} lockfile present`,
       type: "lockfile",
     });
@@ -543,7 +746,7 @@ function detectedNode(
     hasDockerfile: false,
     packageManager,
     detail:
-      "Node.js application detected (package.json) without a root Dockerfile; explicit configuration required",
+      "Node.js application detected (package.json) without a Dockerfile; explicit configuration required",
     language: "node",
     framework,
     buildCommand,
@@ -569,10 +772,7 @@ export function detectStack(workspace: string): StackDetection {
   const hasDockerfile = isRegularFile(dockerfilePath);
 
   const hasPackageJson = isRegularFile(path.join(workspace, "package.json"));
-  const lockManagers = new Set<string>();
-  for (const { file, manager } of NODE_LOCKFILES) {
-    if (isRegularFile(path.join(workspace, file))) lockManagers.add(manager);
-  }
+  const lockfiles = detectLockfiles(workspace);
   const pythonMarkers = PYTHON_MARKERS.filter((name) =>
     isRegularFile(path.join(workspace, name))
   );
@@ -581,12 +781,13 @@ export function detectStack(workspace: string): StackDetection {
 
   if (hasDockerfile) {
     const evidence: DetectionEvidence[] = [
-      { file: "Dockerfile", fact: "Dockerfile present at repository root", type: "config" },
+      { file: "Dockerfile", fact: "Dockerfile present at the application root", type: "config" },
     ];
-    const packageManager = lockManagers.size === 1 ? [...lockManagers][0] : null;
-    if (packageManager) {
+    const packageManager = lockfiles.size === 1 ? [...lockfiles.keys()][0] : null;
+    const lockfile = packageManager ? lockfiles.get(packageManager) ?? null : null;
+    if (packageManager && lockfile) {
       evidence.push({
-        file: MANAGER_TO_LOCKFILE[packageManager] ?? "lockfile",
+        file: lockfile,
         fact: `${packageManager} lockfile present`,
         type: "lockfile",
       });
@@ -611,17 +812,17 @@ export function detectStack(workspace: string): StackDetection {
     };
   }
 
-  if (lockManagers.size > 1) {
+  if (lockfiles.size > 1) {
     throw new StackDetectorError(
       "PREFLIGHT_CONFLICTING_LOCKFILES",
-      `Conflicting package-manager lockfiles (${[...lockManagers].sort().join(", ")}); commit to a single package manager`
+      `Conflicting package-manager lockfiles (${[...lockfiles.keys()].sort().join(", ")}); commit to a single package manager`
     );
   }
 
   const nested = findNestedIndicators(workspace, root);
   if (
     nested.monorepoMarker !== null ||
-    (nested.nestedPackageJson && hasPackageJson) ||
+    nested.nestedPackageJson ||
     nested.nestedDockerfile
   ) {
     throw new StackDetectorError(
@@ -632,7 +833,7 @@ export function detectStack(workspace: string): StackDetection {
   }
 
   if (hasPackageJson) {
-    return detectedNode(workspace, lockManagers, []);
+    return detectedNode(workspace, lockfiles, []);
   }
 
   if (pythonMarkers.length > 0) {
@@ -646,7 +847,7 @@ export function detectStack(workspace: string): StackDetection {
       kind: "python",
       hasDockerfile: false,
       packageManager: null,
-      detail: `Python application detected (${pythonMarkers[0]}) without a root Dockerfile; explicit configuration required`,
+      detail: `Python application detected (${pythonMarkers[0]}) without a Dockerfile; explicit configuration required`,
       language: "python",
       framework,
       buildCommand: null,
@@ -665,14 +866,14 @@ export function detectStack(workspace: string): StackDetection {
       hasDockerfile: false,
       packageManager: "cargo",
       detail:
-        "Rust application detected (Cargo.toml) without a root Dockerfile; explicit configuration required",
+        "Rust application detected (Cargo.toml) without a Dockerfile; explicit configuration required",
       language: "rust",
       framework: "none",
       buildCommand: null,
       startCommand: null,
       outputDirectory: null,
       evidence: [
-        { file: "Cargo.toml", fact: "Cargo.toml present at repository root", type: "marker" },
+        { file: "Cargo.toml", fact: "Cargo.toml present at the application root", type: "marker" },
       ],
       suggestions: [],
       confidence: "high",
@@ -685,14 +886,14 @@ export function detectStack(workspace: string): StackDetection {
       kind: "static",
       hasDockerfile: false,
       packageManager: null,
-      detail: "Static site detected (index.html) without a root Dockerfile; explicit configuration required",
+      detail: "Static site detected (index.html) without a Dockerfile; explicit configuration required",
       language: "static",
       framework: "static-site",
       buildCommand: null,
       startCommand: null,
       outputDirectory: null,
       evidence: [
-        { file: "index.html", fact: "index.html present at repository root", type: "marker" },
+        { file: "index.html", fact: "index.html present at the application root", type: "marker" },
       ],
       suggestions: [],
       confidence: "high",
@@ -702,6 +903,6 @@ export function detectStack(workspace: string): StackDetection {
 
   throw new StackDetectorError(
     "PREFLIGHT_MISSING_INPUTS",
-    "No Dockerfile, package.json, Python project file, Cargo.toml, or index.html found at the repository root"
+    "No Dockerfile, package.json, Python project file, Cargo.toml, or index.html found at the application root"
   );
 }

@@ -9,6 +9,7 @@ import domainRoutes from "./routes/domainRoutes.js";
 import webhookRoutes from "./routes/webhookRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
 import agentRoutes from "./routes/agentRoutes.js";
+import githubRoutes from "./routes/githubRoutes.js";
 
 const app = express();
 
@@ -45,5 +46,6 @@ app.use("/api", deploymentRoutes);
 app.use("/api", domainRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/agent", agentRoutes);
+app.use("/api/github", githubRoutes);
 
 export default app;

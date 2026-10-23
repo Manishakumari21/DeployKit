@@ -158,6 +158,8 @@ entitlements). Builds use `--builder deploykit-builder`, enforce
   `GET /api/deployments/:id/events`,
   `GET /api/projects/:id/releases`, `GET /api/releases/:id`,
   `POST /api/deployments/:id/cancel` (409 if terminal).
+* `GET /api/projects/:id/events?limit=50` — project-wide deployment
+  event stream, newest first (limit capped at 100).
 
 ### Tests
 
@@ -260,12 +262,17 @@ create a second deployment.
 * `POST /api/projects/:id/github-link`
   (`{ installationId, repositoryFullName, repositoryId?, autoDeploy? }`)
 * `GET /api/projects/:id/github-link`, `DELETE /api/projects/:id/github-link`
+* `GET /api/github/connection` (install URL, callback URL, configuration state)
+* `GET /api/github/repositories` (repositories visible to stored installations)
+* `GET /api/github/callback` (GitHub App setup callback; state-verified)
 
 ### Setup
 
 1. Create a GitHub App: permissions Contents read-only, Metadata
    read-only; subscribe to `push`; set webhook URL to
-   `https://<host>/api/webhooks/github` with a secret.
+   `https://<host>/api/webhooks/github` with a secret. Set the App's
+   Setup URL to `https://<host>/api/github/callback` to enable the
+   in-app Connect GitHub flow.
 2. Install the App on the repo; note installation ID + full_name.
 3. Set `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`,
    `GITHUB_WEBHOOK_SECRET` on api/worker; migrate DB through
@@ -279,7 +286,7 @@ create a second deployment.
 * Only `push` to `refs/heads/<branch>` auto-deploys; tags, PRs,
   deletions, other events are ignored (202).
 * One linked repository per project; branch must equal
-  `projects.branch`; `auto_deploy` defaults to false.
+  `projects.branch`; `auto_deploy` defaults to true.
 * Single-node worker; see Phase 05 for traffic-switch guarantees.
 
 ## Phase 05 — Zero-downtime releases via gateway

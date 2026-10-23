@@ -3,3 +3,7 @@ services:
     ports: !override
       - "127.0.0.1:80:80"
       - "127.0.0.1:443:443"
+
+  api:
+    environment:
+      DEPLOYKIT_WEB_ORIGIN: http://localhost:8083

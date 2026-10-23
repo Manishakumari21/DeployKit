@@ -54,9 +54,9 @@ export interface DetectionResponse {
   explicitIssues: string[];
 }
 
-const evidence = (entries: DetectionEvidence[]) =>
+const evidence = (entries: DetectionEvidence[], pathPrefix = "") =>
   entries.slice(0, MAX_EVIDENCE).map(({ file, fact, type }) => ({
-    file: boundText(file),
+    file: boundText(pathPrefix ? `${pathPrefix}/${file}` : file),
     fact: boundText(fact),
     type,
   }));
@@ -80,10 +80,13 @@ const builderOf = (kind: StackDetection["kind"]): Builder => {
   return kind;
 };
 
-export function detectionToConfig(detection: StackDetection): BuildConfig {
+export function detectionToConfig(
+  detection: StackDetection,
+  applicationRoot = "."
+): BuildConfig {
   const builder = builderOf(detection.kind);
   return {
-    applicationRoot: ".",
+    applicationRoot,
     builder,
     dockerfilePath: builder === "dockerfile" ? "Dockerfile" : null,
     buildCommand: detection.buildCommand,
@@ -95,9 +98,11 @@ export function detectionToConfig(detection: StackDetection): BuildConfig {
 export function detectedResponse(
   detection: StackDetection,
   commitSha: string,
-  explicit: BuildConfig | null
+  explicit: BuildConfig | null,
+  applicationRoot = ".",
+  pathPrefix = ""
 ): DetectionResponse {
-  const config = detectionToConfig(detection);
+  const config = detectionToConfig(detection, applicationRoot);
   return {
     status: "detected",
     commitSha,
@@ -107,7 +112,7 @@ export function detectedResponse(
       framework: detection.framework,
       confidence: detection.confidence,
       needsReview: detection.needsReview,
-      evidence: evidence(detection.evidence),
+      evidence: evidence(detection.evidence, pathPrefix),
       suggestions: suggestions(detection.suggestions),
     },
     ambiguous: null,
@@ -121,8 +126,12 @@ export function detectedResponse(
 export function ambiguousResponse(
   error: StackDetectorError,
   commitSha: string,
-  explicit: BuildConfig | null
+  explicit: BuildConfig | null,
+  pathPrefix = ""
 ): DetectionResponse {
+  const candidates = error.candidates
+    .slice(0, MAX_CANDIDATES)
+    .map((candidate) => boundText(pathPrefix ? `${pathPrefix}/${candidate}` : candidate));
   return {
     status: "ambiguous",
     commitSha,
@@ -130,7 +139,7 @@ export function ambiguousResponse(
     ambiguous: {
       code: error.code,
       message: boundText(error.message),
-      candidates: error.candidates.slice(0, MAX_CANDIDATES).map((c) => boundText(c)),
+      candidates,
     },
     unsupported: null,
     explicit,
@@ -156,14 +165,33 @@ export function unsupportedResponse(
   };
 }
 
-function validateExplicit(workspace: string, explicit: BuildConfig | null): string[] {
-  if (!explicit) return [];
+interface DetectionContext {
+  workspace: string;
+  applicationRoot: string;
+  pathPrefix: string;
+  explicitIssues: string[];
+}
+
+function detectionContext(workspace: string, explicit: BuildConfig | null): DetectionContext {
+  if (!explicit) {
+    return { workspace, applicationRoot: ".", pathPrefix: "", explicitIssues: [] };
+  }
   try {
-    validateBuildConfigAgainstWorkspace(workspace, explicit);
-    return [];
+    const validated = validateBuildConfigAgainstWorkspace(workspace, explicit);
+    return {
+      workspace: validated.applicationRootAbsolute,
+      applicationRoot: explicit.applicationRoot,
+      pathPrefix: explicit.applicationRoot === "." ? "" : explicit.applicationRoot,
+      explicitIssues: [],
+    };
   } catch (error) {
     if (error instanceof BuildConfigError) {
-      return [`${error.code}: ${error.message}`.slice(0, MAX_TEXT)];
+      return {
+        workspace,
+        applicationRoot: ".",
+        pathPrefix: "",
+        explicitIssues: [`${error.code}: ${error.message}`.slice(0, MAX_TEXT)],
+      };
     }
     throw error;
   }
@@ -175,18 +203,24 @@ export function runDetectionInWorkspace(
   explicitInput: BuildConfig | null
 ): DetectionResponse {
   const explicit = explicitInput ? parseBuildConfig(explicitInput) : null;
-  const explicitIssues = validateExplicit(workspace, explicit);
+  const context = detectionContext(workspace, explicit);
 
   try {
-    const response = detectedResponse(detectStack(workspace), commitSha, explicit);
-    return { ...response, explicitIssues };
+    const response = detectedResponse(
+      detectStack(context.workspace),
+      commitSha,
+      explicit,
+      context.applicationRoot,
+      context.pathPrefix
+    );
+    return { ...response, explicitIssues: context.explicitIssues };
   } catch (error) {
     if (!(error instanceof StackDetectorError)) throw error;
     const response =
       error.code === "PREFLIGHT_NEEDS_CONFIG"
-        ? ambiguousResponse(error, commitSha, explicit)
+        ? ambiguousResponse(error, commitSha, explicit, context.pathPrefix)
         : unsupportedResponse(error, commitSha, explicit);
-    return { ...response, explicitIssues };
+    return { ...response, explicitIssues: context.explicitIssues };
   }
 }
 

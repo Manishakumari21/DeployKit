@@ -1,7 +1,9 @@
 import {
+  Activity,
   Boxes,
   Clock,
   Globe,
+  Hammer,
   LayoutDashboard,
   ScrollText,
   Server,
@@ -14,6 +16,8 @@ const ITEMS: { key: NavKey; label: string; icon: typeof Server; group: string }[
   { key: "overview", label: "Overview", icon: LayoutDashboard, group: "run" },
   { key: "services", label: "Services", icon: Boxes, group: "run" },
   { key: "deployments", label: "Deploys", icon: Clock, group: "run" },
+  { key: "build", label: "Build config", icon: Hammer, group: "run" },
+  { key: "events", label: "Events", icon: Activity, group: "observe" },
   { key: "logs", label: "Logs", icon: ScrollText, group: "observe" },
   { key: "domains", label: "Domains", icon: Globe, group: "observe" },
   { key: "settings", label: "Settings", icon: Settings, group: "observe" },

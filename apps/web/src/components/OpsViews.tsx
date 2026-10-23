@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { timeAgo } from "../lib/format";
 import { useDeploymentLogs } from "../hooks/useDeploymentLogs";
 import { createDomain, deleteDomain, fetchDomains, requestDomainCertificate, verifyDomain } from "../lib/api";
-import type { ApiDeployment, CustomDomain } from "../types";
+import type { ApiDeployment, CustomDomain, Project } from "../types";
 import { EmptyState, Eyebrow, Panel, PanelHead } from "./ui";
 import { cx } from "../lib/format";
+import { BuildConfigPanel } from "./BuildConfigPanel";
 
 export function DomainsView({ projectId }: { projectId: string | null }) {
   const [domains, setDomains] = useState<CustomDomain[]>([]);
@@ -349,9 +350,16 @@ function FilterChip({ active, onClick, label }: { active: boolean; onClick: () =
   );
 }
 
-export function SettingsView() {
+export function SettingsView({
+  project,
+  onNotify,
+}: {
+  project?: Project;
+  onNotify?: (message: string) => void;
+}) {
   return (
     <div className="grid gap-3 lg:grid-cols-2">
+      <BuildConfigPanel key={project?.id ?? "none"} project={project} onNotify={onNotify} />
       <Panel>
         <PanelHead title="Workspace" />
         <div className="flex flex-col gap-3 p-4 text-[13px]">

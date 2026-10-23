@@ -17,6 +17,8 @@ export type NavKey =
   | "overview"
   | "services"
   | "deployments"
+  | "build"
+  | "events"
   | "domains"
   | "logs"
   | "settings";
@@ -92,4 +94,49 @@ export type CustomDomain = {
   tls_last_error: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type ProjectEvent = {
+  id: string;
+  deployment_id: string;
+  event_type: string;
+  status_from: DeploymentStatus | null;
+  status_to: DeploymentStatus | null;
+  message: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  branch: string;
+  commit_sha: string | null;
+  trigger: "manual" | "github_push" | "rollback";
+};
+
+export type GitHubConnection = {
+  configured: boolean;
+  installUrl: string | null;
+  callbackUrl: string;
+  error: string | null;
+};
+
+export type GitHubRepository = {
+  id: number;
+  fullName: string;
+  name: string;
+  owner: string;
+  private: boolean;
+  htmlUrl: string;
+  cloneUrl: string;
+  defaultBranch: string;
+  installationId: string;
+};
+
+export type GitHubRepositoriesResponse = {
+  repositories: GitHubRepository[];
+  truncated: boolean;
+  failed: number;
+};
+
+export type GitHubSelection = {
+  installationId: string;
+  repositoryFullName: string;
+  repositoryId: number;
 };

@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
+import { BuildConfigPanel } from "./components/BuildConfigPanel";
 import { DeploymentDetails, DeploymentList } from "./components/deployments";
 import { CommandBar } from "./components/CommandBar";
+import { EventsView } from "./components/EventsView";
 import { DomainsView, LogsView, SettingsView } from "./components/OpsViews";
 import { LoginView } from "./components/LoginView";
 import { MetricsPanel } from "./components/MetricsPanel";
@@ -13,7 +15,8 @@ import { Eyebrow } from "./components/ui";
 import { useAuth } from "./hooks/useAuth";
 import { useDeployments } from "./hooks/useDeployments";
 import { useProjects, useToast } from "./hooks/useProjects";
-import type { ApiDeployment, AuthUser, NavKey } from "./types";
+import { linkProjectGithub } from "./lib/api";
+import type { ApiDeployment, AuthUser, GitHubSelection, NavKey } from "./types";
 
 const SELECTED_KEY = "deploykit:selected-project";
 
@@ -105,6 +108,7 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
   }, [projects, q]);
 
   const featured = services.find((p) => p.id === selectedProjectId) ?? services[0];
+  const buildProject = projects.find((p) => p.id === selectedProjectId);
   const live: ApiDeployment | undefined = deployments[0];
   const selectedId = selectedDeploymentId ?? live?.id ?? null;
 
@@ -128,10 +132,19 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
     reloadDeployments();
   };
 
-  const submit = async (name: string, repo: string, branch: string) => {
+  const submit = async (
+    name: string,
+    repo: string,
+    branch: string,
+    github?: GitHubSelection
+  ) => {
     setFormError("");
     if (!name.trim()) {
       setFormError("Service name is required.");
+      return false;
+    }
+    if (!repo.trim()) {
+      setFormError("Choose a repository or enter a Git URL.");
       return false;
     }
     if (!/^https?:\/\/.+/.test(repo.trim())) {
@@ -140,10 +153,18 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
     }
     setCreating(true);
     try {
-      const c = await add(name, repo, branch);
+      const c = await add(name.trim(), repo.trim(), branch.trim());
+      let message = `Service "${c.name}" commissioned`;
+      if (github) {
+        try {
+          await linkProjectGithub(c.id, github);
+        } catch {
+          message = `Service "${c.name}" created, but GitHub could not be linked`;
+        }
+      }
       setModal(false);
       selectProject(c.id);
-      setToast(`Service "${c.name}" commissioned`);
+      setToast(message);
       setNav("services");
       return true;
     } catch (e) {
@@ -183,7 +204,7 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
       <main id="main" className="relative mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-5 sm:px-6">
         {nav === "overview" && (
           <div className="dk-stagger flex flex-col gap-4">
-            <ServiceHeader project={featured} live={live} creating={deploying} onDeploy={handleDeploy} />
+            <ServiceHeader project={featured} live={live} creating={deploying} onDeploy={handleDeploy} onBuildConfig={() => setNav("build")} />
             {createError && <p role="alert" className="text-[13px] text-red-300">{createError}</p>}
             <MetricsPanel projectId={selectedProjectId} />
             <div className="grid items-start gap-4 xl:grid-cols-2">
@@ -245,6 +266,32 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
             {selectedId && <DeploymentDetails deploymentId={selectedId} onUpdate={handleListUpdate} />}
           </div>
         )}
+        {nav === "events" && (
+          <EventsView
+            key={selectedProjectId ?? "none"}
+            projects={projects}
+            selectedProjectId={selectedProjectId}
+            onSelectProject={selectProject}
+          />
+        )}
+        {nav === "build" && (
+          <div className="dk-stagger flex flex-col gap-4">
+            <div>
+              <Eyebrow>Project build</Eyebrow>
+              <h1
+                className="mt-1 text-2xl font-bold tracking-tight text-balance text-white"
+                style={{ letterSpacing: "-0.02em" }}
+              >
+                Build configuration
+              </h1>
+              <p className="mt-1 text-[13px] text-fog-500">
+                Review how DeployKit detects this service and set the inputs used by future builds.
+                Detection is read-only; neither detecting nor saving deploys the service.
+              </p>
+            </div>
+            <BuildConfigPanel key={buildProject?.id ?? "none"} project={buildProject} onNotify={setToast} />
+          </div>
+        )}
         {nav === "domains" && <DomainsView projectId={selectedProjectId} />}
         {nav === "logs" && (
           <LogsView
@@ -253,7 +300,9 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
             onSelect={(id) => setSelectedDeploymentId(id)}
           />
         )}
-        {nav === "settings" && <SettingsView />}
+        {nav === "settings" && (
+          <SettingsView project={featured} onNotify={setToast} />
+        )}
 
         <footer className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-2 pb-4 font-mono text-[11px] text-fog-500">
           <span>deploykit · self-hosted</span>
@@ -265,7 +314,15 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
         </footer>
       </main>
 
-      <ProjectModal open={modal} busy={creating} error={formError} onClose={() => setModal(false)} onSubmit={submit} />
+      {modal && (
+        <ProjectModal
+          open
+          busy={creating}
+          error={formError}
+          onClose={() => setModal(false)}
+          onSubmit={submit}
+        />
+      )}
       <Toast msg={toast} onClose={() => setToast(null)} />
     </div>
   );

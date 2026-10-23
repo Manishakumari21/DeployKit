@@ -1,4 +1,19 @@
-import type { ApiDeployment, AuthUser, DeploymentEvent, Project } from "../types";
+import type {
+  BuildConfig,
+  BuildConfigResponse,
+  DetectionResponse,
+  SavedBuildConfigResponse,
+} from "./buildConfig";
+import type {
+  ApiDeployment,
+  AuthUser,
+  DeploymentEvent,
+  GitHubConnection,
+  GitHubRepositoriesResponse,
+  GitHubSelection,
+  Project,
+  ProjectEvent,
+} from "../types";
 
 export const API_URL =
   (import.meta.env.VITE_API_URL as string | undefined) ??
@@ -6,10 +21,12 @@ export const API_URL =
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  code: string | null;
+  constructor(message: string, status: number, code: string | null = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -27,7 +44,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error("Could not reach the API", { cause: e });
   }
   const data = await json(res);
-  if (!res.ok) throw new ApiError(data.error || `Request failed (${res.status})`, res.status);
+  if (!res.ok) {
+    throw new ApiError(
+      data.error || `Request failed (${res.status})`,
+      res.status,
+      typeof data.code === "string" ? data.code : null
+    );
+  }
   return data as T;
 }
 
@@ -95,6 +118,71 @@ export async function deleteProject(id: string) {
   });
   const data = await json(res);
   if (!res.ok) throw new ApiError(data.error || `Request failed (${res.status})`, res.status);
+}
+
+export function fetchGitHubConnection(signal?: AbortSignal): Promise<GitHubConnection> {
+  return request<GitHubConnection>("/github/connection", { signal });
+}
+
+export function fetchGitHubRepositories(
+  signal?: AbortSignal
+): Promise<GitHubRepositoriesResponse> {
+  return request<GitHubRepositoriesResponse>("/github/repositories", { signal });
+}
+
+export function linkProjectGithub(
+  projectId: string,
+  input: GitHubSelection & { autoDeploy?: boolean }
+): Promise<unknown> {
+  return request(`/projects/${projectId}/github-link`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...input, autoDeploy: input.autoDeploy ?? true }),
+  });
+}
+
+export function fetchProjectEvents(
+  projectId: string,
+  limit = 50,
+  signal?: AbortSignal
+): Promise<ProjectEvent[]> {
+  return request<ProjectEvent[]>(`/projects/${projectId}/events?limit=${limit}`, {
+    signal,
+  });
+}
+
+export function fetchBuildConfig(
+  projectId: string,
+  signal?: AbortSignal
+): Promise<BuildConfigResponse> {
+  return request<BuildConfigResponse>(`/projects/${projectId}/build-config`, { signal });
+}
+
+export function saveBuildConfig(
+  projectId: string,
+  config: BuildConfig
+): Promise<SavedBuildConfigResponse> {
+  return request<SavedBuildConfigResponse>(`/projects/${projectId}/build-config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+}
+
+export function resetBuildConfig(projectId: string): Promise<{ config: null }> {
+  return request<{ config: null }>(`/projects/${projectId}/build-config`, {
+    method: "DELETE",
+  });
+}
+
+export function detectProject(
+  projectId: string,
+  signal?: AbortSignal
+): Promise<DetectionResponse> {
+  return request<DetectionResponse>(`/projects/${projectId}/detect`, {
+    method: "POST",
+    signal,
+  });
 }
 
 export function fetchDeployments(projectId: string): Promise<ApiDeployment[]> {

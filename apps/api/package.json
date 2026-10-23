@@ -16,6 +16,7 @@
     "agent:dev": "tsx watch src/edgeAgent.ts",
     "agent:enroll": "tsx scripts/enroll-agent.ts",
     "db:migrate": "tsx scripts/migrate.ts",
+    "db:reconcile": "tsx scripts/reconcile-migrations.ts",
     "test:integration": "tsx --test \"src/**/*.integration.test.ts\"",
     "test:build": "tsx --test src/infrastructure/build/buildxBuildExecutor.integration.test.ts",
     "test:registry": "bash scripts/test-registry.sh"

@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import App from "./App";
 import { useAuth } from "./hooks/useAuth";
-import { detectProject, fetchBuildConfig, fetchProjectMetrics } from "./lib/api";
+import { detectProject, fetchBuildConfig, fetchIncidents, fetchProjectMetrics } from "./lib/api";
 import type { ProjectMetrics } from "./lib/api";
 import type { BuildConfig, DetectionResponse } from "./lib/buildConfig";
 import type { AuthUser } from "./types";
@@ -59,6 +59,9 @@ vi.mock("./lib/api", async (importOriginal) => {
     saveBuildConfig: vi.fn(),
     resetBuildConfig: vi.fn(),
     detectProject: vi.fn(),
+    fetchIncidents: vi.fn(),
+    acknowledgeIncident: vi.fn(),
+    resolveIncident: vi.fn(),
   };
 });
 
@@ -66,6 +69,7 @@ const authMock = vi.mocked(useAuth);
 const fetchBuildConfigMock = vi.mocked(fetchBuildConfig);
 const fetchProjectMetricsMock = vi.mocked(fetchProjectMetrics);
 const detectProjectMock = vi.mocked(detectProject);
+const fetchIncidentsMock = vi.mocked(fetchIncidents);
 
 const user: AuthUser = {
   id: "user-1",
@@ -169,6 +173,7 @@ beforeEach(() => {
   });
   fetchProjectMetricsMock.mockResolvedValue(metrics);
   detectProjectMock.mockResolvedValue(detection());
+  fetchIncidentsMock.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -220,5 +225,22 @@ describe("project build configuration navigation", () => {
 
     expect(screen.queryByRole("button", { name: "Build config" })).toBeNull();
     expect(screen.queryByText("Build & detection")).toBeNull();
+  });
+});
+
+describe("incidents navigation", () => {
+  test("opens the incidents view from the primary navigation and loads incidents", async () => {
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "web" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Incidents" }));
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Incidents" })).toBeTruthy();
+    expect(await screen.findByText("No incidents")).toBeTruthy();
+    expect(fetchIncidentsMock).toHaveBeenCalledWith(
+      fixtures.project.id,
+      { status: "active", limit: 100 },
+      expect.any(AbortSignal)
+    );
   });
 });

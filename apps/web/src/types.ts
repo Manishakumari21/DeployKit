@@ -19,6 +19,7 @@ export type NavKey =
   | "deployments"
   | "build"
   | "events"
+  | "incidents"
   | "domains"
   | "logs"
   | "settings";
@@ -109,6 +110,41 @@ export type ProjectEvent = {
   commit_sha: string | null;
   trigger: "manual" | "github_push" | "rollback";
 };
+
+export type IncidentKind =
+  | "deployment_failure"
+  | "runtime_unhealthy"
+  | "gateway_sync_failed"
+  | "tls_failure"
+  | "webhook_failed";
+
+export type IncidentStatus = "open" | "acknowledged" | "resolved";
+
+export type Incident = {
+  id: string;
+  project_id: string;
+  kind: IncidentKind;
+  subject_key: string;
+  status: IncidentStatus;
+  severity: "warning" | "critical";
+  title: string;
+  detail: string | null;
+  error_code: string | null;
+  evidence: Record<string, unknown>;
+  signal_token: string | null;
+  source_timestamp: string | null;
+  occurrence_count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
+  resolved_at: string | null;
+  resolution: "manual" | "auto" | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type IncidentStatusFilter = "active" | "open" | "acknowledged" | "resolved" | "all";
 
 export type GitHubConnection = {
   configured: boolean;

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { ApiError, cancelDeployment, createDeployment, detectProject, fetchBuildConfig, fetchDeployment, fetchDeploymentEvents, fetchDeploymentLogs, fetchDeployments, fetchProjectMetrics, fetchSession, login, logout, register, resetBuildConfig, saveBuildConfig } from "./api";
+import { ApiError, acknowledgeIncident, cancelDeployment, createDeployment, detectProject, fetchBuildConfig, fetchDeployment, fetchDeploymentEvents, fetchDeploymentLogs, fetchDeployments, fetchIncident, fetchIncidents, fetchProjectMetrics, fetchSession, login, logout, register, resetBuildConfig, resolveIncident, saveBuildConfig } from "./api";
 import type { BuildConfig } from "./buildConfig";
 import { isCancellableStatus, isTerminalStatus } from "../types";
 
@@ -196,5 +196,55 @@ describe("auth api client (session cookie only, never token state)", () => {
     const err = await fetchSession().catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(401);
+  });
+});
+
+describe("incident api client (HTTP boundary only)", () => {
+  test("fetchIncidents hits the real route with the status filter", async () => {
+    mockFetchOnce([]);
+    await fetchIncidents("p1", { status: "active", limit: 100 });
+    const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe("/api/projects/p1/incidents?status=active&limit=100");
+    expect(init.credentials).toBe("include");
+  });
+
+  test("fetchIncidents omits the query string when no filters are set", async () => {
+    mockFetchOnce([]);
+    await fetchIncidents("p1");
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe("/api/projects/p1/incidents");
+  });
+
+  test("fetchIncident returns the single incident row", async () => {
+    const row = { id: "i1", status: "open", kind: "tls_failure" };
+    mockFetchOnce(row);
+    const out = await fetchIncident("p1", "i1");
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/projects/p1/incidents/i1", {
+      credentials: "include",
+      signal: undefined,
+    });
+    expect(out).toEqual(row);
+  });
+
+  test("acknowledgeIncident and resolveIncident POST to the real routes", async () => {
+    mockFetchOnce({ id: "i1", status: "acknowledged" });
+    await acknowledgeIncident("p1", "i1");
+    let [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe("/api/projects/p1/incidents/i1/acknowledge");
+    expect(init.method).toBe("POST");
+
+    mockFetchOnce({ id: "i1", status: "resolved" });
+    await resolveIncident("p1", "i1");
+    [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe("/api/projects/p1/incidents/i1/resolve");
+    expect(init.method).toBe("POST");
+  });
+
+  test("a 409 from a guarded transition surfaces as ApiError with status", async () => {
+    mockFetchOnce({ error: "Incident is already resolved" }, false, 409);
+    const err = await resolveIncident("p1", "i9").catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(409);
+    expect((err as Error).message).toBe("Incident is already resolved");
   });
 });

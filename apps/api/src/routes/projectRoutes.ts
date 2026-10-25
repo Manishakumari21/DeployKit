@@ -19,6 +19,12 @@ import {
 } from "../controllers/buildConfigController.js";
 import { getProjectEventsController } from "../controllers/projectEventController.js";
 import {
+  acknowledgeIncidentController,
+  getIncidentController,
+  listIncidentsController,
+  resolveIncidentController,
+} from "../controllers/incidentController.js";
+import {
   authenticate,
   requireProjectAccess,
 } from "../middleware/auth.js";
@@ -34,6 +40,23 @@ router.get("/", authenticate, getProjectsController);
 router.get("/:id", requireProjectAccess, getProjectController);
 router.delete("/:id", requireProjectAccess, deleteProjectController);
 router.get("/:id/events", requireProjectAccess, getProjectEventsController);
+
+router.get("/:id/incidents", requireProjectAccess, listIncidentsController);
+router.get(
+  "/:id/incidents/:incidentId",
+  requireProjectAccess,
+  getIncidentController
+);
+router.post(
+  "/:id/incidents/:incidentId/acknowledge",
+  requireProjectAccess,
+  acknowledgeIncidentController
+);
+router.post(
+  "/:id/incidents/:incidentId/resolve",
+  requireProjectAccess,
+  resolveIncidentController
+);
 
 router.get("/:id/build-config", requireProjectAccess, getBuildConfigController);
 router.put("/:id/build-config", requireProjectAccess, putBuildConfigController);

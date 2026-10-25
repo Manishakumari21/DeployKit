@@ -11,6 +11,9 @@ import type {
   GitHubConnection,
   GitHubRepositoriesResponse,
   GitHubSelection,
+  Incident,
+  IncidentKind,
+  IncidentStatusFilter,
   Project,
   ProjectEvent,
 } from "../types";
@@ -148,6 +151,51 @@ export function fetchProjectEvents(
 ): Promise<ProjectEvent[]> {
   return request<ProjectEvent[]>(`/projects/${projectId}/events?limit=${limit}`, {
     signal,
+  });
+}
+
+export function fetchIncidents(
+  projectId: string,
+  params: { status?: IncidentStatusFilter; kind?: IncidentKind; limit?: number } = {},
+  signal?: AbortSignal
+): Promise<Incident[]> {
+  const query = new URLSearchParams();
+  if (params.status) query.set("status", params.status);
+  if (params.kind) query.set("kind", params.kind);
+  if (params.limit !== undefined) query.set("limit", String(params.limit));
+  const qs = query.toString();
+  return request<Incident[]>(
+    `/projects/${projectId}/incidents${qs ? `?${qs}` : ""}`,
+    { signal }
+  );
+}
+
+export function fetchIncident(
+  projectId: string,
+  incidentId: string,
+  signal?: AbortSignal
+): Promise<Incident> {
+  return request<Incident>(`/projects/${projectId}/incidents/${incidentId}`, {
+    signal,
+  });
+}
+
+export function acknowledgeIncident(
+  projectId: string,
+  incidentId: string
+): Promise<Incident> {
+  return request<Incident>(
+    `/projects/${projectId}/incidents/${incidentId}/acknowledge`,
+    { method: "POST" }
+  );
+}
+
+export function resolveIncident(
+  projectId: string,
+  incidentId: string
+): Promise<Incident> {
+  return request<Incident>(`/projects/${projectId}/incidents/${incidentId}/resolve`, {
+    method: "POST",
   });
 }
 

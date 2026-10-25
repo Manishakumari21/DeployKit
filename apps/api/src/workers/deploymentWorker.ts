@@ -60,6 +60,11 @@ const RUNTIME_HEALTH_INTERVAL_MS = Math.max(
   Number(process.env.DEPLOYKIT_RUNTIME_HEALTH_INTERVAL_MS ?? 60_000)
 );
 
+const INCIDENT_SWEEP_INTERVAL_MS = Math.max(
+  5_000,
+  Number(process.env.DEPLOYKIT_INCIDENT_SWEEP_INTERVAL_MS ?? 60_000)
+);
+
 export interface IntervalSweep<T> {
   sweep(now?: number): Promise<T | null>;
   reset(): void;
@@ -103,6 +108,18 @@ const runtimeHealthSweep = createIntervalSweep<{
 }>(RUNTIME_HEALTH_INTERVAL_MS, async () => {
   const { checkActiveRuntimeHealth } = await import("./runtimeHealthMonitor.js");
   return await checkActiveRuntimeHealth();
+});
+
+const incidentSweep = createIntervalSweep<{
+  created: number;
+  updated: number;
+  touched: number;
+  skipped: number;
+  resolved: number;
+  errors: string[];
+}>(INCIDENT_SWEEP_INTERVAL_MS, async () => {
+  const { runIncidentSweep } = await import("../services/incidentService.js");
+  return await runIncidentSweep();
 });
 
 let certSweepInProgress = false;
@@ -165,6 +182,31 @@ async function runPeriodicSweeps(): Promise<void> {
     }
   } catch (error) {
     log("error", "worker.runtime_health_check_failed", {
+      error: error instanceof Error ? error.message.slice(0, 300) : "Unknown error",
+    });
+  }
+
+  try {
+    const incidents = await incidentSweep.sweep();
+    if (
+      incidents &&
+      (incidents.created > 0 ||
+        incidents.resolved > 0 ||
+        incidents.updated > 0 ||
+        incidents.errors.length > 0)
+    ) {
+      const level = incidents.errors.length > 0 ? "error" : "info";
+      log(level, "worker.incident_sweep", {
+        created: incidents.created,
+        updated: incidents.updated,
+        touched: incidents.touched,
+        skipped: incidents.skipped,
+        resolved: incidents.resolved,
+        errors: incidents.errors.slice(0, 5),
+      });
+    }
+  } catch (error) {
+    log("error", "worker.incident_sweep_failed", {
       error: error instanceof Error ? error.message.slice(0, 300) : "Unknown error",
     });
   }

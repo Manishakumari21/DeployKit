@@ -8,9 +8,9 @@ const { Client } = pg;
 
 const MIGRATION_LOCK_ID = 4_217_311_902;
 const BASELINE_SCHEMA_HASH =
-  "4002b858a09b25389ed10aefd665a2fd0bffce7524e57aa866e0e2b7a9ea4325";
+  "c29c363a046bcbbcb1145bf02a3b5aa2d0b1f54457b5ada1e85d45156acbbd01";
 const FULL_SCHEMA_HASH =
-  "82653996aee98374f64659927faebb9cdbb978662f6be7e900bffd5334335804";
+  "3113e932a2c5a32c75c4669c2d69e50f847c718a0401b5c2a4b6aadb66cff9ba";
 
 const BASELINE_MIGRATIONS = [
   "001_create_projects.sql",
@@ -32,6 +32,7 @@ const BASELINE_MIGRATIONS = [
   "017_edge_agents.sql",
   "018_edge_build_phase.sql",
   "020_project_build_config.sql",
+  "021_incidents.sql",
 ];
 
 const PENDING_MIGRATIONS = ["019_gateway_sync_queue.sql"];

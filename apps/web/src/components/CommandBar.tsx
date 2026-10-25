@@ -1,5 +1,6 @@
 import {
   Activity,
+  AlertTriangle,
   Boxes,
   Clock,
   Globe,
@@ -18,6 +19,7 @@ const ITEMS: { key: NavKey; label: string; icon: typeof Server; group: string }[
   { key: "deployments", label: "Deploys", icon: Clock, group: "run" },
   { key: "build", label: "Build config", icon: Hammer, group: "run" },
   { key: "events", label: "Events", icon: Activity, group: "observe" },
+  { key: "incidents", label: "Incidents", icon: AlertTriangle, group: "observe" },
   { key: "logs", label: "Logs", icon: ScrollText, group: "observe" },
   { key: "domains", label: "Domains", icon: Globe, group: "observe" },
   { key: "settings", label: "Settings", icon: Settings, group: "observe" },

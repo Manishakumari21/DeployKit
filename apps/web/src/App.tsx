@@ -3,6 +3,7 @@ import { BuildConfigPanel } from "./components/BuildConfigPanel";
 import { DeploymentDetails, DeploymentList } from "./components/deployments";
 import { CommandBar } from "./components/CommandBar";
 import { EventsView } from "./components/EventsView";
+import { IncidentsView } from "./components/IncidentsView";
 import { DomainsView, LogsView, SettingsView } from "./components/OpsViews";
 import { LoginView } from "./components/LoginView";
 import { MetricsPanel } from "./components/MetricsPanel";
@@ -268,6 +269,14 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
         )}
         {nav === "events" && (
           <EventsView
+            key={selectedProjectId ?? "none"}
+            projects={projects}
+            selectedProjectId={selectedProjectId}
+            onSelectProject={selectProject}
+          />
+        )}
+        {nav === "incidents" && (
+          <IncidentsView
             key={selectedProjectId ?? "none"}
             projects={projects}
             selectedProjectId={selectedProjectId}

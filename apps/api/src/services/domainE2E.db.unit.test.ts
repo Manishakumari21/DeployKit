@@ -153,6 +153,9 @@ test("domain follows active release; failed change keeps old route; delete remov
     if (userIds.length > 0) {
       await pool.query(`DELETE FROM users WHERE id = ANY($1)`, [userIds]).catch(() => undefined);
     }
+    await pool.query(
+      `DELETE FROM auth_rate_limits WHERE key LIKE 'login:%' OR key LIKE 'register:%'`
+    ).catch(() => undefined);
     if (server) {
       await new Promise<void>((resolve) => server!.close(() => resolve()));
     }

@@ -157,6 +157,9 @@ async function cleanup(): Promise<void> {
     await pool.query(`DELETE FROM users WHERE id = ANY($1)`, [userIds]);
     userIds.length = 0;
   }
+  await pool.query(
+    `DELETE FROM auth_rate_limits WHERE key LIKE 'login:%' OR key LIKE 'register:%'`
+  ).catch(() => undefined);
 }
 
 test.after(async () => {

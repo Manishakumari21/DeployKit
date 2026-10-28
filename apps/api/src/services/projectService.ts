@@ -1,5 +1,6 @@
 import pool from "../db/database.js";
 import { withTransaction } from "../db/transaction.js";
+import { validateBranch } from "../infrastructure/git/sourceCheckout.js";
 
 export class ProjectError extends Error {
   readonly code: string;
@@ -29,6 +30,39 @@ function validateOwnerId(ownerUserId: string): string {
   return ownerUserId;
 }
 
+export function __validateRepositoryUrlForTest(repositoryUrl: string): void {
+  let url: URL;
+  try {
+    url = new URL(repositoryUrl);
+  } catch {
+    throw new ProjectError("INVALID_REPOSITORY_URL", "repositoryUrl must be a valid URL");
+  }
+  if (url.protocol !== "https:") {
+    throw new ProjectError("INVALID_REPOSITORY_URL", "repositoryUrl must use HTTPS");
+  }
+  if (url.username || url.password) {
+    throw new ProjectError("INVALID_REPOSITORY_URL", "repositoryUrl must not contain embedded credentials");
+  }
+  if (url.port && url.port !== "443") {
+    throw new ProjectError("INVALID_REPOSITORY_URL", "repositoryUrl must not contain a custom port");
+  }
+  if (url.search || url.hash) {
+    throw new ProjectError("INVALID_REPOSITORY_URL", "repositoryUrl must not contain query parameters or fragments");
+  }
+  if (url.pathname.split("/").filter(Boolean).length < 2) {
+    throw new ProjectError("INVALID_REPOSITORY_URL", "repositoryUrl must contain an owner and repository");
+  }
+}
+
+function validateCreateInput(input: CreateProjectInput): void {
+  __validateRepositoryUrlForTest(input.repositoryUrl);
+  try {
+    validateBranch(input.branch);
+  } catch (error) {
+    throw new ProjectError("INVALID_BRANCH", error instanceof Error ? error.message : "Invalid branch");
+  }
+}
+
 function isForeignKeyViolation(error: unknown): boolean {
   return (
     typeof error === "object" &&
@@ -38,6 +72,7 @@ function isForeignKeyViolation(error: unknown): boolean {
 }
 
 export async function createProject(input: CreateProjectInput) {
+  validateCreateInput(input);
   if (input.ownerUserId === undefined) {
     const result = await pool.query(
       `

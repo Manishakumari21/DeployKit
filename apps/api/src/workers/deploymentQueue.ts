@@ -1,5 +1,6 @@
 import pool from "../db/database.js";
 import { canTransition } from "../deployments/deploymentStateMachine.js";
+import { redactForLog } from "../agents/edgeJobSchema.js";
 
 const DEFAULT_LEASE_MS = 30_000;
 
@@ -676,7 +677,7 @@ export async function failEdgeBuildPhase(
       [deploymentId]
     );
     const previousStatus = (depResult.rows[0]?.status ?? "unknown") as string;
-    const safeMessage = errorMessage.slice(0, 4000);
+    const safeMessage = redactForLog(errorMessage).slice(0, 4000);
     const safeCode = errorCode.slice(0, 100);
 
     if (shouldRetry) {
@@ -1276,7 +1277,7 @@ export async function failJobTerminal(
       [jobId, workerId, leaseToken]
     );
     if (jobResult.rows.length !== 1) throw new Error("Deployment job is no longer owned by this worker");
-    const safeMessage = errorMessage.slice(0, 4000);
+    const safeMessage = redactForLog(errorMessage).slice(0, 4000);
     const dep = await client.query(
       `SELECT status FROM deployments WHERE id = $1 FOR UPDATE`,
       [deploymentId]
@@ -1382,7 +1383,7 @@ export async function failJob(
     if (deploymentResult.rows.length !== 1) throw new Error("Deployment associated with job was not found");
 
     const previousStatus = deploymentResult.rows[0].status as string;
-    const safeMessage = errorMessage.slice(0, 4000);
+    const safeMessage = redactForLog(errorMessage).slice(0, 4000);
     const retryCode = (errorCode ?? "DEPLOYMENT_RETRY").slice(0, 100);
     const failedCode = (errorCode ?? "DEPLOYMENT_FAILED").slice(0, 100);
 

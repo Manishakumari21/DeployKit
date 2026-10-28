@@ -99,6 +99,69 @@ test("claim increments attempts and records attempt history", async () => {
   }
 });
 
+test("failJob persists redacted error messages across all surfaces", async () => {
+  if (!(await gateDb("workers/deploymentQueue.db.unit.test.ts", dbAvailable))) {
+    return;
+  }
+  const project = await createProject(`redact-${Date.now()}`);
+  try {
+    const deployment = await createDeployment({
+      projectId: project.id,
+      trigger: "manual",
+      idempotencyKey: null,
+    });
+    const claimed = await claimNextJob("test-worker-redact", 30_000);
+    assert.ok(claimed);
+    const secretMessage =
+      "build output leaked: bearer super-secret-token-42 then ghp_secret1234567890 and password=hunter2-guess-it";
+    const outcome = await failJob(
+      claimed!.id,
+      claimed!.deploymentId,
+      "test-worker-redact",
+      claimed!.leaseToken,
+      secretMessage
+    );
+    assert.equal(outcome, "retrying");
+
+    const job = await pool.query(
+      `SELECT last_error FROM deployment_jobs WHERE id = $1`,
+      [claimed!.id]
+    );
+    const dep = await pool.query(
+      `SELECT error_message FROM deployments WHERE id = $1`,
+      [deployment.id]
+    );
+    const events = await pool.query(
+      `SELECT metadata FROM deployment_events
+       WHERE deployment_id = $1 AND event_type = 'deployment.retry_scheduled'`,
+      [deployment.id]
+    );
+    const attempts = await pool.query(
+      `SELECT error_message FROM deployment_attempts
+       WHERE deployment_id = $1 AND attempt_number = 1`,
+      [deployment.id]
+    );
+
+    const surfaces: Array<[string, unknown]> = [
+      ["deployment_jobs.last_error", job.rows[0]?.last_error],
+      ["deployments.error_message", dep.rows[0]?.error_message],
+      ["deployment_events.metadata", JSON.stringify(events.rows[0]?.metadata ?? null)],
+      ["deployment_attempts.error_message", attempts.rows[0]?.error_message],
+    ];
+
+    for (const [label, raw] of surfaces) {
+      const text = typeof raw === "string" ? raw : "";
+      assert.ok(text.length > 0, `${label} should record an error`);
+      assert.ok(!text.includes("super-secret-token-42"), `${label} must not leak the bearer token`);
+      assert.ok(!text.includes("ghp_secret1234567890"), `${label} must not leak the GitHub token`);
+      assert.ok(!text.includes("hunter2-guess-it"), `${label} must not leak the password value`);
+      assert.ok(text.includes("[redacted]"), `${label} should carry redaction markers`);
+    }
+  } finally {
+    await pool.query(`DELETE FROM projects WHERE id = $1`, [project.id]);
+  }
+});
+
 test("expired leases are recovered with audit events", async () => {
   if (!(await gateDb("workers/deploymentQueue.db.unit.test.ts", dbAvailable))) {
     return;

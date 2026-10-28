@@ -321,9 +321,10 @@ Guarantees actually implemented:
 | `DEPLOYKIT_GATEWAY_ROUTES_DIR` | `/gateway-routes` | shared routes volume in worker |
 | `DEPLOYKIT_GATEWAY_HOST` | `dk-gateway` | gateway address for traffic verification |
 
-`docker compose up` runs the gateway (no published ports, no Docker
-socket; socket stays worker-only). App containers still publish no
-host ports; only the active release is reachable through the gateway
+`docker compose up` runs the gateway (publishes 80/443 for app routing
+and the registry TLS alias; no Docker socket — socket stays
+worker-only). App containers still publish no host ports; the active
+release is reachable through the gateway
 as `dk-p<shortid>.deploykit.local`.
 
 ### Tests
@@ -337,8 +338,10 @@ cascading project deletes). Docker suites stay separate:
 ### Limitations
 
 * Single node; gateway is one nginx container (failure domain, no HA).
-* No TLS/DNS automation; gateway serves plain HTTP on the runtime
-  network with no published host ports.
+* The gateway publishes 80/443; the registry TLS alias
+  (`deploykit-registry-tls`) is served from the `deploykit-certs`
+  volume, and app-route certificates are issued via ACME by the
+  worker's cert sweep.
 * Readiness is HTTP 2xx/3xx on `/`; no app-specific health contracts.
 
 ## Phase 06 — Image registry & artifact lifecycle
@@ -350,26 +353,36 @@ active release`. Release identity remains `repository@sha256:<digest>`;
 mutable tags are never used as release identity. Rollback reuses the
 stored digest and never rebuilds.
 
-The registry is **development-only**: unauthenticated, reachable on
-the internal `deploykit-default` network as `deploykit-registry:5000`,
-no host ports published, data persisted in the
+The registry is **development-only**: unauthenticated, bound to host
+loopback as `127.0.0.1:5000` and reachable on the internal
+`deploykit-default` network as `registry:5000`, data persisted in the
 `deploykit-registry-data` volume (`registry:2.8.3`, pinned).
 Only the worker touches the registry; the API has no registry access
 and no registry dependency.
+
+In compose the worker's registry host defaults to
+`deploykit-registry-tls:443` — a network alias of the `dk-gateway`
+nginx service, which terminates TLS (certificates mounted from the
+`deploykit-certs` volume) and proxies to `http://registry:5000`.
+Worker bootstrap provisions the CA into BuildKit
+(`/certs/deploykit-registry-tls/ca.crt`), and host-side tooling trusts
+the same CA via `/etc/docker/certs.d/deploykit-registry-tls:443/ca.crt`.
 
 When `DEPLOYKIT_REGISTRY_HOST` is unset, the pipeline keeps the Phase 03
 local behavior (`--load`, no push, no pull). When set, builds use
 `--push` (never combined with `--load`), deployment status passes
 through `pushing`, and the runtime pulls the digest reference before
-`container create`. Digest resolution uses
-`docker buildx imagetools inspect` against the registry (not the local
-RepoDigests cache, which can disagree with the stored manifest).
+`container create`. The digest is read from the buildx
+`--metadata-file` output (`containerimage.digest`), must match
+`sha256:<64 hex>`, and is persisted on `deployments.image_digest` /
+`releases.image_digest`; the runtime container runs the digest-pinned
+reference so a mutable tag can never substitute for the built image.
 
 ### Environment variables (new)
 
 | Var | Default | Purpose |
 | --- | ------- | ------- |
-| `DEPLOYKIT_REGISTRY_HOST` | unset (registry disabled) | registry hostname[:port], e.g. `deploykit-registry:5000` |
+| `DEPLOYKIT_REGISTRY_HOST` | unset (registry disabled; compose: `deploykit-registry-tls:443`) | registry hostname[:port], e.g. `deploykit-registry-tls:443` |
 | `DEPLOYKIT_REGISTRY_NAMESPACE` | `deploykit` | registry namespace prefix |
 | `DEPLOYKIT_REGISTRY_INSECURE` | `false` | `true` is LOCAL DEVELOPMENT ONLY (loopback / `deploykit-registry` hosts only) |
 
@@ -621,3 +634,41 @@ TCP 443 reachable (HTTPS), valid `DEPLOYKIT_ACME_EMAIL`, production CA URL.
 Respect Let's Encrypt rate limits (failed orders are NOT auto-retried —
 re-arm via the dashboard). Localhost is never publicly ACME-valid; use
 `DEPLOYKIT_TLS_MODE=self-signed` for local HTTPS testing only.
+
+## Operations — rollback & troubleshooting
+
+### Rollback
+
+`POST /api/projects/:id/rollback` with `{ "releaseId": "<uuid>" }`
+(session auth) creates a rollback deployment. The worker copies the
+target release's stored `repository@sha256:<digest>` and redeploys it
+without rebuilding: a new active release is created carrying that
+digest, the previously active release is stopped, and the runtime
+container is replaced with the digest-pinned reference. List releases
+via `GET /api/projects/:id/releases`. The web UI displays
+rollback-triggered deployments but does not yet offer a rollback
+button — use the API.
+
+### Troubleshooting
+
+* `docker compose` fails with a `.env` parse error: compose reads
+  `.env` strictly (no spaces around keys, no stray free-text lines).
+  Validate with `docker compose config --quiet`.
+* Worker exits immediately: check `docker logs deploykit-worker` for
+  `worker.bootstrap_failed`. Bootstrap fails closed when the Docker
+  CLI/daemon is unavailable, the `deploykit-builder` cannot be created,
+  or the registry (`deploykit-registry-tls:443`) is unreachable — the
+  CA must exist in the `deploykit-certs` volume.
+* Host cannot push/pull via `deploykit-registry-tls:443`: the hostname
+  must resolve to the gateway (e.g. an `/etc/hosts` entry) and the
+  daemon must trust the CA at
+  `/etc/docker/certs.d/deploykit-registry-tls:443/ca.crt`.
+* `npm run test:build` fails with `no builder "deploykit-builder"
+  found`: the executor uses `DEPLOYKIT_BUILDER_NAME` (default
+  `deploykit-builder`) from the runner's `BUILDX_CONFIG`. Point
+  `BUILDX_CONFIG`/`DEPLOYKIT_BUILDER_NAME` at a local builder or run
+  inside the worker container; CI excludes Docker-dependent suites.
+* A deployment is `failed`: `GET /api/deployments/:id` carries
+  `error_code`/`error_message` (secret-redacted), and
+  `GET /api/deployments/:id/events` shows the full transition trail
+  (`runtime.unhealthy` means the `dk-*` runtime container stopped).

@@ -121,6 +121,26 @@ Or via compose: `docker compose up --build` (postgres healthy ->
 api healthy -> worker; web waits for api; worker alone mounts
 `/var/run/docker.sock`).
 
+#### Start / stop the local stack
+
+```bash
+docker compose up -d        # start all services in the background
+docker compose ps -a        # status + health of every service
+docker compose logs -f api  # tail one service (or worker, web, gateway)
+docker compose stop api     # stop one service (clean SIGTERM)
+docker compose down          # stop and remove containers (keeps data volumes)
+```
+
+The API publishes on `127.0.0.1:3001`, the registry on
+`127.0.0.1:5000`, and the gateway on `80/443`. The web frontend is
+served on **http://localhost:8083** — that mapping comes from
+`docker-compose.override.yml`, which is a local-only override and is
+intentionally left uncommitted; the base compose file publishes no web
+port. The frontend calls the API same-origin through `/api`, so the
+browser reaches the backend through the web container's proxy without
+any hardcoded host. On a clean stop the API logs
+`SIGTERM received, shutting down` and exits `0`.
+
 Builder (reproducible): `docker buildx create --name deploykit-builder
 --driver docker-container --use` — config in
 `ops/buildkit/buildkitd.toml` (`max-parallelism = 2`, no insecure
@@ -420,6 +440,13 @@ it afterwards; it does not use the Compose registry service or volumes.
   insecure registry), converges the deterministic `deploykit-builder`
   to it idempotently, and attaches the builder container to the
   worker's networks so BuildKit pushes reach Compose registries.
+* Edge-targeted deployments stop at a trusted, digest-pinned local
+  container. Release activation, gateway traffic switching, and
+  rollback are **not** implemented for edge agents (central
+  deployments activate and roll back normally). A succeeded edge job
+  means a healthy container on the agent host, not served traffic; a
+  failed or blocked rollout never touches the running deployment (see
+  `docs/edge-agent.md` §9–§10).
 
 ## Phase 08 — Worker/build hardening
 

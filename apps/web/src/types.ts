@@ -80,6 +80,25 @@ export type DeploymentEvent = {
   created_at: string;
 };
 
+export type ReleaseStatus = "pending" | "starting" | "healthy" | "active" | "stopped" | "failed";
+
+export type Release = {
+  id: string;
+  deployment_id: string;
+  project_id: string;
+  image_repository: string;
+  image_digest: string;
+  status: ReleaseStatus;
+  supersedes_release_id: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  created_at: string;
+  started_at: string | null;
+  healthy_at: string | null;
+  activated_at: string | null;
+  stopped_at: string | null;
+};
+
 export type CustomDomain = {
   id: string;
   project_id: string;

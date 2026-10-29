@@ -15,6 +15,14 @@ function resolvePepper(): { value: string; source: TokenPepperSource } {
     cached = { value: configured, source: "env" };
     return cached;
   }
+  if (process.env.NODE_ENV === "production") {
+    // Fail closed: an ephemeral pepper would silently invalidate every stored
+    // session and agent token on restart and differ across replicas, so
+    // production must not boot without a stable secret.
+    throw new Error(
+      `${TOKEN_PEPPER_ENV} must be set explicitly in production`
+    );
+  }
   cached = {
     value: crypto.randomBytes(32).toString("hex"),
     source: "ephemeral",

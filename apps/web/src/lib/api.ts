@@ -16,6 +16,7 @@ import type {
   IncidentStatusFilter,
   Project,
   ProjectEvent,
+  Release,
 } from "../types";
 
 export const API_URL =
@@ -255,6 +256,22 @@ export function fetchDeploymentEvents(deploymentId: string): Promise<DeploymentE
 
 export function cancelDeployment(deploymentId: string): Promise<{ id: string; status: string }> {
   return request(`/deployments/${deploymentId}/cancel`, { method: "POST" });
+}
+
+export function fetchReleases(projectId: string, signal?: AbortSignal): Promise<Release[]> {
+  return request<Release[]>(`/projects/${projectId}/releases`, { signal });
+}
+
+export function rollbackDeployment(
+  projectId: string,
+  releaseId: string,
+  idempotencyKey: string
+): Promise<ApiDeployment> {
+  return request<ApiDeployment>(`/projects/${projectId}/rollback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify({ releaseId }),
+  });
 }
 
 export type DeploymentLog = {

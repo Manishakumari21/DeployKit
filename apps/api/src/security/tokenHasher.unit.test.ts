@@ -10,10 +10,13 @@ import {
 } from "../security/tokenHasher.js";
 
 const savedPepper = process.env[TOKEN_PEPPER_ENV];
+const savedNodeEnv = process.env.NODE_ENV;
 
 test.after(() => {
   if (savedPepper === undefined) delete process.env[TOKEN_PEPPER_ENV];
   else process.env[TOKEN_PEPPER_ENV] = savedPepper;
+  if (savedNodeEnv === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = savedNodeEnv;
   resetTokenPepperCache();
 });
 
@@ -46,4 +49,37 @@ test("an unconfigured pepper falls back to an ephemeral per-process key", () => 
   resetTokenPepperCache();
   const second = hashSecret("same-token");
   assert.notEqual(first, second, "an ephemeral pepper must not survive a restart");
+});
+
+test("production refuses to boot without an explicit pepper", () => {
+  try {
+    process.env.NODE_ENV = "production";
+    delete process.env[TOKEN_PEPPER_ENV];
+    resetTokenPepperCache();
+
+    assert.throws(
+      () => hashSecret("same-token"),
+      /DEPLOYKIT_TOKEN_PEPPER must be set explicitly in production/
+    );
+
+    process.env[TOKEN_PEPPER_ENV] = "prod-pepper";
+    resetTokenPepperCache();
+
+    assert.equal(tokenPepperSource(), "env");
+    assert.equal(hashSecret("same-token").length, 64);
+  } finally {
+    if (savedPepper === undefined) {
+      delete process.env[TOKEN_PEPPER_ENV];
+    } else {
+      process.env[TOKEN_PEPPER_ENV] = savedPepper;
+    }
+
+    if (savedNodeEnv === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = savedNodeEnv;
+    }
+
+    resetTokenPepperCache();
+  }
 });

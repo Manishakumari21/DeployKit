@@ -1,0 +1,68 @@
+# DeployKit registry authentication overlay (opt-in).
+#
+# The base docker-compose.yml runs the registry unauthenticated on loopback
+# (dev-only). This overlay enforces htpasswd auth for any deployment that
+# exposes the registry beyond loopback. See README "Registry authentication"
+# for the full credential flow.
+#
+#   export DEPLOYKIT_REGISTRY_USERNAME=deploykit
+#   export DEPLOYKIT_REGISTRY_PASSWORD="$(openssl rand -hex 32)"   # never commit
+#   docker compose -f docker-compose.yml -f docker-compose.registry-auth.yml up -d
+#
+# Fails closed: without DEPLOYKIT_REGISTRY_PASSWORD the init container errors
+# and the registry will not start.
+
+services:
+  registry-auth-init:
+    image: httpd:alpine
+    container_name: deploykit-registry-auth-init
+    restart: "no"
+    environment:
+      DEPLOYKIT_REGISTRY_USERNAME: ${DEPLOYKIT_REGISTRY_USERNAME:-deploykit}
+      DEPLOYKIT_REGISTRY_PASSWORD: ${DEPLOYKIT_REGISTRY_PASSWORD:?DEPLOYKIT_REGISTRY_PASSWORD must be set when registry auth is enabled}
+    volumes:
+      - deploykit-registry-auth:/auth
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if [ -z "$$DEPLOYKIT_REGISTRY_PASSWORD" ]; then
+          echo "DEPLOYKIT_REGISTRY_PASSWORD is empty; refusing to generate an open registry" >&2
+          exit 1
+        fi
+        # bcrypt (-B) hash via stdin (-i) so the password never appears in argv.
+        printf '%s' "$$DEPLOYKIT_REGISTRY_PASSWORD" \
+          | htpasswd -niB "$$DEPLOYKIT_REGISTRY_USERNAME" > /auth/htpasswd
+        chmod 640 /auth/htpasswd
+        echo "wrote bcrypt htpasswd for $$DEPLOYKIT_REGISTRY_USERNAME"
+
+  registry:
+    depends_on:
+      registry-auth-init:
+        condition: service_completed_successfully
+    environment:
+      REGISTRY_AUTH: htpasswd
+      REGISTRY_AUTH_HTPASSWD_PATH: /auth/htpasswd
+      REGISTRY_AUTH_HTPASSWD_REALM: DeployKit Registry
+    volumes:
+      - deploykit-registry-data:/var/lib/registry
+      - deploykit-registry-auth:/auth:ro
+    healthcheck:
+      # Auth-enabled registries answer /v2/ with 401 (the challenge). Accept
+      # either the 200 (no auth) or 401 (auth on) so the container is healthy.
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -S -O /dev/null http://localhost:5000/v2/ 2>&1 | grep -qE 'HTTP/1\\.[01] (200|401)'"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  worker:
+    environment:
+      DEPLOYKIT_REGISTRY_USERNAME: ${DEPLOYKIT_REGISTRY_USERNAME:-deploykit}
+      DEPLOYKIT_REGISTRY_PASSWORD: ${DEPLOYKIT_REGISTRY_PASSWORD:?DEPLOYKIT_REGISTRY_PASSWORD must be set when registry auth is enabled}
+
+volumes:
+  deploykit-registry-auth:

@@ -9,6 +9,10 @@ import {
   RegistryConfigError,
   type RegistryConfig,
 } from "../infrastructure/registry/registryConfig.js";
+import {
+  performRegistryLogin,
+  resolveRegistryCredentials,
+} from "../infrastructure/registry/registryAuth.js";
 import { cleanupOrphanedContainers, cleanupStaleCheckoutWorkspaces } from "./orphanCleanup.js";
 
 export const DEFAULT_BUILDER_NAME = "deploykit-builder";
@@ -68,6 +72,12 @@ function buildxConfigDir(): string {
     throw new BootstrapError("INVALID_BUILDX_CONFIG", "Invalid BUILDX_CONFIG directory");
   }
   return v;
+}
+
+// docker login persists config.json under $DOCKER_CONFIG; kept inside the
+// buildx config dir so credentials survive restarts with the builder state.
+function registryDockerConfigDir(configDir: string): string {
+  return path.join(configDir, "docker-config");
 }
 
 function bootstrapEnv(configDir: string): NodeJS.ProcessEnv {
@@ -543,6 +553,33 @@ export async function bootstrapWorker(): Promise<BootstrapResult> {
         "REGISTRY_UNREACHABLE",
         e instanceof Error ? `Registry ${registry.registryHost} unreachable: ${e.message.slice(0, 300)}` : `Registry ${registry.registryHost} unreachable`
       );
+    }
+
+    const credentials = resolveRegistryCredentials();
+    if (credentials) {
+      const dockerConfigDir = registryDockerConfigDir(configDir);
+      lifecycleEvent("BOOTSTRAPPING", { step: "registry_login", registryHost: registry.registryHost, username: credentials.username });
+      // Exporting DOCKER_CONFIG on process.env makes every later
+      // push/pull/buildx command reuse the logged-in credentials.
+      process.env.DOCKER_CONFIG = dockerConfigDir;
+      const login = await performRegistryLogin({
+        dockerBinary: binary,
+        registryHost: registry.registryHost,
+        credentials,
+        dockerConfigDir,
+        certsDir: process.env.DEPLOYKIT_CERTS_DIR ?? "/certs",
+      });
+      if (login.code !== 0 || login.timedOut) {
+        throw new BootstrapError(
+          "REGISTRY_LOGIN_FAILED",
+          `Registry login to ${registry.registryHost} failed for ${credentials.username}: ${
+            login.timedOut ? "timed out" : (login.stderr || `exit ${login.code}`).slice(0, 300)
+          }`
+        );
+      }
+      lifecycleEvent("BOOTSTRAPPING", { step: "registry_login_done", registryHost: registry.registryHost, username: credentials.username });
+    } else {
+      lifecycleEvent("BOOTSTRAPPING", { step: "registry_login_skipped", registryHost: registry.registryHost, reason: "no credentials configured" });
     }
   }
 

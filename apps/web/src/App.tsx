@@ -8,6 +8,7 @@ import { DomainsView, LogsView, SettingsView } from "./components/OpsViews";
 import { LoginView } from "./components/LoginView";
 import { MetricsPanel } from "./components/MetricsPanel";
 import { ProjectModal } from "./components/ProjectModal";
+import { ReleasesPanel } from "./components/ReleasesPanel";
 import { ServiceHeader } from "./components/ServiceHeader";
 import { ServicesGrid } from "./components/ServicesGrid";
 import { Toast } from "./components/Toast";
@@ -18,6 +19,7 @@ import { useDeployments } from "./hooks/useDeployments";
 import { useProjects, useToast } from "./hooks/useProjects";
 import { linkProjectGithub } from "./lib/api";
 import type { ApiDeployment, AuthUser, GitHubSelection, NavKey } from "./types";
+import { isCancellableStatus } from "./types";
 
 const SELECTED_KEY = "deploykit:selected-project";
 
@@ -266,6 +268,16 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
             />
             {selectedId && <DeploymentDetails deploymentId={selectedId} onUpdate={handleListUpdate} />}
           </div>
+        )}
+        {nav === "releases" && (
+          <ReleasesPanel
+            projectId={selectedProjectId}
+            activeDeploymentBusy={deployments.some((d) => isCancellableStatus(d.status))}
+            onRollbackStarted={() => {
+              reloadDeployments();
+              setToast("Rollback dispatched — a new flight is queued");
+            }}
+          />
         )}
         {nav === "events" && (
           <EventsView

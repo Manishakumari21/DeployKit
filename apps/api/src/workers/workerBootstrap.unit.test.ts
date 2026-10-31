@@ -56,6 +56,23 @@ test("bootstrap never uses shell pipelines", async () => {
   assert.ok(src.includes("BUILDX_CONFIG"));
 });
 
+test("bootstrap wires registry login fail-closed before worker.ready", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const src = await readFile(join(process.cwd(), "src/workers/workerBootstrap.ts"), "utf8");
+  assert.ok(src.includes("resolveRegistryCredentials"));
+  assert.ok(src.includes("performRegistryLogin"));
+  assert.ok(src.includes("REGISTRY_LOGIN_FAILED"));
+  assert.ok(src.includes("DOCKER_CONFIG"));
+
+  const authSrc = await readFile(
+    join(process.cwd(), "src/infrastructure/registry/registryAuth.ts"),
+    "utf8"
+  );
+  assert.ok(authSrc.includes("--password-stdin"));
+  assert.ok(!authSrc.includes("shell: true"));
+});
+
 test("embedded buildkitd base is the canonical config used by bootstrap", () => {
   assert.equal(desiredBuildkitdToml(null), BASE_BUILDKITD_TOML);
   for (const required of [

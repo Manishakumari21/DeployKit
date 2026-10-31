@@ -398,6 +398,69 @@ through `pushing`, and the runtime pulls the digest reference before
 `releases.image_digest`; the runtime container runs the digest-pinned
 reference so a mutable tag can never substitute for the built image.
 
+### Registry authentication (opt-in)
+
+By default the registry runs **unauthenticated on loopback only** — a
+development-only posture that is safe because the registry port is
+bound to `127.0.0.1:5000` and never exposed publicly. For any
+deployment that exposes the registry beyond loopback, htpasswd auth is
+available via an opt-in compose overlay:
+
+```bash
+# 1. Generate a strong password (never commit it, never echo it into argv):
+export DEPLOYKIT_REGISTRY_USERNAME=deploykit
+export DEPLOYKIT_REGISTRY_PASSWORD="$(openssl rand -hex 32)"
+
+# 2. Bring the stack up WITH the auth overlay:
+docker compose -f docker-compose.yml -f docker-compose.registry-auth.yml up -d
+```
+
+What the overlay does:
+
+* `registry-auth-init` (one-shot `httpd:alpine`) generates a **bcrypt
+  htpasswd** from the env credentials into the `deploykit-registry-auth`
+  volume. The plaintext password is piped to `htpasswd -niB` via stdin —
+  it is never placed in a process argv, written to disk, or baked into
+  an image; only the hash is stored.
+* The registry mounts that file read-only, sets
+  `REGISTRY_AUTH=htpasswd` + `REGISTRY_AUTH_HTPASSWD_REALM`, and enforces
+  basic auth on every `/v2/` request. The healthcheck is 401-tolerant
+  (a 401 challenge still proves the registry is up).
+* The worker receives the same credentials and, during bootstrap, runs
+  `docker login --password-stdin` against the registry host. The
+  credentials persist under `DOCKER_CONFIG` (inside the buildx config
+  dir), so `docker image push`, `docker image pull`, `docker buildx
+  build --push`, and `docker buildx imagetools inspect` all reuse them.
+* The gateway TLS route (`deploykit-registry-tls:443`) forwards the
+  `Authorization` header by default, so authenticated clients work
+  through TLS unchanged.
+
+**Fail-closed guard:** the overlay refuses to start without
+`DEPLOYKIT_REGISTRY_PASSWORD` (`docker compose config` errors with
+`DEPLOYKIT_REGISTRY_PASSWORD must be set when registry auth is
+enabled`), and the init container exits non-zero on an empty password —
+so the registry can never come up open when the overlay is selected.
+
+**Credential flow:**
+
+| Path | Dev (default) | Production (overlay) |
+| --- | --- | --- |
+| Registry auth | none (loopback only) | htpasswd (bcrypt) |
+| Worker push/pull | no login | `docker login` → `DOCKER_CONFIG` → CLI → daemon |
+| BuildKit `--push` | no auth | buildx forwards client creds to buildkitd |
+| Gateway `Authorization` | n/a | forwarded by nginx (default) |
+
+**Rotation:** set a new `DEPLOYKIT_REGISTRY_PASSWORD`, then
+`docker compose -f docker-compose.yml -f docker-compose.registry-auth.yml
+up -d --force-recreate registry-auth-init registry worker`. Existing
+images already pushed are unaffected (the digest references stay valid);
+only new pushes/pulls require the new password.
+
+**Prerequisite:** the host Docker daemon must trust the registry CA at
+`/etc/docker/certs.d/<registry-host>/ca.crt` for daemon-side pulls, and
+the worker trusts it via `SSL_CERT_FILE` (provisioned from the
+`deploykit-certs` volume) for the login handshake.
+
 ### Environment variables (new)
 
 | Var | Default | Purpose |
@@ -405,6 +468,8 @@ reference so a mutable tag can never substitute for the built image.
 | `DEPLOYKIT_REGISTRY_HOST` | unset (registry disabled; compose: `deploykit-registry-tls:443`) | registry hostname[:port], e.g. `deploykit-registry-tls:443` |
 | `DEPLOYKIT_REGISTRY_NAMESPACE` | `deploykit` | registry namespace prefix |
 | `DEPLOYKIT_REGISTRY_INSECURE` | `false` | `true` is LOCAL DEVELOPMENT ONLY (loopback / `deploykit-registry` hosts only) |
+| `DEPLOYKIT_REGISTRY_USERNAME` | unset (compose: `deploykit`) | htpasswd username for registry auth |
+| `DEPLOYKIT_REGISTRY_PASSWORD` | unset (auth disabled) | htpasswd password; when set + overlay included, auth is enforced |
 
 ### Tests
 
@@ -412,17 +477,24 @@ reference so a mutable tag can never substitute for the built image.
 cd apps/api
 npm test                                   # fast unit + DB suites (no Docker/registry needed)
 npm run test:registry                      # ephemeral 127.0.0.1 registry: push/digest/exists/restart/unreachable
+npm run test:integration                   # includes registryAuth.integration.test.ts (auth on/off)
 ```
 
 `test:registry` boots its own throwaway registry container and removes
 it afterwards; it does not use the Compose registry service or volumes.
 `test:integration` skips the registry lifecycle tests unless
-`DEPLOYKIT_TEST_REGISTRY_HOST` is set.
+`DEPLOYKIT_TEST_REGISTRY_HOST` is set; the registry-auth integration
+test is self-contained (it starts its own ephemeral htpasswd registry
+and proves anonymous push → 401, `docker login` + push → success,
+wrong password → login fails).
 
 ### Limitations
 
-* No registry authentication, no TLS, no HA, no retention/GC policy,
-  no image signing — not production-grade artifact storage.
+* Registry authentication is **implemented and tested but opt-in**
+  (see "Registry authentication" above): the default dev stack keeps
+  the registry unauthenticated on loopback only. No HA, no
+  retention/GC policy, no image signing — not production-grade
+  artifact storage.
 * Host-Docker prerequisite for registry pulls (NOT automated by
   DeployKit, which never touches host daemon config): the runtime
   `docker image pull repository@digest` executes on the HOST Docker
@@ -664,6 +736,39 @@ re-arm via the dashboard). Localhost is never publicly ACME-valid; use
 
 ## Operations — rollback & troubleshooting
 
+### Database backup & restore
+
+`ops/backup/backup-db.sh` and `ops/backup/restore-db.sh` wrap
+`pg_dump`/`pg_restore` with guardrails. Both read `DATABASE_URL` from
+the environment (or `.env`).
+
+```bash
+# Take a compressed custom-format dump (default ./backups/<db>-<ts>.dump):
+cd ops/backup && ./backup-db.sh
+
+# Restore into a NEW scratch database (default <db>_restore_<ts>) — never
+# touches the live database:
+./restore-db.sh backups/deploykit-2026-10-31T12-00-00.dump
+
+# Restore OVER the live database (destructive!) — requires typing the
+# exact database name to confirm:
+./restore-db.sh --force-live backups/deploykit-....dump
+```
+
+The scripts verify the dump magic bytes (`PGDMP`) and non-emptiness
+before restoring, and refuse a live-DB restore without `--force-live`
+plus interactive confirmation. Dumps land in `backups/`, which is
+git-ignored.
+
+Suggested cron for nightly backups (adjust paths/credentials):
+
+```cron
+15 3 * * * cd /srv/deploykit/ops/backup && DATABASE_URL="$DEPLOYKIT_DATABASE_URL" ./backup-db.sh >> /var/log/deploykit-backup.log 2>&1
+```
+
+Copy dumps off-host regularly; a backup that only lives on the database
+host does not survive that host's loss.
+
 ### Rollback
 
 `POST /api/projects/:id/rollback` with `{ "releaseId": "<uuid>" }`
@@ -672,9 +777,14 @@ target release's stored `repository@sha256:<digest>` and redeploys it
 without rebuilding: a new active release is created carrying that
 digest, the previously active release is stopped, and the runtime
 container is replaced with the digest-pinned reference. List releases
-via `GET /api/projects/:id/releases`. The web UI displays
-rollback-triggered deployments but does not yet offer a rollback
-button — use the API.
+via `GET /api/projects/:id/releases`.
+
+The web UI now offers this directly: the **Releases** view lists every
+release (status pill, digest, age) with a **Roll back** button per
+release. The button is disabled — with an explanatory tooltip — for
+failed releases (the backend rejects them as rollback targets) and
+while a deployment is in flight (the backend returns 409), and it asks
+for a confirmation step before dispatching.
 
 ### Troubleshooting
 

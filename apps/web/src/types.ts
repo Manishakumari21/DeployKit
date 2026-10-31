@@ -17,6 +17,7 @@ export type NavKey =
   | "overview"
   | "services"
   | "deployments"
+  | "releases"
   | "build"
   | "events"
   | "incidents"

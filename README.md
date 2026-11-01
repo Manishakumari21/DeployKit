@@ -158,6 +158,10 @@ entitlements). Builds use `--builder deploykit-builder`, enforce
 | `WORKER_POLL_INTERVAL_MS` | `2000` | queue poll interval |
 | `WORKER_LEASE_MS` | `30000` | job lease duration |
 | `DEPLOYKIT_WORKER_CONCURRENCY` | `2` | parallel deployment jobs per worker (clamped 1..8); jobs stay serialized per project |
+| `DEPLOYKIT_REGISTRY_CONTAINER` | `deploykit-registry` | registry container the disk guard measures via `df` |
+| `DEPLOYKIT_REGISTRY_STORAGE_PATH` | `/var/lib/registry` | registry storage path measured for disk pressure |
+| `DEPLOYKIT_REGISTRY_DISK_SOFT_PERCENT` | `85` | disk usage % at which the worker logs a pressure warning |
+| `DEPLOYKIT_REGISTRY_DISK_HARD_PERCENT` | `95` | disk usage % at which new builds fail closed (`REGISTRY_DISK_FULL`) |
 | `DEPLOYKIT_RUNTIME_NETWORK` | `deploykit-runtime` | dedicated runtime network |
 | `DEPLOYKIT_BUILDER_NAME` | `deploykit-builder` | Buildx builder instance |
 | `DEPLOYKIT_DOCKER_BINARY` | `docker` | docker binary path |

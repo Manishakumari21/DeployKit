@@ -20,6 +20,11 @@ import type { DeploymentExecutor } from "./deploymentExecutor.js";
 import { RealDeploymentExecutor } from "./deploymentPipeline.js";
 import { PipelineError } from "../deployments/deploymentErrors.js";
 import { redactForLog } from "../agents/edgeJobSchema.js";
+import {
+  measureRegistryDiskUsage,
+  readDiskThresholds,
+  diskPressureLevel,
+} from "../infrastructure/registry/registryDiskGuard.js";
 import { BootstrapError, bootstrapWorker } from "./workerBootstrap.js";
 import {
   claimNextGatewaySyncJob,
@@ -63,6 +68,11 @@ const RUNTIME_HEALTH_INTERVAL_MS = Math.max(
 const INCIDENT_SWEEP_INTERVAL_MS = Math.max(
   5_000,
   Number(process.env.DEPLOYKIT_INCIDENT_SWEEP_INTERVAL_MS ?? 60_000)
+);
+
+const REGISTRY_DISK_POLL_INTERVAL_MS = Math.max(
+  30_000,
+  Number(process.env.DEPLOYKIT_REGISTRY_DISK_POLL_INTERVAL_MS ?? 300_000)
 );
 
 const MIN_WORKER_CONCURRENCY = 1;
@@ -146,6 +156,23 @@ const incidentSweep = createIntervalSweep<{
 }>(INCIDENT_SWEEP_INTERVAL_MS, async () => {
   const { runIncidentSweep } = await import("../services/incidentService.js");
   return await runIncidentSweep();
+});
+
+const registryDiskSweep = createIntervalSweep<{
+  usedPercent: number;
+  availableKB: number;
+  pressure: "ok" | "soft" | "hard";
+} | null>(REGISTRY_DISK_POLL_INTERVAL_MS, async () => {
+  const usage = await measureRegistryDiskUsage();
+  if (!usage) {
+    return null;
+  }
+  const thresholds = readDiskThresholds();
+  return {
+    usedPercent: usage.usedPercent,
+    availableKB: usage.availableKB,
+    pressure: diskPressureLevel(usage.usedPercent, thresholds),
+  };
 });
 
 let certSweepInProgress = false;
@@ -233,6 +260,22 @@ async function runPeriodicSweeps(): Promise<void> {
     }
   } catch (error) {
     log("error", "worker.incident_sweep_failed", {
+      error: error instanceof Error ? error.message.slice(0, 300) : "Unknown error",
+    });
+  }
+
+  try {
+    const disk = await registryDiskSweep.sweep();
+    if (disk && disk.pressure !== "ok") {
+      const level = disk.pressure === "hard" ? "error" : "info";
+      log(level, "worker.registry_disk_pressure", {
+        usedPercent: disk.usedPercent,
+        availableKB: disk.availableKB,
+        pressure: disk.pressure,
+      });
+    }
+  } catch (error) {
+    log("error", "worker.registry_disk_check_failed", {
       error: error instanceof Error ? error.message.slice(0, 300) : "Unknown error",
     });
   }

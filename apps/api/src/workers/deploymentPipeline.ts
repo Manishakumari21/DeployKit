@@ -12,6 +12,12 @@ import {
 import type { BuildExecutor } from "../infrastructure/build/buildExecutor.js";
 import { getBuildPolicy } from "../infrastructure/build/buildPolicy.js";
 import {
+  measureRegistryDiskUsage,
+  readDiskThresholds,
+  diskPressureLevel,
+} from "../infrastructure/registry/registryDiskGuard.js";
+import type { RegistryDiskUsage, DiskThresholds } from "../infrastructure/registry/registryDiskGuard.js";
+import {
   detectStack,
   StackDetectorError,
 } from "../infrastructure/build/stackDetector.js";
@@ -86,6 +92,35 @@ export interface PipelineDependencies {
   healthTimeoutMs?: number;
   routeTimeoutMs?: number;
   gatewayName?: string;
+  measureDisk?: () => Promise<RegistryDiskUsage | null>;
+}
+
+// Refuse to build (registry mode) when the registry storage is critically full,
+// so a build cannot fill the host disk and take every service down. Fails open
+// when usage cannot be measured: an unknown reading must not stop deploys.
+export async function assertRegistryDiskHasSpace(
+  measureDisk: () => Promise<RegistryDiskUsage | null>,
+  thresholds: DiskThresholds = readDiskThresholds()
+): Promise<void> {
+  let usage: RegistryDiskUsage | null = null;
+  try {
+    usage = await measureDisk();
+  } catch {
+    usage = null;
+  }
+  if (!usage) {
+    return;
+  }
+  if (diskPressureLevel(usage.usedPercent, thresholds) === "hard") {
+    throw new PipelineError(
+      PIPELINE_ERROR_CODES.REGISTRY_DISK_FULL,
+      `Registry storage is ${usage.usedPercent}% full (threshold ${thresholds.hardPercent}%); new builds are blocked until space is reclaimed`,
+      {
+        retryable: false,
+        details: `usedPercent=${usage.usedPercent}; availableKB=${usage.availableKB}`,
+      }
+    );
+  }
 }
 
 import { execFile } from "node:child_process";
@@ -241,6 +276,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
   private readonly healthTimeoutMs: number;
   private readonly routeTimeoutMs: number;
   private readonly gatewayName: string;
+  private readonly measureDisk: () => Promise<RegistryDiskUsage | null>;
 
   constructor(deps: PipelineDependencies = {}) {
     this.buildExecutor =
@@ -265,6 +301,11 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       throw new PipelineError(PIPELINE_ERROR_CODES.ACTIVATION_FAILED, "Invalid gateway container name");
     }
     this.gatewayName = gatewayName;
+    this.measureDisk = deps.measureDisk ?? measureRegistryDiskUsage;
+  }
+
+  private async assertRegistryDiskSpace(): Promise<void> {
+    await assertRegistryDiskHasSpace(this.measureDisk);
   }
 
   async execute(
@@ -715,6 +756,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
               "deployment.push_started",
               "Build output will be pushed to the image registry"
             );
+            await this.assertRegistryDiskSpace();
           }
           await dlog(
             projectId,

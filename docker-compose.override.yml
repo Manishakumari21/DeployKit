@@ -7,3 +7,7 @@ services:
   api:
     environment:
       DEPLOYKIT_WEB_ORIGIN: http://localhost:8083
+
+  web:
+    ports: !override
+      - "127.0.0.1:8083:80"

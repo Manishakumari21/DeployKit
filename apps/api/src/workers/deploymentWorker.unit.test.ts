@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import {
   createIntervalSweep,
   processDeploymentJob,
+  requestShutdown,
+  resolveWorkerConcurrency,
 } from "./deploymentWorker.js";
 import type { claimNextJob } from "./deploymentQueue.js";
 import type { DeploymentExecutor } from "./deploymentExecutor.js";
@@ -149,4 +151,71 @@ test("the interval sweep runs once per interval and again after it elapses", asy
   assert.equal(await sweep.sweep(1_000), 2, "must run once the interval elapsed");
   assert.equal(await sweep.sweep(1_500), null);
   assert.equal(runs, 2);
+});
+
+test("worker concurrency resolves to a clamped positive integer", () => {
+  assert.equal(resolveWorkerConcurrency(undefined), 2, "defaults to 2 when unset");
+  assert.equal(resolveWorkerConcurrency(""), 2, "empty values fall back to the default");
+  assert.equal(resolveWorkerConcurrency("abc"), 1, "non-numeric input clamps to the minimum");
+  assert.equal(resolveWorkerConcurrency("1"), 1);
+  assert.equal(resolveWorkerConcurrency("3"), 3);
+  assert.equal(resolveWorkerConcurrency("0"), 1, "zero is clamped up to the minimum");
+  assert.equal(resolveWorkerConcurrency("-4"), 1, "negatives are clamped up to the minimum");
+  assert.equal(resolveWorkerConcurrency("8"), 8);
+  assert.equal(resolveWorkerConcurrency("64"), 8, "oversized values clamp to the maximum");
+  assert.equal(resolveWorkerConcurrency("2.7"), 2, "fractions truncate toward zero");
+});
+
+test("a shutdown aborts every in-flight job, not just the most recent", async () => {
+  const started: string[] = [];
+
+  const makeExecutor = (id: string): DeploymentExecutor => ({
+    execute: async (ctx) => {
+      started.push(id);
+      await new Promise<void>((resolve) => {
+        ctx.signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      throw new Error(`executor ${id} aborted`);
+    },
+  });
+
+  // Start two independent jobs concurrently, the way the worker's slots do.
+  const jobA = processDeploymentJob({
+    claim: async () => fakeJob(),
+    extendLease: async () => true,
+    leaseRenewalMs: 5_000,
+    cancelPollMs: 5_000,
+    readDeploymentStatus: async () => "building",
+    executor: makeExecutor("a"),
+    complete: async () => undefined,
+    fail: async () => "retrying" as const,
+    failTerminal: async () => undefined,
+    release: async () => true,
+  });
+  const jobB = processDeploymentJob({
+    claim: async () => fakeJob({ id: "44444444-4444-4444-4444-444444444444" }),
+    extendLease: async () => true,
+    leaseRenewalMs: 5_000,
+    cancelPollMs: 5_000,
+    readDeploymentStatus: async () => "building",
+    executor: makeExecutor("b"),
+    complete: async () => undefined,
+    fail: async () => "retrying" as const,
+    failTerminal: async () => undefined,
+    release: async () => true,
+  });
+
+  // Wait until both executors have started before shutting down.
+  while (started.length < 2) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+
+  requestShutdown("SIGTERM");
+
+  const results = await Promise.allSettled([jobA, jobB]);
+  assert.equal(started.length, 2, "both concurrent jobs should have started");
+  assert.ok(
+    results.every((r) => r.status === "fulfilled"),
+    "both jobs should settle (not hang) after a shutdown abort"
+  );
 });

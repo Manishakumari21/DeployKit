@@ -65,6 +65,32 @@ const INCIDENT_SWEEP_INTERVAL_MS = Math.max(
   Number(process.env.DEPLOYKIT_INCIDENT_SWEEP_INTERVAL_MS ?? 60_000)
 );
 
+const MIN_WORKER_CONCURRENCY = 1;
+const MAX_WORKER_CONCURRENCY = 8;
+
+export function resolveWorkerConcurrency(
+  raw: string | undefined,
+  fallback = 2
+): number {
+  const trimmed = raw?.trim();
+  const parsed = Number(trimmed === "" || trimmed === undefined ? fallback : trimmed);
+  if (!Number.isFinite(parsed)) {
+    return MIN_WORKER_CONCURRENCY;
+  }
+  const rounded = Math.floor(parsed);
+  if (rounded < MIN_WORKER_CONCURRENCY) {
+    return MIN_WORKER_CONCURRENCY;
+  }
+  if (rounded > MAX_WORKER_CONCURRENCY) {
+    return MAX_WORKER_CONCURRENCY;
+  }
+  return rounded;
+}
+
+const WORKER_CONCURRENCY = resolveWorkerConcurrency(
+  process.env.DEPLOYKIT_WORKER_CONCURRENCY
+);
+
 export interface IntervalSweep<T> {
   sweep(now?: number): Promise<T | null>;
   reset(): void;
@@ -156,7 +182,7 @@ async function runCertSweep(): Promise<void> {
 }
 
 let shuttingDown = false;
-let activeAbort: AbortController | null = null;
+const activeAborts = new Set<AbortController>();
 
 async function runPeriodicSweeps(): Promise<void> {
   try {
@@ -324,7 +350,7 @@ export async function processDeploymentJob(
   let leaseLost = false;
   let consecutiveRenewalFailures = 0;
   const abort = new AbortController();
-  activeAbort = abort;
+  activeAborts.add(abort);
 
   try {
     leaseTimer = setInterval(async () => {
@@ -535,7 +561,7 @@ export async function processDeploymentJob(
 
     return true;
   } finally {
-    activeAbort = null;
+    activeAborts.delete(abort);
     if (leaseTimer) {
       clearInterval(leaseTimer);
     }
@@ -667,7 +693,7 @@ export async function processEdgeBuildJob(
   let leaseTimer: NodeJS.Timeout | undefined;
   let cancelWatcher: NodeJS.Timeout | undefined;
   const abort = new AbortController();
-  activeAbort = abort;
+  activeAborts.add(abort);
 
   let abortReason: EdgeBuildAbortReason | null = null;
   const requestAbort = (reason: EdgeBuildAbortReason) => {
@@ -858,9 +884,7 @@ export async function processEdgeBuildJob(
     if (cancelWatcher) clearInterval(cancelWatcher);
     await settleQuietly(renewalOp);
     await settleQuietly(watcherOp);
-    if (activeAbort === abort) {
-      activeAbort = null;
-    }
+    activeAborts.delete(abort);
   }
 }
 
@@ -914,16 +938,47 @@ async function run() {
     });
   }
 
+  log("info", "worker.concurrency", {
+    concurrency: WORKER_CONCURRENCY,
+  });
+
+  const slots: Promise<void>[] = [];
+  for (let slot = 0; slot < WORKER_CONCURRENCY; slot++) {
+    slots.push(runDeploymentSlot(slot));
+  }
+
+  await runMaintenanceLoop();
+  await Promise.allSettled(slots);
+
+  log("info", "worker.stopped");
+}
+
+async function runDeploymentSlot(slot: number): Promise<void> {
+  while (!shuttingDown) {
+    try {
+      const processed = await processJob();
+      if (!processed && !shuttingDown) {
+        await sleep(POLL_INTERVAL_MS);
+      }
+    } catch (error) {
+      log("error", "worker.deployment_slot_error", {
+        slot,
+        error:
+          error instanceof Error ? error.message : "Unknown worker error",
+      });
+
+      await sleep(POLL_INTERVAL_MS);
+    }
+  }
+}
+
+async function runMaintenanceLoop(): Promise<void> {
   while (!shuttingDown) {
     try {
       await recoverExpiredJobs();
       await recoverExpiredGatewaySyncJobs();
 
-      const processed = await processJob();
       const synced = await processGatewaySyncJob();
-
-
-
       const builtEdge = isEdgeBuildEnabled() ? await processEdgeBuildJob() : false;
 
       const demoted = await demoteEdgeBuildJobsWhenDisabled();
@@ -934,7 +989,7 @@ async function run() {
         });
       }
 
-      if (!processed && !builtEdge && !synced) {
+      if (!builtEdge && !synced) {
         await runCertSweep();
         await runPeriodicSweeps();
         await sleep(POLL_INTERVAL_MS);
@@ -950,11 +1005,9 @@ async function run() {
       await sleep(POLL_INTERVAL_MS);
     }
   }
-
-  log("info", "worker.stopped");
 }
 
-function requestShutdown(signal: string) {
+export function requestShutdown(signal: string) {
   if (shuttingDown) {
     return;
   }
@@ -966,7 +1019,9 @@ function requestShutdown(signal: string) {
   });
 
   try {
-    activeAbort?.abort();
+    for (const controller of activeAborts) {
+      controller.abort();
+    }
   } catch {
   }
 }

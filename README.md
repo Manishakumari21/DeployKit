@@ -157,6 +157,7 @@ entitlements). Builds use `--builder deploykit-builder`, enforce
 | `DEPLOYMENT_WORKER_ENABLED` | unset (worker idle) | must be `true` to claim jobs |
 | `WORKER_POLL_INTERVAL_MS` | `2000` | queue poll interval |
 | `WORKER_LEASE_MS` | `30000` | job lease duration |
+| `DEPLOYKIT_WORKER_CONCURRENCY` | `2` | parallel deployment jobs per worker (clamped 1..8); jobs stay serialized per project |
 | `DEPLOYKIT_RUNTIME_NETWORK` | `deploykit-runtime` | dedicated runtime network |
 | `DEPLOYKIT_BUILDER_NAME` | `deploykit-builder` | Buildx builder instance |
 | `DEPLOYKIT_DOCKER_BINARY` | `docker` | docker binary path |
@@ -307,7 +308,9 @@ create a second deployment.
   deletions, other events are ignored (202).
 * One linked repository per project; branch must equal
   `projects.branch`; `auto_deploy` defaults to true.
-* Single-node worker; see Phase 05 for traffic-switch guarantees.
+* Single-node worker; a worker processes up to
+  `DEPLOYKIT_WORKER_CONCURRENCY` deployments in parallel (jobs stay
+  serialized per project); see Phase 05 for traffic-switch guarantees.
 
 ## Phase 05 — Zero-downtime releases via gateway
 

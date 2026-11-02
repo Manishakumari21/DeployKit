@@ -10,11 +10,12 @@ import {
   ScrollText,
   Server,
   Settings,
+  Users,
 } from "lucide-react";
 import { cx } from "../lib/format";
 import type { NavKey } from "../types";
 
-const ITEMS: { key: NavKey; label: string; icon: typeof Server; group: string }[] = [
+const ITEMS: { key: NavKey; label: string; icon: typeof Server; group: string; adminOnly?: boolean }[] = [
   { key: "overview", label: "Overview", icon: LayoutDashboard, group: "run" },
   { key: "services", label: "Services", icon: Boxes, group: "run" },
   { key: "deployments", label: "Deploys", icon: Clock, group: "run" },
@@ -24,6 +25,7 @@ const ITEMS: { key: NavKey; label: string; icon: typeof Server; group: string }[
   { key: "incidents", label: "Incidents", icon: AlertTriangle, group: "observe" },
   { key: "logs", label: "Logs", icon: ScrollText, group: "observe" },
   { key: "domains", label: "Domains", icon: Globe, group: "observe" },
+  { key: "users", label: "Users", icon: Users, group: "observe", adminOnly: true },
   { key: "settings", label: "Settings", icon: Settings, group: "observe" },
 ];
 
@@ -33,6 +35,7 @@ export function CommandBar({
   counts,
   healthy,
   userEmail,
+  userRole,
   onLogout,
 }: {
   nav: NavKey;
@@ -40,8 +43,10 @@ export function CommandBar({
   counts: Record<string, number>;
   healthy: boolean | null;
   userEmail: string;
+  userRole: "admin" | "member";
   onLogout: () => void;
 }) {
+  const items = ITEMS.filter((i) => !i.adminOnly || userRole === "admin");
   return (
     <div className="border-b border-edge bg-ink-950/90 backdrop-blur">
       <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 sm:px-6">
@@ -70,7 +75,7 @@ export function CommandBar({
         </div>
 
         <nav aria-label="Primary" className="order-3 flex w-full items-center gap-1 overflow-x-auto sm:order-2 sm:w-auto sm:flex-1 sm:justify-center">
-          {ITEMS.map(({ key, label, icon: Icon }) => {
+          {items.map(({ key, label, icon: Icon }) => {
             const active = nav === key;
             return (
               <button

@@ -5,6 +5,7 @@ import { CommandBar } from "./components/CommandBar";
 import { EventsView } from "./components/EventsView";
 import { IncidentsView } from "./components/IncidentsView";
 import { DomainsView, LogsView, SettingsView } from "./components/OpsViews";
+import { UsersView } from "./components/UsersView";
 import { LoginView } from "./components/LoginView";
 import { MetricsPanel } from "./components/MetricsPanel";
 import { ProjectModal } from "./components/ProjectModal";
@@ -187,6 +188,7 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
           counts={{ services: projects.length, deployments: deployments.length }}
           healthy={healthy}
           userEmail={user.email}
+          userRole={user.role}
           onLogout={onLogout}
         />
         <Topbar
@@ -314,6 +316,7 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
           </div>
         )}
         {nav === "domains" && <DomainsView projectId={selectedProjectId} />}
+        {nav === "users" && user.role === "admin" && <UsersView currentUserId={user.id} />}
         {nav === "logs" && (
           <LogsView
             deployments={deployments}

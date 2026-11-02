@@ -6,7 +6,8 @@ import type { AddressInfo } from "node:net";
 
 import pool from "../db/database.js";
 import app from "../app.js";
-import { createUser } from "./userService.js";
+import { createUser, setUserDisabled } from "./userService.js";
+import { createInvite } from "./inviteService.js";
 import { createProject } from "./projectService.js";
 import { getAllowedOrigins } from "../config/corsConfig.js";
 import { gateDb } from "../test/dbGate.js";
@@ -122,6 +123,18 @@ async function makeUser(tag: string, password = "correct-horse-123") {
   const user = await createUser({ email: uniqueEmail(tag), password });
   userIds.push(user.id);
   return user;
+}
+
+async function makeAdmin(tag: string) {
+  const user = await makeUser(tag);
+  await pool.query(`UPDATE users SET role = 'admin' WHERE id = $1`, [user.id]);
+  return user;
+}
+
+// Any id other than the target's, so self-disable guards stay out of the way
+// unless a test opts into them.
+function actingAdminId(): string {
+  return "22222222-2222-4222-8222-222222222222";
 }
 
 async function loginCookie(email: string, password = "correct-horse-123"): Promise<string> {
@@ -466,7 +479,102 @@ test("registration closes once accounts exist unless explicitly enabled", async 
       body: { email: uniqueEmail("shut"), password: "correct-horse-123" },
     });
     assert.equal(closed.status, 403);
-    assert.deepEqual(closed.json, { error: "Public registration is disabled" });
+    assert.deepEqual(closed.json, { error: "An invite is required to register" });
+  } finally {
+    await cleanup();
+  }
+});
+
+test("registration-status reports invite mode once accounts exist", async () => {
+  if (!(await ensureServer())) return;
+  const res = await api("/api/auth/registration-status");
+  assert.equal(res.status, 200);
+  const body = res.json as { hasUsers: boolean; mode: string };
+  assert.equal(body.hasUsers, true);
+  assert.equal(body.mode, "invite");
+});
+
+test("registering with a valid invite token creates the account once", async () => {
+  if (!(await ensureServer())) return;
+  const email = uniqueEmail("inv");
+  try {
+    const { invite, token } = await createInvite(email, (await makeAdmin("inviter")).id);
+    const res = await api("/api/auth/register", {
+      method: "POST",
+      body: { email, password: "correct-horse-123", inviteToken: token },
+    });
+    assert.equal(res.status, 201);
+    const body = res.json as { id: string; role: string };
+    assert.equal(body.role, "member");
+    userIds.push(body.id);
+
+    const reused = await api("/api/auth/register", {
+      method: "POST",
+      body: { email, password: "correct-horse-123", inviteToken: token },
+    });
+    assert.equal(reused.status, 403);
+
+    const badEmail = await api("/api/auth/register", {
+      method: "POST",
+      body: { email: uniqueEmail("inv-wrong"), password: "correct-horse-123", inviteToken: token },
+    });
+    assert.equal(badEmail.status, 403);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("disabled accounts cannot log in and their sessions stop working", async () => {
+  if (!(await ensureServer())) return;
+  const user = await makeUser("disabled");
+  try {
+    const jar = await loginCookie(user.email);
+    assert.equal(
+      (await api("/api/auth/session", { cookie: jar })).status,
+      200,
+      "session works before disable"
+    );
+
+    await setUserDisabled(user.id, true, actingAdminId());
+
+    const login = await api("/api/auth/login", {
+      method: "POST",
+      body: { email: user.email, password: "correct-horse-123" },
+    });
+    assert.equal(login.status, 401);
+    assert.deepEqual(login.json, { error: "Invalid email or password" });
+
+    assert.equal((await api("/api/auth/session", { cookie: jar })).status, 401);
+    assert.equal((await api("/api/users", { cookie: jar })).status, 401);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("admin routes are denied to members and open to admins", async () => {
+  if (!(await ensureServer())) return;
+  const member = await makeUser("member-gate");
+  try {
+    const memberJar = await loginCookie(member.email);
+    assert.equal((await api("/api/users", { cookie: memberJar })).status, 403);
+    assert.equal((await api("/api/invites", { cookie: memberJar })).status, 403);
+    assert.equal(
+      (
+        await api("/api/invites", {
+          method: "POST",
+          cookie: memberJar,
+          body: { email: uniqueEmail("nope") },
+        })
+      ).status,
+      403
+    );
+    assert.equal((await api("/api/users")).status, 401, "anonymous is 401, not 403");
+
+    await pool.query(`UPDATE users SET role = 'admin' WHERE id = $1`, [member.id]);
+    const adminJar = await loginCookie(member.email);
+    const list = await api("/api/users", { cookie: adminJar });
+    assert.equal(list.status, 200);
+    assert.ok(Array.isArray((list.json as { users: unknown[] }).users));
   } finally {
     await cleanup();
   }
@@ -483,6 +591,7 @@ test("session probe returns the user on a valid cookie and 401 otherwise", async
       user: {
         id: user.id,
         email: user.email,
+        role: "member",
         created_at: (ok.json as { user: { created_at: string } }).user.created_at,
         updated_at: (ok.json as { user: { updated_at: string } }).user.updated_at,
       },

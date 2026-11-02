@@ -21,6 +21,7 @@ export const DB_GATED_SUITES: readonly string[] = [
   "services/gatewayReconcile.db.unit.test.ts",
   "services/incidentApi.db.unit.test.ts",
   "services/incidentService.db.unit.test.ts",
+  "services/inviteService.db.unit.test.ts",
   "services/metricsService.db.unit.test.ts",
   "services/projectMembership.db.unit.test.ts",
   "services/registrationRace.db.unit.test.ts",

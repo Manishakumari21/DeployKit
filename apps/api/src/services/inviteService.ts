@@ -6,8 +6,9 @@ import { hashSecret } from "../security/tokenHasher.js";
 import {
   normalizeEmail,
   validateEmail,
-  UserError,
   type PublicUser,
+  prepareNewUser,
+  insertUserWithRole,
 } from "./userService.js";
 
 export const INVITE_TOKEN_BYTES = 32;
@@ -133,7 +134,7 @@ export async function listInvites(): Promise<InviteView[]> {
   return result.rows.map((row) => toInviteView(row));
 }
 
-export async function revokeInvite(id: string, actingAdminId: string): Promise<InviteView> {
+export async function revokeInvite(id: string): Promise<InviteView> {
   if (typeof id !== "string" || !id) {
     throw new InviteError("INVALID_INVITE", "Invalid invite", 400);
   }
@@ -153,7 +154,6 @@ export async function revokeInvite(id: string, actingAdminId: string): Promise<I
     }
     throw new InviteError("INVITE_NOT_PENDING", "Invite is no longer pending", 409);
   }
-  void actingAdminId;
   return toInviteView(row);
 }
 
@@ -164,20 +164,11 @@ export async function redeemInvite(input: {
   token: unknown;
   email: string;
   password: string;
-  insertUser: (db: QueryExecutor, prepared: {
-    email: string;
-    passwordHash: string;
-    role: "admin" | "member";
-  }) => Promise<PublicUser>;
-  prepare: (email: unknown, password: unknown) => Promise<{
-    email: string;
-    passwordHash: string;
-  }>;
 }): Promise<PublicUser> {
   if (typeof input.token !== "string" || !input.token) {
     throw new InviteError("INVITE_REQUIRED", "A valid invite token is required", 403);
   }
-  const prepared = await input.prepare(input.email, input.password);
+  const prepared = await prepareNewUser(input.email, input.password);
   return withTransaction(async (client) => {
     const row = (
       await client.query(
@@ -211,7 +202,7 @@ export async function redeemInvite(input: {
         403
       );
     }
-    const user = await input.insertUser(client, { ...prepared, role: "member" });
+    const user = await insertUserWithRole(client, { ...prepared, role: "member" });
     await client.query(
       `UPDATE invites
        SET accepted_at = NOW(), accepted_user_id = $2

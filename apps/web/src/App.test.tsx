@@ -74,6 +74,7 @@ const fetchIncidentsMock = vi.mocked(fetchIncidents);
 const user: AuthUser = {
   id: "user-1",
   email: "dev@example.com",
+  role: "admin",
   created_at: "2026-10-20T00:00:00.000Z",
   updated_at: "2026-10-20T00:00:00.000Z",
 };

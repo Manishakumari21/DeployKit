@@ -1,11 +1,28 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
+import { fetchRegistrationStatus } from "../lib/api";
+import type { RegistrationStatus } from "../types";
 import { DeployBtn, Eyebrow, Panel } from "./ui";
 
 type Mode = "login" | "register";
 
 const MIN_PASSWORD_LENGTH = 12;
 const MAX_PASSWORD_LENGTH = 72;
+
+// The invite link carries the one-time token in the fragment so it never
+// lands in server logs or browser history as a query string.
+function inviteFromHash(): string {
+  const hash = window.location.hash.replace(/^#/, "");
+  if (!hash) return "";
+  const params = new URLSearchParams(hash);
+  return (params.get("invite") ?? "").trim();
+}
+
+function clearInviteHash(): void {
+  if (window.location.hash) {
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  }
+}
 
 export function LoginView({
   busy,
@@ -16,13 +33,32 @@ export function LoginView({
   busy: boolean;
   error: string | null;
   onLogin: (email: string, password: string) => Promise<boolean>;
-  onRegister: (email: string, password: string) => Promise<boolean>;
+  onRegister: (email: string, password: string, inviteToken?: string) => Promise<boolean>;
 }) {
-  const [mode, setMode] = useState<Mode>("login");
+  const [status, setStatus] = useState<RegistrationStatus | null>(null);
+  const [inviteToken, setInviteToken] = useState<string>(() => inviteFromHash());
+  const [inviteInput, setInviteInput] = useState("");
+  const [mode, setMode] = useState<Mode>(() => (inviteFromHash() ? "register" : "login"));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    queueMicrotask(() => {
+      void fetchRegistrationStatus(controller.signal)
+        .then((s) => setStatus(s))
+        .catch(() => setStatus(null));
+    });
+    return () => controller.abort();
+  }, []);
+
+  const effectiveToken = inviteToken || inviteInput.trim();
+  const canRegister =
+    status === null || status.mode === "bootstrap" || status.mode === "public"
+      ? true
+      : effectiveToken.length > 0;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -49,7 +85,12 @@ export function LoginView({
         setFormError("Password cannot be blank spaces only.");
         return;
       }
-      await onRegister(email.trim(), password);
+      if (!canRegister) {
+        setFormError("This server is invite-only. Paste your invite code to create an account.");
+        return;
+      }
+      const ok = await onRegister(email.trim(), password, effectiveToken || undefined);
+      if (ok) clearInviteHash();
       return;
     }
     await onLogin(email.trim(), password);
@@ -59,6 +100,7 @@ export function LoginView({
     "w-full rounded-lg border border-edge bg-ink-950 px-3 py-2 pr-16 text-[13px] text-fog-100 outline-none placeholder:text-fog-500 focus:border-signal-500";
   const met = password.length >= MIN_PASSWORD_LENGTH;
   const visibleError = formError ?? error;
+  const inviteOnly = status?.mode === "invite";
 
   return (
     <div className="mx-auto flex min-h-[70vh] w-full max-w-md flex-col justify-center px-4 py-10">
@@ -93,7 +135,29 @@ export function LoginView({
             </button>
           ))}
         </div>
+        {mode === "register" && inviteOnly && (
+          <div className="mb-3 rounded-lg border border-signal-500/40 bg-signal-950/40 px-3 py-2 text-[12px] leading-relaxed text-signal-200">
+            This server is invite-only. Your invite code was detected from the link —
+            if it did not paste automatically, enter it below.
+          </div>
+        )}
         <form onSubmit={submit} className="flex flex-col gap-3" noValidate>
+          {mode === "register" && inviteOnly && (
+            <label className="flex flex-col gap-1 text-[13px] text-fog-200">
+              Invite code
+              <input
+                value={inviteToken || inviteInput}
+                onChange={(e) => {
+                  setInviteToken("");
+                  setInviteInput(e.target.value);
+                }}
+                placeholder="Paste the invite code from your email/link"
+                aria-label="Invite code"
+                maxLength={128}
+                className="w-full rounded-lg border border-edge bg-ink-950 px-3 py-2 font-mono text-[12px] text-fog-100 outline-none placeholder:text-fog-500 focus:border-signal-500"
+              />
+            </label>
+          )}
           <label className="flex flex-col gap-1 text-[13px] text-fog-200">
             Email
             <input
@@ -157,8 +221,16 @@ export function LoginView({
           </DeployBtn>
           {mode === "register" && (
             <p className="text-[12px] leading-relaxed text-fog-500">
-              The first account on a fresh server can always register; afterwards an operator must
-              enable public registration.
+              {status?.mode === "bootstrap"
+                ? "This server has no accounts yet — the first account you create becomes the admin."
+                : inviteOnly
+                  ? "Accounts are created by invite. Ask an admin for an invite code."
+                  : "Registration is open on this server."}
+            </p>
+          )}
+          {mode === "login" && inviteOnly && (
+            <p className="text-[12px] leading-relaxed text-fog-500">
+              New here? Ask an admin for an invite code, then use Create account.
             </p>
           )}
         </form>

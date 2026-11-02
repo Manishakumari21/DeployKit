@@ -641,20 +641,54 @@ Projects / Deployments / Releases / Logs / Metrics / GitHub
   stored. User deletion cascades sessions.
 * `014_auth_rate_limits.sql` — `auth_rate_limits(key, window_start, count)`;
   one row per bucket/window with lazy expiry.
+* `022_user_admin_invites.sql` — adds `users.role` (`admin`/`member`,
+  default `member`) and `users.disabled_at`, promoting the earliest account
+  to `admin` when none exists; adds `invites(id, email, token_hash,
+  invited_by, expires_at, accepted_at, accepted_user_id, revoked_at)` with a
+  unique 64-hex peppered token hash. Additive only.
 
 ### Endpoints
 
-* `POST /api/auth/register` — gated: open only when
-  `DEPLOYKIT_ALLOW_PUBLIC_REGISTRATION=true` or no account exists yet
-  (first-user bootstrap, closes automatically). 201 `PublicUser`, no
-  session; 409 duplicate, 403 when closed, 429 when throttled.
+* `POST /api/auth/register` — invite-only: the first account on an empty
+  database self-registers as `admin` (bootstrap window, closes
+  automatically); afterwards an `inviteToken` is required unless
+  `DEPLOYKIT_ALLOW_PUBLIC_REGISTRATION=true`. 201 `PublicUser`, no
+  session; 409 duplicate, 403 when closed/expired/mismatched, 429
+  throttled.
 * `POST /api/auth/login` — `{email, password}` → 200 `PublicUser` +
   `Set-Cookie`; 401 generic (`Invalid email or password`, identical for
-  unknown emails, with dummy bcrypt compare); 400 malformed; 429 throttled.
+  unknown emails, with dummy bcrypt compare, and for disabled accounts);
+  400 malformed; 429 throttled.
 * `POST /api/auth/logout` — revokes the session, clears the cookie, always
   200 `{loggedOut: true}` even without a session.
-* `GET /api/auth/session` — 200 `{user}` on a valid cookie, else 401.
-  Frontend startup gate (see `web/src/hooks/useAuth.ts`).
+* `GET /api/auth/session` — 200 `{user}` on a valid cookie, else 401
+  (disabled accounts are treated as unauthenticated). Frontend startup
+  gate (see `web/src/hooks/useAuth.ts`).
+* `GET /api/auth/registration-status` — 200 `{hasUsers, mode}` where
+  `mode` is `bootstrap` | `invite` | `public`, so the login screen renders
+  the correct onboarding copy before any submit.
+
+Admin-only routes (require a session with `role = 'admin'`, else 401/403;
+mutating methods additionally pass the Origin/CSRF check):
+
+* `GET /api/users` — 200 `{users}` (id, email, role, disabled_at,
+  timestamps), oldest first.
+* `PATCH /api/users/:id` — `{disabled: boolean}` → 200 `{user}`.
+  Refuses self-disable (400 `CANNOT_DISABLE_SELF`) and disabling the last
+  enabled admin (400 `CANNOT_DISABLE_LAST_ADMIN`); unknown id is 404.
+* `GET /api/invites` — 200 `{invites}` with derived status
+  (`pending`/`accepted`/`revoked`/`expired`).
+* `POST /api/invites` — `{email}` → 201 `{invite, token}`; the raw token
+  is returned exactly once (only its peppered hash is stored) and is
+  rate-limited per admin IP.
+* `DELETE /api/invites/:id` — revokes a pending invite (404 unknown,
+  409 already consumed).
+
+Invite redemption reuses `POST /api/auth/register` with `inviteToken`:
+single-use (`FOR UPDATE` claim inside the user-insert transaction),
+default7-day expiry (`DEPLOYKIT_INVITE_DAYS`), and the redeeming email
+must match the invited address so a leaked link cannot be claimed by a
+third party.
 
 All project/deployment/release/log/metrics/GitHub routes require a valid
 session (401 otherwise) plus membership via `authorizationService`
@@ -685,19 +719,23 @@ deployment/release ids stay 404). `GET /api/health` stays public;
 ### Local development accounts
 
 Fresh database: open the dashboard, create the first account via the
-register tab (bootstrap window), then sign in. To allow further open
-registration set `DEPLOYKIT_ALLOW_PUBLIC_REGISTRATION=true`; otherwise
-create accounts via `POST /api/auth/register` with the flag temporarily
-enabled, or directly through `userService.createUser`. New projects are
-owned atomically by their creator; legacy pre-auth projects stay
-inaccessible until an explicit `addProjectOwner(projectId, userId)` call.
+register tab (bootstrap window) — it becomes the initial `admin` — then
+sign in. Afterwards onboarding is invite-only: an admin opens **Users →
+Invites**, enters a teammate's email, and shares the one-time link it
+produces (`#invite=<token>`); the invitee sets their own password and
+lands as a member. To allow open signup instead, set
+`DEPLOYKIT_ALLOW_PUBLIC_REGISTRATION=true`. New projects are owned
+atomically by their creator; legacy pre-auth projects stay inaccessible
+until an explicit `addProjectOwner(projectId, userId)` call.
 
 ### Known limitations (not implemented)
 
-No SSO/OAuth, no MFA, no organizations/teams, no roles beyond `owner`,
-no login notifications or session listing/revocation UI, single-node
-rate-limit cleanup is lazy (no background sweeper), and the web origin
-must be configured explicitly in production.
+No SSO/OAuth, no MFA, no organizations/teams, no roles beyond project
+`owner` plus the global `admin`/`member` pair (no per-project admin),
+no password reset or self-service profile editing, no login notifications
+or session listing/revocation UI, single-node rate-limit cleanup is lazy
+(no background sweeper), and the web origin must be configured
+explicitly in production.
 
 ## Phase 11 — Custom domains + TLS/ACME
 

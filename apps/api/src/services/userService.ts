@@ -146,13 +146,20 @@ interface QueryExecutor {
   query(queryText: string, values?: unknown[]): Promise<QueryResult>;
 }
 
-async function prepareNewUser(
+export async function prepareNewUser(
   email: unknown,
   password: unknown
 ): Promise<{ email: string; passwordHash: string }> {
   const normalized = validateEmail(normalizeEmail(email));
   const valid = validatePassword(password);
   return { email: normalized, passwordHash: await hashPassword(valid) };
+}
+
+export async function insertUserWithRole(
+  db: QueryExecutor,
+  prepared: { email: string; passwordHash: string; role?: UserRole }
+): Promise<PublicUser> {
+  return insertUserRow(db, prepared);
 }
 
 async function insertUserRow(

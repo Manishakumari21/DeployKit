@@ -53,23 +53,26 @@ export function useAuth() {
     }
   }, []);
 
-  const register = useCallback(async (email: string, password: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await apiRegister({ email, password });
+  const register = useCallback(
+    async (email: string, password: string, inviteToken?: string) => {
+      setBusy(true);
+      setError(null);
+      try {
+        await apiRegister({ email, password, ...(inviteToken ? { inviteToken } : {}) });
 
-      const me = await apiLogin({ email, password });
-      setUser(me);
-      setStatus("authenticated");
-      return true;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Registration failed");
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  }, []);
+        const me = await apiLogin({ email, password });
+        setUser(me);
+        setStatus("authenticated");
+        return true;
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Registration failed");
+        return false;
+      } finally {
+        setBusy(false);
+      }
+    },
+    []
+  );
 
   const logout = useCallback(async () => {
     setBusy(true);

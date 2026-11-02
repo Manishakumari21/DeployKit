@@ -7,6 +7,7 @@ import {
   isCookieSecure,
 } from "../config/sessionConfig.js";
 import { resolveSession } from "../services/sessionService.js";
+import { findUserById, isDisabled } from "../services/userService.js";
 import {
   AuthorizationError,
   requireDeploymentAccess,
@@ -17,6 +18,7 @@ import {
 export interface AuthContext {
   userId: string;
   sessionId: string;
+  role: "admin" | "member";
 }
 
 declare global {
@@ -83,7 +85,11 @@ function forbidden(res: Response): void {
 async function authenticateRequest(req: Request): Promise<AuthContext | null> {
   const session = await resolveSession(parseSessionCookie(req));
   if (!session) return null;
-  return { userId: session.userId, sessionId: session.sessionId };
+  // A disabled account must lose access immediately, not just at next login,
+  // so the flag is enforced on every authenticated request.
+  const user = await findUserById(session.userId);
+  if (!user || isDisabled(user)) return null;
+  return { userId: session.userId, sessionId: session.sessionId, role: user.role };
 }
 
 export async function authenticate(
@@ -102,6 +108,29 @@ export async function authenticate(
   } catch (error) {
     console.error("Authentication error");
     res.status(500).json({ error: "Authentication failed" });
+  }
+}
+
+export async function requireAdmin(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const auth = await authenticateRequest(req);
+    if (!auth) {
+      unauthorized(res);
+      return;
+    }
+    if (auth.role !== "admin") {
+      forbidden(res);
+      return;
+    }
+    req.auth = auth;
+    next();
+  } catch (error) {
+    console.error("Authorization error");
+    res.status(500).json({ error: "Authorization failed" });
   }
 }
 

@@ -5,6 +5,7 @@ import type {
   SavedBuildConfigResponse,
 } from "./buildConfig";
 import type {
+  AdminUser,
   ApiDeployment,
   AuthUser,
   DeploymentEvent,
@@ -14,8 +15,10 @@ import type {
   Incident,
   IncidentKind,
   IncidentStatusFilter,
+  Invite,
   Project,
   ProjectEvent,
+  RegistrationStatus,
   Release,
 } from "../types";
 
@@ -71,7 +74,11 @@ export async function login(input: { email: string; password: string }): Promise
   });
 }
 
-export async function register(input: { email: string; password: string }): Promise<AuthUser> {
+export async function register(input: {
+  email: string;
+  password: string;
+  inviteToken?: string;
+}): Promise<AuthUser> {
   return request<AuthUser>("/auth/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -81,6 +88,40 @@ export async function register(input: { email: string; password: string }): Prom
 
 export async function logout(): Promise<void> {
   await request<{ loggedOut: boolean }>("/auth/logout", { method: "POST" });
+}
+
+export function fetchRegistrationStatus(signal?: AbortSignal): Promise<RegistrationStatus> {
+  return request<RegistrationStatus>("/auth/registration-status", { signal });
+}
+
+export function fetchUsers(signal?: AbortSignal): Promise<AdminUser[]> {
+  return request<{ users: AdminUser[] }>("/users", { signal }).then((d) => d.users);
+}
+
+export function setUserDisabled(id: string, disabled: boolean): Promise<AdminUser> {
+  return request<{ user: AdminUser }>(`/users/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ disabled }),
+  }).then((d) => d.user);
+}
+
+export function fetchInvites(signal?: AbortSignal): Promise<Invite[]> {
+  return request<{ invites: Invite[] }>("/invites", { signal }).then((d) => d.invites);
+}
+
+export function createInvite(email: string): Promise<{ invite: Invite; token: string }> {
+  return request<{ invite: Invite; token: string }>("/invites", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+}
+
+export function revokeInvite(id: string): Promise<Invite> {
+  return request<{ invite: Invite }>(`/invites/${id}`, { method: "DELETE" }).then(
+    (d) => d.invite
+  );
 }
 
 export async function fetchProjects(): Promise<Project[]> {

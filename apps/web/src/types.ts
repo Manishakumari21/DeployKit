@@ -9,6 +9,7 @@ export type Project = {
 export type AuthUser = {
   id: string;
   email: string;
+  role: "admin" | "member";
   created_at: string;
   updated_at: string;
 };
@@ -23,7 +24,35 @@ export type NavKey =
   | "incidents"
   | "domains"
   | "logs"
+  | "users"
   | "settings";
+
+export type RegistrationStatus = {
+  hasUsers: boolean;
+  mode: "bootstrap" | "public" | "invite";
+};
+
+export type AdminUser = {
+  id: string;
+  email: string;
+  role: "admin" | "member";
+  disabled_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type InviteStatus = "pending" | "accepted" | "revoked" | "expired";
+
+export type Invite = {
+  id: string;
+  email: string;
+  status: InviteStatus;
+  invited_by: string | null;
+  created_at: string;
+  expires_at: string;
+  accepted_at: string | null;
+  revoked_at: string | null;
+};
 
 export type DeploymentStatus =
   | "queued"

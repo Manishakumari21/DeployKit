@@ -8,6 +8,7 @@ import {
   findUserByEmail,
   findUserById,
   hasAnyUsers,
+  isDisabled,
   toPublicUser,
   UserError,
   verifyPassword,
@@ -20,6 +21,7 @@ import {
 } from "../services/rateLimitService.js";
 import { isPublicRegistrationEnabled } from "../config/sessionConfig.js";
 import { resolveClientIp } from "../config/clientIp.js";
+import { InviteError, redeemInvite } from "../services/inviteService.js";
 import {
   clearSessionCookie,
   parseSessionCookie,
@@ -37,6 +39,7 @@ const loginSchema = z.object({
 const registerSchema = z.object({
   email: z.string().min(1).max(254),
   password: z.string().min(12, "Password must be at least 12 characters").max(72, "Password must be at most 72 characters"),
+  inviteToken: z.string().min(1).max(128).optional(),
 });
 
 function clientIp(req: Request): string {
@@ -80,6 +83,12 @@ export async function loginController(req: Request, res: Response): Promise<void
       res.status(401).json({ error: "Invalid email or password" });
       return;
     }
+    // Disabled accounts must not be able to establish a new session; the
+    // message is identical to a bad password to avoid confirming existence.
+    if (isDisabled(row)) {
+      res.status(401).json({ error: "Invalid email or password" });
+      return;
+    }
     await clearEmailRateLimit("login", row.email);
     const session = await createSession(row.id);
     setSessionCookie(res, session.token);
@@ -119,16 +128,51 @@ export async function registerController(req: Request, res: Response): Promise<v
       throw error;
     }
 
-    const open = isPublicRegistrationEnabled() || !(await hasAnyUsers());
-    if (!open) {
-      res.status(403).json({ error: "Public registration is disabled" });
+    const hasUsers = await hasAnyUsers();
+    if (!hasUsers) {
+      // Fresh server: the very first account self-registers as admin.
+      const user = await createBootstrapUser({ email, password: parsed.data.password });
+      await clearEmailRateLimit("register", email);
+      res.status(201).json(user);
       return;
     }
-    try {
 
-      const user = isPublicRegistrationEnabled()
-        ? await createUser({ email, password: parsed.data.password })
-        : await createBootstrapUser({ email, password: parsed.data.password });
+    // Invite-only afterwards: an open signup path must not exist, so a valid
+    // invite token is required unless the operator explicitly opts into public
+    // registration.
+    if (!isPublicRegistrationEnabled()) {
+      if (!parsed.data.inviteToken) {
+        res.status(403).json({ error: "An invite is required to register" });
+        return;
+      }
+      try {
+        const user = await redeemInvite({
+          token: parsed.data.inviteToken,
+          email,
+          password: parsed.data.password,
+        });
+        await clearEmailRateLimit("register", email);
+        res.status(201).json(user);
+      } catch (error) {
+        if (error instanceof InviteError) {
+          res.status(error.status).json({ error: error.message });
+          return;
+        }
+        if (error instanceof UserError) {
+          const message =
+            error.code === "WEAK_PASSWORD"
+              ? "Password must be 12–72 characters."
+              : error.message;
+          res.status(error.status).json({ error: message });
+          return;
+        }
+        throw error;
+      }
+      return;
+    }
+
+    try {
+      const user = await createUser({ email, password: parsed.data.password });
       await clearEmailRateLimit("register", email);
       res.status(201).json(user);
     } catch (error) {
@@ -149,6 +193,26 @@ export async function registerController(req: Request, res: Response): Promise<v
   }
 }
 
+// Lets the login screen render the correct mode (invite-only vs open) instead
+// of only discovering it after a failed submit.
+export async function registrationStatusController(
+  _req: Request,
+  res: Response
+): Promise<void> {
+  try {
+    const hasUsers = await hasAnyUsers();
+    const mode = !hasUsers
+      ? "bootstrap"
+      : isPublicRegistrationEnabled()
+        ? "public"
+        : "invite";
+    res.json({ hasUsers, mode });
+  } catch (error) {
+    console.error("Registration status error");
+    res.status(500).json({ error: "Registration status unavailable" });
+  }
+}
+
 export async function sessionController(req: Request, res: Response): Promise<void> {
   try {
     const session = await resolveSession(parseSessionCookie(req));
@@ -157,7 +221,7 @@ export async function sessionController(req: Request, res: Response): Promise<vo
       return;
     }
     const row = await findUserById(session.userId);
-    if (!row) {
+    if (!row || isDisabled(row)) {
       res.status(401).json({ error: "Authentication required" });
       return;
     }

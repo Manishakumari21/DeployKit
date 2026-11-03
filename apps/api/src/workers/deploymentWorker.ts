@@ -25,6 +25,7 @@ import {
   readDiskThresholds,
   diskPressureLevel,
 } from "../infrastructure/registry/registryDiskGuard.js";
+import { pruneRegistryImages, type RegistryGcSummary } from "../infrastructure/registry/registryGarbageCollector.js";
 import { BootstrapError, bootstrapWorker } from "./workerBootstrap.js";
 import {
   claimNextGatewaySyncJob,
@@ -73,6 +74,11 @@ const INCIDENT_SWEEP_INTERVAL_MS = Math.max(
 const REGISTRY_DISK_POLL_INTERVAL_MS = Math.max(
   30_000,
   Number(process.env.DEPLOYKIT_REGISTRY_DISK_POLL_INTERVAL_MS ?? 300_000)
+);
+
+const REGISTRY_GC_INTERVAL_MS = Math.max(
+  60_000,
+  Number(process.env.DEPLOYKIT_REGISTRY_GC_SWEEP_INTERVAL_MS ?? 21_600_000)
 );
 
 const MIN_WORKER_CONCURRENCY = 1;
@@ -175,6 +181,11 @@ const registryDiskSweep = createIntervalSweep<{
   };
 });
 
+const registryGcSweep = createIntervalSweep<RegistryGcSummary | null>(
+  REGISTRY_GC_INTERVAL_MS,
+  async () => await pruneRegistryImages()
+);
+
 let certSweepInProgress = false;
 let lastCertSweepAt = 0;
 
@@ -276,6 +287,18 @@ async function runPeriodicSweeps(): Promise<void> {
     }
   } catch (error) {
     log("error", "worker.registry_disk_check_failed", {
+      error: error instanceof Error ? error.message.slice(0, 300) : "Unknown error",
+    });
+  }
+
+  try {
+    const gc = await registryGcSweep.sweep();
+    if (gc && (gc.deleted > 0 || gc.missing > 0 || gc.errors > 0)) {
+      const level = gc.errors > 0 ? "error" : "info";
+      log(level, "worker.registry_gc", { ...gc });
+    }
+  } catch (error) {
+    log("error", "worker.registry_gc_failed", {
       error: error instanceof Error ? error.message.slice(0, 300) : "Unknown error",
     });
   }

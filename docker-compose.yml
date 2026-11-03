@@ -102,6 +102,9 @@ services:
       DEPLOYKIT_REGISTRY_STORAGE_PATH: /var/lib/registry
       DEPLOYKIT_REGISTRY_DISK_SOFT_PERCENT: ${DEPLOYKIT_REGISTRY_DISK_SOFT_PERCENT:-85}
       DEPLOYKIT_REGISTRY_DISK_HARD_PERCENT: ${DEPLOYKIT_REGISTRY_DISK_HARD_PERCENT:-95}
+      DEPLOYKIT_REGISTRY_GC_ENABLED: ${DEPLOYKIT_REGISTRY_GC_ENABLED:-true}
+      DEPLOYKIT_REGISTRY_GC_KEEP_RELEASES: ${DEPLOYKIT_REGISTRY_GC_KEEP_RELEASES:-20}
+      DEPLOYKIT_REGISTRY_GC_SWEEP_INTERVAL_MS: ${DEPLOYKIT_REGISTRY_GC_SWEEP_INTERVAL_MS:-21600000}
       DEPLOYKIT_RUNTIME_NETWORK: deploykit-runtime
       DEPLOYKIT_BUILDER_NAME: deploykit-builder
       BUILDX_CONFIG: /tmp/deploykit-buildx
@@ -182,6 +185,8 @@ services:
 
     environment:
       REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY: /var/lib/registry
+      # Manifest deletion must be on for the worker's image GC to reclaim space.
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
 
     volumes:
       - deploykit-registry-data:/var/lib/registry

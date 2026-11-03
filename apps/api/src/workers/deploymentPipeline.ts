@@ -17,6 +17,7 @@ import {
   diskPressureLevel,
 } from "../infrastructure/registry/registryDiskGuard.js";
 import type { RegistryDiskUsage, DiskThresholds } from "../infrastructure/registry/registryDiskGuard.js";
+import { pruneRegistryImages } from "../infrastructure/registry/registryGarbageCollector.js";
 import {
   detectStack,
   StackDetectorError,
@@ -1471,6 +1472,36 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         await this.cleanupReleaseContainers(
           input.previousActiveId,
           input.releaseId
+        );
+      }
+
+      try {
+        const gcSummary = await pruneRegistryImages({ db: pool });
+        if (gcSummary && (gcSummary.deleted > 0 || gcSummary.missing > 0)) {
+          await dlog(
+            input.projectId,
+            input.deploymentId,
+            "registry",
+            "info",
+            `image GC pruned ${gcSummary.deleted} manifest(s) and ran garbage-collect`
+          );
+        } else if (gcSummary && gcSummary.errors > 0) {
+          await dlog(
+            input.projectId,
+            input.deploymentId,
+            "registry",
+            "warn",
+            `image GC skipped or failed for ${gcSummary.errors} manifest(s): ${gcSummary.errorSamples.join("; ")}`
+          );
+        }
+      } catch (error) {
+        // GC must never fail a successful deploy.
+        await dlog(
+          input.projectId,
+          input.deploymentId,
+          "registry",
+          "warn",
+          `image GC failed: ${error instanceof Error ? redactForLog(error.message).slice(0, 200) : "unknown"}`
         );
       }
 

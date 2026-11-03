@@ -468,6 +468,43 @@ only new pushes/pulls require the new password.
 the worker trusts it via `SSL_CERT_FILE` (provisioned from the
 `deploykit-certs` volume) for the login handshake.
 
+### Image garbage collection
+
+Without cleanup, every release keeps its full image in the registry
+forever. The worker prunes what the release history no longer needs:
+
+* **Policy** — keep the last `DEPLOYKIT_REGISTRY_GC_KEEP_RELEASES`
+  (default 20) non-failed releases **per project**, plus every release
+  whose status is `active` regardless of age. Everything older than
+  that window is garbage. Rollbacks re-create a release row pointing at
+  an older digest, so protection is keyed on the
+  `(repository, digest)` pairs any kept release still references — an
+  old digest shared with a kept release is never deleted.
+* **Delete** — manifests are deleted over the Registry v2 API
+  (`DELETE /v2/<name>/manifests/<digest>`), TLS with the same per-host
+  CA bundle as `docker login`, and the same opt-in basic-auth
+  credentials. Responses are classified: `202` deleted, `404`
+  already gone, `405` deletion disabled, `401/403` unauthorized.
+* **Reclaim** — after any successful deletion the worker runs
+  `docker exec deploykit-registry registry garbage-collect
+  /etc/docker/registry/config.yml` to remove now-orphaned blobs
+  (this requires `REGISTRY_STORAGE_DELETE_ENABLED=true`, which
+  docker-compose sets).
+* **Hooks** — best-effort after each successful release activation in
+  the deployment pipeline (GC can never fail a deploy), plus a periodic
+  worker sweep (`DEPLOYKIT_REGISTRY_GC_SWEEP_INTERVAL_MS`, default 6h)
+  as a safety net.
+* **Scope guard** — releases whose `image_repository` does not start
+  with the configured `DEPLOYKIT_REGISTRY_HOST` are never touched, and
+  malformed digests/repos are skipped rather than acted on. An
+  ambiguous `DEPLOYKIT_REGISTRY_GC_ENABLED` value fails closed
+  (GC disabled).
+
+Online `registry garbage-collect` is safe against concurrent pushes on
+distribution 2.8, but it cannot reclaim blobs that arrive mid-scan
+(those are collected by the next run). GC runs on a live registry, so
+no maintenance window is needed.
+
 ### Environment variables (new)
 
 | Var | Default | Purpose |
@@ -477,6 +514,9 @@ the worker trusts it via `SSL_CERT_FILE` (provisioned from the
 | `DEPLOYKIT_REGISTRY_INSECURE` | `false` | `true` is LOCAL DEVELOPMENT ONLY (loopback / `deploykit-registry` hosts only) |
 | `DEPLOYKIT_REGISTRY_USERNAME` | unset (compose: `deploykit`) | htpasswd username for registry auth |
 | `DEPLOYKIT_REGISTRY_PASSWORD` | unset (auth disabled) | htpasswd password; when set + overlay included, auth is enforced |
+| `DEPLOYKIT_REGISTRY_GC_ENABLED` | `true` | image garbage collection master switch; invalid values fail closed (disabled) |
+| `DEPLOYKIT_REGISTRY_GC_KEEP_RELEASES` | `20` | non-failed releases kept per project (clamped 1–500); active releases always kept |
+| `DEPLOYKIT_REGISTRY_GC_SWEEP_INTERVAL_MS` | `21600000` | periodic prune sweep interval (min 60000) |
 
 ### Tests
 
@@ -499,9 +539,12 @@ wrong password → login fails).
 
 * Registry authentication is **implemented and tested but opt-in**
   (see "Registry authentication" above): the default dev stack keeps
-  the registry unauthenticated on loopback only. No HA, no
-  retention/GC policy, no image signing — not production-grade
-  artifact storage.
+  the registry unauthenticated on loopback only. No image signing, no
+  HA — not production-grade artifact storage. Image retention is
+  handled by the garbage collector above (last N releases + active,
+  manifests deleted then `registry garbage-collect`); it does not
+  protect arbitrary external tags and its online GC cannot reclaim
+  blobs pushed mid-scan until the next run.
 * Host-Docker prerequisite for registry pulls (NOT automated by
   DeployKit, which never touches host daemon config): the runtime
   `docker image pull repository@digest` executes on the HOST Docker

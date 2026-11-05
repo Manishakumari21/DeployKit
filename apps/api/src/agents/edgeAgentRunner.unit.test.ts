@@ -99,6 +99,7 @@ function makeHarness(overrides: Partial<Harness> = {}): Harness & {
         return { containerName: "dk-p33333333-d22222222", containerPort: 3000, ipAddress: "172.18.0.5", networkName: "n", healthPath: "/", containerId: "d".repeat(64) };
       }) as never,
       waitHealthy: async () => { h.dockerCalls.push("healthy"); },
+      inspectHostPort: async () => null,
       stopAndRemoveOwned: async (name: string) => { h.dockerCalls.push(`remove ${name}`); },
       listOwnedContainers: async () => [],
     }),

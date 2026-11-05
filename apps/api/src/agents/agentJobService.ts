@@ -10,17 +10,10 @@ import {
   failJob,
 } from "../workers/deploymentQueue.js";
 import { getAgentById } from "./agentService.js";
+import { AgentJobError } from "./agentJobErrors.js";
+import { activateEdgeDeployment } from "./edgeActivation.js";
 
-export class AgentJobError extends Error {
-  readonly code: string;
-  readonly status: number;
-  constructor(code: string, message: string, status = 400) {
-    super(message);
-    this.name = "AgentJobError";
-    this.code = code;
-    this.status = status;
-  }
-}
+export { AgentJobError } from "./agentJobErrors.js";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -78,6 +71,8 @@ export interface AgentCompletionInput {
   commitSha?: string | null;
   errorCode?: string | null;
   errorMessage?: string | null;
+  containerPort?: number | null;
+  hostPort?: number | null;
 }
 
 export interface AgentFailureInput {
@@ -654,23 +649,51 @@ export async function completeAgentJob(
     throw new AgentJobError("LEASE_STALE", "Job lease is no longer active", 409);
   }
   requireRunningLease(owned, validAgent);
-  if (input.outcome === "succeeded" && input.imageDigest != null) {
-
+  if (input.outcome === "succeeded") {
     const trusted = await resolveTrustedJobImage(
       pool,
       owned.deploymentId,
       agent.projectId
     );
-    if (
-      trusted !== null &&
-      trusted.digest !== input.imageDigest.trim().toLowerCase()
-    ) {
+    if (trusted === null || !trusted.repository || !trusted.digest) {
+      throw new AgentJobError(
+        "EDGE_IMAGE_CONTRACT_MISSING",
+        "No trusted image contract for this edge deployment",
+        409
+      );
+    }
+    if (input.imageDigest == null) {
+      throw new AgentJobError(
+        "EDGE_DIGEST_REQUIRED",
+        "Successful completion must report the verified image digest",
+        400
+      );
+    }
+    if (trusted.digest !== input.imageDigest.trim().toLowerCase()) {
       throw new AgentJobError(
         "IMAGE_MISMATCH",
         "Reported image digest does not match the trusted deployment image",
         409
       );
     }
+    // Activation runs before the lease-owned success write so a failed
+    // activation leaves the job retryable; a completed activation makes the
+    // success write idempotent on retry.
+    await activateEdgeDeployment(
+      pool,
+      agent.projectId,
+      {
+        jobId: owned.jobId,
+        deploymentId: owned.deploymentId,
+        branch: owned.branch,
+        commitSha: input.commitSha ?? null,
+      },
+      trusted,
+      {
+        containerPort: input.containerPort ?? null,
+        hostPort: input.hostPort ?? null,
+      }
+    );
   }
   if (input.outcome === "failed") {
     const message =

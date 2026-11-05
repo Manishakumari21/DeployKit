@@ -50,7 +50,7 @@ export type EdgeAgentClientLike = Pick<
 
 export type EdgeAgentDockerLike = Pick<
   EdgeDockerRuntime,
-  "pullImage" | "createAndStart" | "waitHealthy" | "stopAndRemoveOwned" | "listOwnedContainers"
+  "pullImage" | "createAndStart" | "waitHealthy" | "inspectHostPort" | "stopAndRemoveOwned" | "listOwnedContainers"
 >;
 
 export interface EdgeAgentRunnerFactories {

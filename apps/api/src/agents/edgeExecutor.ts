@@ -152,7 +152,7 @@ export interface EdgeOwnedIdentity {
 
 export interface EdgeExecutorDependencies {
   client: Pick<EdgeAgentClient, "claimJob" | "heartbeatJob" | "completeJob" | "failJob">;
-  docker: Pick<EdgeDockerRuntime, "pullImage" | "createAndStart" | "waitHealthy" | "stopAndRemoveOwned" | "listOwnedContainers">;
+  docker: Pick<EdgeDockerRuntime, "pullImage" | "createAndStart" | "waitHealthy" | "inspectHostPort" | "stopAndRemoveOwned" | "listOwnedContainers">;
   heartbeatIntervalMs?: number;
   executionTimeoutMs?: number;
 
@@ -451,6 +451,9 @@ export async function executeReadyPlan(
     } catch (error) {
       throw error;
     }
+    // Inspect the ephemeral published host port after health so the reported
+    // mapping reflects the started container; null when publishing is off.
+    const hostPort = await docker.inspectHostPort(runtime.containerName, runtime.containerPort, phaseSignal);
     if (phaseController.signal.aborted || combinedSignal.aborted) {
       throw phaseOutcomeError();
     }
@@ -477,7 +480,12 @@ export async function executeReadyPlan(
     try {
       await client.completeJob(
         job.id,
-        { imageDigest: digest, ...(job.commitSha !== null ? { commitSha: job.commitSha } : {}) },
+        {
+          imageDigest: digest,
+          ...(job.commitSha !== null ? { commitSha: job.commitSha } : {}),
+          containerPort: runtime.containerPort,
+          ...(hostPort !== null ? { hostPort } : {}),
+        },
         combinedSignal
       );
     } catch (error) {

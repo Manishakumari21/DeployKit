@@ -67,6 +67,9 @@ export interface EdgeDockerOptions {
   healthPath?: string;
   healthTimeoutMs?: number;
 
+  /** Test override for the port-publishing kill switch. */
+  publishPorts?: boolean;
+
   runtimeManager?: RuntimeManager;
 
   runFn?: typeof runCommand;
@@ -113,6 +116,7 @@ export interface EdgeRuntimeConfig {
   containerPort: number;
   healthPath: string;
   healthTimeoutMs: number;
+  publishPorts: boolean;
 }
 
 export function resolveEdgeRuntimeConfig(options: EdgeDockerOptions = {}): EdgeRuntimeConfig {
@@ -131,6 +135,8 @@ export function resolveEdgeRuntimeConfig(options: EdgeDockerOptions = {}): EdgeR
   if (!healthPath.startsWith("/") || healthPath.length > 1024 || /[\r\n]/.test(healthPath)) {
     throw new EdgeDockerError("EDGE_INVALID_CONFIG", "Health path must start with / and be bounded");
   }
+  const publishPortsFlag = options.publishPorts ?? process.env.DEPLOYKIT_EDGE_PUBLISH_PORTS;
+  const publishPorts = publishPortsFlag === "true" || publishPortsFlag === "1";
   return {
     dockerBinary,
     networkName,
@@ -140,6 +146,7 @@ export function resolveEdgeRuntimeConfig(options: EdgeDockerOptions = {}): EdgeR
     containerPort: intInRange(options.containerPort, DEFAULT_CONTAINER_PORT, 1, 65535, "containerPort"),
     healthPath,
     healthTimeoutMs: intInRange(options.healthTimeoutMs, DEFAULT_HEALTH_TIMEOUT_MS, MIN_HEALTH_TIMEOUT_MS, MAX_HEALTH_TIMEOUT_MS, "healthTimeoutMs"),
+    publishPorts,
   };
 }
 
@@ -231,6 +238,7 @@ export class EdgeDockerRuntime {
           [EDGE_PROJECT_LABEL]: identity.projectId,
           [EDGE_AGENT_LABEL]: identity.agentId,
         },
+        publishContainerPort: this.config.publishPorts,
       });
       await this.manager.start(created.containerName);
       return this.manager.inspect(created.containerName, this.config.networkName);
@@ -263,6 +271,39 @@ export class EdgeDockerRuntime {
         boundErrorMessage(`Health check failed: ${detail}`, "Health check failed").slice(0, 500)
       );
     }
+  }
+
+  /**
+   * Maps a published container port to its assigned host port. Returns null
+   * when the container has no published binding for that port (port
+   * publishing is opt-in via DEPLOYKIT_EDGE_PUBLISH_PORTS).
+   */
+  async inspectHostPort(containerName: string, containerPort: number, signal?: AbortSignal): Promise<number | null> {
+    assertEdgeContainerName(containerName);
+    if (!Number.isSafeInteger(containerPort) || containerPort < 1 || containerPort > 65535) {
+      throw new EdgeDockerError("EDGE_INVALID_LIMIT", "Invalid container port for host mapping lookup");
+    }
+    let result: ExecResult;
+    try {
+      result = await this.run(
+        this.config.dockerBinary,
+        ["port", containerName, String(containerPort), "tcp"],
+        15_000
+      );
+    } catch (error) {
+      if (signal?.aborted) {
+        throw new EdgeDockerError("EDGE_CANCELLED", "Host port lookup was cancelled");
+      }
+      // "docker port" exits non-zero when no binding exists.
+      return null;
+    }
+    if (result.timedOut || result.aborted || result.code !== 0) return null;
+    const firstLine = result.stdout.trim().split("\n")[0] ?? "";
+    const match = /:(\d+)\s*$/.exec(firstLine);
+    if (!match) return null;
+    const hostPort = Number.parseInt(match[1], 10);
+    if (!Number.isSafeInteger(hostPort) || hostPort < 1 || hostPort > 65535) return null;
+    return hostPort;
   }
 
   async readLabels(containerName: string): Promise<Record<string, string> | null> {

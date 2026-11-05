@@ -73,6 +73,7 @@ export async function createDeployment(
 
     const project = projectResult.rows[0];
 
+    let inheritedTargetAgentId: string | null = null;
     if (input.trigger === "rollback") {
       if (!input.rollbackReleaseId) {
         await client.query("ROLLBACK");
@@ -80,7 +81,10 @@ export async function createDeployment(
       }
       const rel = await client.query(
         `
-        SELECT id, project_id, status
+        SELECT id, project_id, status,
+               (SELECT d.target_agent_id
+                FROM deployments d
+                WHERE d.id = releases.deployment_id) AS target_agent_id
         FROM releases
         WHERE id = $1
         `,
@@ -97,14 +101,19 @@ export async function createDeployment(
         await client.query("ROLLBACK");
         throw new Error("Cannot rollback to a failed release");
       }
+      // A rollback must run where the superseded release ran: inherit the
+      // originating deployment's target agent so edge deployments roll back
+      // on their edge agent instead of the central worker.
+      inheritedTargetAgentId = (rel.rows[0].target_agent_id ?? null) as string | null;
     } else if (input.rollbackReleaseId) {
       await client.query("ROLLBACK");
       throw new Error("rollback_release_id is only valid for rollback trigger");
     }
 
     let targetAgentId: string | null = null;
-    if (input.targetAgentId !== undefined && input.targetAgentId !== null) {
-      const agent = await getAgentById(input.targetAgentId);
+    const requestedTargetAgentId = input.targetAgentId ?? inheritedTargetAgentId;
+    if (requestedTargetAgentId !== undefined && requestedTargetAgentId !== null) {
+      const agent = await getAgentById(requestedTargetAgentId);
       if (!agent) {
         await client.query("ROLLBACK");
         throw new AgentError(
@@ -295,7 +304,7 @@ export async function createDeployment(
       DO NOTHING
       RETURNING *
       `,
-      [deployment.id, targetAgentId !== null && isEdgeBuildEnabled() ? "build" : "execute"]
+      [deployment.id, targetAgentId !== null && input.trigger !== "rollback" && isEdgeBuildEnabled() ? "build" : "execute"]
     );
 
     if (jobResult.rows.length > 0) {

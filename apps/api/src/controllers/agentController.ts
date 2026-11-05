@@ -136,6 +136,8 @@ const completeBodySchema = z.object({
   commitSha: z.string().regex(COMMIT_SHA_PATTERN).optional(),
   errorCode: z.string().min(1).max(100).optional(),
   errorMessage: z.string().min(1).max(4000).optional(),
+  containerPort: z.number().int().min(1).max(65535).optional(),
+  hostPort: z.number().int().min(1).max(65535).optional(),
 });
 
 const failBodySchema = z.object({

@@ -330,23 +330,30 @@ test("heartbeat extends only the owning agent's lease", async () => {
   }
 });
 
-test("completion records success without faking activation", async () => {
+test("successful completion activates the edge release", async () => {
   if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
   const project = await makeProject(uniqueName("complete"));
   try {
     const { agent } = await makeAgent(project.id, "finisher");
     const deployment = await makeTargetedDeployment(project.id, agent.id);
+    const digest = `sha256:${"d".repeat(64)}`;
+    await pool.query(
+      `UPDATE deployments SET image_repository = $2, image_digest = $3 WHERE id = $1`,
+      [deployment.id, IMAGE_REPO, digest]
+    );
     const claimed = await claimAgentJob(agent.id);
     assert.ok(claimed);
     const done = await completeAgentJob(agent.id, claimed.id, {
       outcome: "succeeded",
-      imageDigest: `sha256:${"d".repeat(64)}`,
+      imageDigest: digest,
       commitSha: "e".repeat(40),
+      containerPort: 3000,
+      hostPort: 32145,
     });
     assert.equal(done.outcome, "succeeded");
     assert.equal(done.result, "completed");
     assert.equal(done.jobStatus, "succeeded");
-    assert.notEqual(done.deploymentStatus, "active");
+    assert.equal(done.deploymentStatus, "active");
     const events = (
       await pool.query(
         `SELECT COUNT(*)::int AS n FROM deployment_events
@@ -367,6 +374,43 @@ test("completion records success without faking activation", async () => {
       )
     ).rows[0].n as number;
     assert.equal(eventsAfter, 1);
+  } finally {
+    await cleanupProject(project.id);
+  }
+});
+
+test("completion without a trusted image contract fails closed", async () => {
+  if (!(await gateDb("agents/agentJobs.db.unit.test.ts", dbAvailable))) return;
+  const project = await makeProject(uniqueName("nocontract"));
+  try {
+    const { agent } = await makeAgent(project.id, "blocked");
+    const deployment = await makeTargetedDeployment(project.id, agent.id);
+    const claimed = await claimAgentJob(agent.id);
+    assert.ok(claimed);
+    await assert.rejects(
+      completeAgentJob(agent.id, claimed.id, {
+        outcome: "succeeded",
+        imageDigest: `sha256:${"a".repeat(64)}`,
+      }),
+      (e: unknown) => e instanceof AgentJobError && e.code === "EDGE_IMAGE_CONTRACT_MISSING"
+    );
+    const jobRow = (
+      await pool.query(`SELECT status FROM deployment_jobs WHERE id = $1`, [claimed.id])
+    ).rows[0] as { status: string };
+    assert.equal(jobRow.status, "running");
+
+    await pool.query(
+      `UPDATE deployments SET image_repository = $2, image_digest = $3 WHERE id = $1`,
+      [deployment.id, IMAGE_REPO, `sha256:${"b".repeat(64)}`]
+    );
+    await assert.rejects(
+      completeAgentJob(agent.id, claimed.id, { outcome: "succeeded" }),
+      (e: unknown) => e instanceof AgentJobError && e.code === "EDGE_DIGEST_REQUIRED"
+    );
+    const stillRunning = (
+      await pool.query(`SELECT status FROM deployment_jobs WHERE id = $1`, [claimed.id])
+    ).rows[0] as { status: string };
+    assert.equal(stillRunning.status, "running");
   } finally {
     await cleanupProject(project.id);
   }
@@ -516,11 +560,18 @@ test("claim and job endpoints expose no secrets", async () => {
   try {
     const { agent, token } = await makeAgent(project.id, "quiet");
     const deployment = await makeTargetedDeployment(project.id, agent.id);
+    const secretDigest = `sha256:${"7".repeat(64)}`;
+    await pool.query(
+      `UPDATE deployments SET image_repository = $2, image_digest = $3 WHERE id = $1`,
+      [deployment.id, IMAGE_REPO, secretDigest]
+    );
     const claimed = await claimAgentJob(agent.id);
     assert.ok(claimed);
     const state = await heartbeatAgentJob(agent.id, claimed.id);
     const done = await completeAgentJob(agent.id, claimed.id, {
       outcome: "succeeded",
+      imageDigest: secretDigest,
+      containerPort: 3000,
     });
     const second = await makeTargetedDeployment(project.id, agent.id);
     const claimed2 = await claimAgentJob(agent.id);
@@ -549,7 +600,7 @@ test("claim and job endpoints expose no secrets", async () => {
       "projectId",
     ]);
 
-    assert.equal(claimed.image, null);
+    assert.deepEqual(claimed.image, { repository: IMAGE_REPO, digest: secretDigest, releaseId: null });
   } finally {
     await cleanupProject(project.id);
   }
@@ -749,10 +800,14 @@ test("edge agent claims its own targeted job with a fail-closed null image", asy
     assert.equal(claimed.agentId, agent.id);
 
     assert.equal(claimed.image, null);
-    const done = await completeAgentJob(agent.id, claimed.id, {
-      outcome: "succeeded",
-    });
-    assert.equal(done.result, "completed");
+    await assert.rejects(
+      completeAgentJob(agent.id, claimed.id, {
+        outcome: "succeeded",
+        imageDigest: `sha256:${"2".repeat(64)}`,
+      }),
+      (e: unknown) => e instanceof AgentJobError && e.code === "EDGE_IMAGE_CONTRACT_MISSING"
+    );
+    await failAgentJob(agent.id, claimed.id, { errorMessage: "blocked" });
   } finally {
     await cleanupProject(project.id);
   }
@@ -778,6 +833,7 @@ test("claim resolves the trusted image from the deployment's own release", async
       outcome: "succeeded",
       imageDigest: digest,
       commitSha: "a".repeat(40),
+      containerPort: 3000,
     });
     assert.equal(done.result, "completed");
   } finally {
@@ -970,15 +1026,25 @@ test("client-supplied digests are never adopted; mismatches are rejected", async
     const done = await completeAgentJob(agent.id, claimed.id, {
       outcome: "succeeded",
       imageDigest: trusted,
+      containerPort: 3000,
     });
     assert.equal(done.result, "completed");
 
     const secondDep = await makeTargetedDeployment(project.id, agent.id);
-    await makeRelease(secondDep.id, project.id, `sha256:${"8".repeat(64)}`);
+    const secondDigest = `sha256:${"8".repeat(64)}`;
+    await makeRelease(secondDep.id, project.id, secondDigest);
     const second = await claimAgentJob(agent.id);
     assert.ok(second);
-    const omitted = await completeAgentJob(agent.id, second.id, { outcome: "succeeded" });
-    assert.equal(omitted.result, "completed");
+    await assert.rejects(
+      completeAgentJob(agent.id, second.id, { outcome: "succeeded" }),
+      (e: unknown) => e instanceof AgentJobError && e.code === "EDGE_DIGEST_REQUIRED"
+    );
+    const doneSecond = await completeAgentJob(agent.id, second.id, {
+      outcome: "succeeded",
+      imageDigest: secondDigest,
+      containerPort: 3000,
+    });
+    assert.equal(doneSecond.result, "completed");
   } finally {
     await cleanupProject(project.id);
   }

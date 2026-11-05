@@ -58,6 +58,7 @@ export async function checkActiveRuntimeHealth(
     JOIN releases r ON r.id = i.release_id
     WHERE r.status = 'active'
       AND i.status IN ('running', 'starting', 'unhealthy')
+      AND i.ip_address IS NOT NULL
     ORDER BY i.created_at ASC
     `
   );

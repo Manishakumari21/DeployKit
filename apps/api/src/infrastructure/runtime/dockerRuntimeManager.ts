@@ -224,6 +224,12 @@ export class DockerRuntimeManager
       args.push("--label", `${labelKey}=${labelValue}`);
     }
 
+    if (spec.publishContainerPort === true) {
+      // "--publish <port>" without a host port makes Docker pick an ephemeral
+      // host port; the caller learns the mapping via "docker port".
+      args.push("--publish", `${validateContainerPort(spec.containerPort)}`);
+    }
+
     for (
       const [key, value]
       of Object.entries(spec.environment)

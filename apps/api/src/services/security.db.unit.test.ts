@@ -487,6 +487,9 @@ test("registration closes once accounts exist unless explicitly enabled", async 
 
 test("registration-status reports invite mode once accounts exist", async () => {
   if (!(await ensureServer())) return;
+  const email = uniqueEmail("status");
+  const user = await createUser({ email, password: "correct-horse-123" });
+  userIds.push(user.id);
   const res = await api("/api/auth/registration-status");
   assert.equal(res.status, 200);
   const body = res.json as { hasUsers: boolean; mode: string };

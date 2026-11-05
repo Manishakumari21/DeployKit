@@ -91,6 +91,7 @@ interface FakeDocker {
     pullImage(ref: string, s?: AbortSignal): Promise<string>;
     createAndStart(id: unknown, ref: string, s?: AbortSignal): Promise<never>;
     waitHealthy(rt: unknown, s?: AbortSignal): Promise<void>;
+    inspectHostPort(name: string, port: number, s?: AbortSignal): Promise<number | null>;
     stopAndRemoveOwned(name: string, id: unknown): Promise<void>;
     listOwnedContainers(dep: string): Promise<string[]>;
   };
@@ -116,6 +117,7 @@ function fakeDocker(overrides: Partial<Pick<FakeDocker, "pullImpl" | "createImpl
       return fake.createImpl();
     }) as never,
     waitHealthy: async () => { fake.calls.push({ method: "healthy" }); fake.order.push("healthy"); return fake.healthyImpl(); },
+    inspectHostPort: async () => null,
     stopAndRemoveOwned: async (name: string) => { fake.calls.push({ method: "remove", arg: name }); fake.removed.push(name); },
     listOwnedContainers: async () => [...fake.owned],
   };
@@ -254,7 +256,7 @@ test("ready path success: lease renewed during ops, success only after health", 
   assert.deepEqual(docker.order, ["pull", "create", "healthy"]);
   const complete = client.calls.find((c) => c.method === "complete");
   assert.ok(complete);
-  assert.deepEqual(complete.payload, { imageDigest: GOOD_DIGEST, commitSha: "b".repeat(40) });
+  assert.deepEqual(complete.payload, { imageDigest: GOOD_DIGEST, commitSha: "b".repeat(40), containerPort: 3000 });
   assert.ok(!client.calls.some((c) => c.method === "fail"));
 });
 
@@ -467,7 +469,7 @@ test("runOnce with a trusted image executes the ready path end to end", async ()
   assert.deepEqual(docker.order, ["pull", "create", "healthy"]);
   const complete = client.calls.find((c) => c.method === "complete");
   assert.ok(complete);
-  assert.deepEqual(complete.payload, { imageDigest: GOOD_DIGEST, commitSha: "b".repeat(40) });
+  assert.deepEqual(complete.payload, { imageDigest: GOOD_DIGEST, commitSha: "b".repeat(40), containerPort: 3000 });
   assert.ok(!client.calls.some((c) => c.method === "fail"));
 });
 

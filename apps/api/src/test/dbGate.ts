@@ -4,6 +4,7 @@ import path from "node:path";
 export const DB_GATED_SUITES: readonly string[] = [
   "agents/agentAuthentication.unit.test.ts",
   "agents/agentJobs.db.unit.test.ts",
+  "agents/edgeActivation.db.unit.test.ts",
   "agents/agentService.db.unit.test.ts",
   "agents/edgeAgentClient.integration.test.ts",
   "deployments/deploymentEvents.db.unit.test.ts",

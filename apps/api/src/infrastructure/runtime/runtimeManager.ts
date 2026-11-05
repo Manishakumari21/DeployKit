@@ -15,6 +15,12 @@ export interface RuntimeSpec {
   pidsLimit: number;
 
   labels?: Record<string, string>;
+
+  /**
+   * Publish the container port to an ephemeral host port. Edge-only:
+   * centrally managed runtimes must stay off the host network surface.
+   */
+  publishContainerPort?: boolean;
 }
 
 export interface RuntimeInfo {

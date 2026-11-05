@@ -54,6 +54,8 @@ function normalizeTimeout(raw: number | undefined): number {
 export interface EdgeCompletionPayload {
   imageDigest?: string;
   commitSha?: string;
+  containerPort?: number;
+  hostPort?: number;
 }
 
 export class EdgeAgentClient {
@@ -89,6 +91,8 @@ export class EdgeAgentClient {
       outcome: "succeeded",
       ...(payload.imageDigest !== undefined ? { imageDigest: payload.imageDigest } : {}),
       ...(payload.commitSha !== undefined ? { commitSha: payload.commitSha } : {}),
+      ...(payload.containerPort !== undefined ? { containerPort: payload.containerPort } : {}),
+      ...(payload.hostPort !== undefined ? { hostPort: payload.hostPort } : {}),
     }, signal);
   }
 

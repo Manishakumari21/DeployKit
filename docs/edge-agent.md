@@ -157,9 +157,15 @@ over TCP.
   `DockerRuntimeManager` integration suite (needs a daemon).
 - Fresh manual edge deployments have no trusted image and fail closed
   **unless** the Phase 12.6B.1 build phase is enabled (see §10).
-- Edge release activation, traffic switching, and rollback are **not**
-  implemented: a succeeded edge job means a healthy local container, not
-  served traffic.
+- **No edge-host traffic routing.** A completed edge job now creates and
+  activates a release and records the runtime, but the central gateway
+  never serves traffic for edge containers (they are unreachable from the
+  central host); edge-host access requires the agent's port publishing
+  flag (`DEPLOYKIT_EDGE_PUBLISH_PORTS`, default off). A dedicated
+  edge-host routing design is future work.
+- Edge drift reconciliation (restarting a crashed edge container) is not
+  automated: `runtime_health_monitor` skips edge runtimes. Detecting and
+  restarting edge-side container failures is future work.
 - Private registry credential delivery is **not** implemented:
   unauthenticated pulls only.
 - No dashboard/rollout integration (deferred to Phase 12.6).
@@ -174,26 +180,30 @@ over TCP.
 
 ### Edge job completion and deployment status
 
-When an agent reports a successful edge job, the control plane records
-successful **local execution** and writes a `deployment.agent_completed`
-event. That event — not the deployment status — is the authoritative record
-of a completed edge deployment.
+When an agent reports a successful edge job, the control plane verifies the
+reported digest against the trusted image contract, then:
 
-- The deployment status is intentionally **not** transitioned to `active`
-  merely because the local container reported healthy. `active` is reserved
-  for deployments that have been activated and are serving traffic.
-- Release activation, traffic switching, and rollback remain separate,
-  unimplemented capabilities (see the limitations above).
-- Consequently the deployment row is left at a non-terminal status
-  (typically `cloning`) once the job succeeds. That status does **not** by
-  itself communicate completion, and can be confusing to read.
-- This does not block further work: the per-project concurrency guard only
-  matches deployments whose job is still `queued` or `running`, so a new
-  deployment can be created as soon as the edge job has succeeded.
+- creates one release for the deployment (`starting` → `healthy`),
+- upserts the runtime descriptor it learned from the agent
+  (`runtime_instances` with a server-derived container name and
+  `ip_address = NULL` marking an edge runtime), and
+- activates the release with **no central route**: the previous active
+  release (if any) transitions to `stopped`, the new one becomes `active`,
+  and the deployment status moves to `active` with a
+  `deployment.activated` event (`source: edge_agent`).
 
-A truthful terminal status distinct from `active` would improve this
-reporting, but that is new status modelling and is deliberately left to a
-separately approved design.
+Activation happens before the job's success write, so a failed activation
+leaves the job retryable, and retrying a completion is idempotent (the
+release insert conflicts on `deployment_id` and
+`activateRelease` short-circuits). Rollback deployments inherit the
+superseded release's target agent, run an `execute`-phase job (no rebuild),
+and the resulting release keeps the rollback target's digest, with
+`supersedes_release_id` pointing at the replaced release.
+
+Port publishing is opt-in per agent host
+(`DEPLOYKIT_EDGE_PUBLISH_PORTS`); when on, the agent publishes the
+container port to an ephemeral host port and the learned mapping is stored
+on the runtime row (`host_port`).
 
 ## 10. Edge image build (Phase 12.6B.1, opt-in)
 

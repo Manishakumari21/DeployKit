@@ -94,7 +94,7 @@ export async function findOrCreatePreviewProject(input: {
     );
     const previewProject = insertResult.rows[0];
 
-    // Propagate members from parent project to preview project
+    // Parent membership controls who can read the preview project.
     await client.query(
       `INSERT INTO project_members (project_id, user_id, role)
        SELECT $1, user_id, role
@@ -104,7 +104,6 @@ export async function findOrCreatePreviewProject(input: {
       [previewProject.id, parentProjectId]
     );
 
-    // Setup preview custom domain if DEPLOYKIT_PREVIEW_DOMAIN is configured
     const previewDomainBase = process.env.DEPLOYKIT_PREVIEW_DOMAIN?.trim();
     if (previewDomainBase) {
       const previewDomain = generatePreviewDomain(parentProjectId, prNumber, previewDomainBase);
@@ -175,12 +174,12 @@ export async function teardownPreviewProject(
     try {
       await runtimeManager.stop(container_name);
     } catch {
-      // Best-effort
+      // Best-effort stop; teardown must not fail on an already-dead container.
     }
     try {
       await runtimeManager.remove(container_name);
     } catch {
-      // Best-effort
+      // Best-effort remove.
     }
   }
 
@@ -188,7 +187,7 @@ export async function teardownPreviewProject(
   try {
     await router.remove(previewProjectId);
   } catch {
-    // Gateway route might not exist
+    // No central route exists for cluster-internal-only previews.
   }
 
   await pool.query(`DELETE FROM projects WHERE id = $1`, [previewProjectId]);

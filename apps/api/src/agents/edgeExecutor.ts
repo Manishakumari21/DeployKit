@@ -451,8 +451,8 @@ export async function executeReadyPlan(
     } catch (error) {
       throw error;
     }
-    // Inspect the ephemeral published host port after health so the reported
-    // mapping reflects the started container; null when publishing is off.
+    // Looked up after health so the mapping reflects the started container;
+    // host_port stays null when publishing is off.
     const hostPort = await docker.inspectHostPort(runtime.containerName, runtime.containerPort, phaseSignal);
     if (phaseController.signal.aborted || combinedSignal.aborted) {
       throw phaseOutcomeError();

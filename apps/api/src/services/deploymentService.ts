@@ -10,6 +10,7 @@ import { isEdgeBuildEnabled } from "../workers/deploymentQueue.js";
 export type DeploymentTrigger =
   | "manual"
   | "github_push"
+  | "github_pull_request"
   | "rollback";
 
 export const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;

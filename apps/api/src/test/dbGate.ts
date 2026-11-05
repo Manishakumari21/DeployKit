@@ -32,6 +32,7 @@ export const DB_GATED_SUITES: readonly string[] = [
   "services/userService.db.unit.test.ts",
   "services/webhookService.db.unit.test.ts",
   "services/webhookService.recovery.db.unit.test.ts",
+  "services/previewDeployments.db.unit.test.ts",
   "workers/deploymentPipeline.db.unit.test.ts",
   "workers/deploymentPreflight.db.unit.test.ts",
   "workers/deploymentQueue.db.unit.test.ts",

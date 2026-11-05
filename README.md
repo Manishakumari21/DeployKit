@@ -306,10 +306,41 @@ create a second deployment.
    full_name (enables `auto_deploy`, matches `projects.branch`).
 5. Push to the linked branch -> 202 -> worker deploys the exact SHA.
 
+### Pull-request preview deployments
+
+For any project linked to a GitHub App repository with auto-deploy, every
+pull request event (`opened`, `synchronize`, `reopened`) can be deployed as
+an **ephemeral preview**: the worker builds the PR head commit (pinned SHA, no
+merge simulation) in a **shadow project** (`<project>-pr-<number>`) cloned
+from the parent's settings, so the engine's invariants all still hold —
+one active release per project, per-project build serialization, per-project
+gateway route, per-project image GC.
+
+* **Opt-in per host**: `DEPLOYKIT_PREVIEW_DEPLOYS=true` (default off;
+  ambiguous values fail closed) **and** per project
+  `preview_deployments_enabled`.
+* **Fork safety**: fork heads are not fetchable from the base repository's
+  remote, so fork PRs are ignored (`fork_pr_unsupported`).
+* **URL**: previews reuse the normal per-project routing. Without
+  `DEPLOYKIT_PREVIEW_DOMAIN` the preview is reachable only through the
+  cluster-internal hostname (`dk-p<ref>.deploykit.local`). When the base
+  domain is set, previews get an auto-created, auto-`verified` **HTTP** route
+  `pr-<number>-<short8>.<base>` — publish a single wildcard DNS record
+  (`*.<base>`) pointing at the gateway. Preview routes are HTTP-only in this
+  release; no TLS certificate is issued for them.
+* **Teardown**: `pull_request.closed` cancels in-flight deployments, stops and
+  removes every preview runtime container, removes the gateway route file, and
+  deletes the shadow project row (its deployments/releases history cascades
+  with it). Push events always deploy the **parent** project — shadow projects
+  are excluded from the push lookup.
+
 ### Limitations
 
-* Only `push` to `refs/heads/<branch>` auto-deploys; tags, PRs,
-  deletions, other events are ignored (202).
+* Only `push` to `refs/heads/<branch>` auto-deploys; tags, deletions and
+  other events are ignored (202). `pull_request` is handled solely for
+  preview deployments (see above).
+* Preview deployments do not sweep missed close events yet: a preview whose
+  `closed` webhook was dropped is not auto-reaped by the worker.
 * One linked repository per project; branch must equal
   `projects.branch`; `auto_deploy` defaults to true.
 * Single-node worker; a worker processes up to
@@ -562,13 +593,15 @@ wrong password → login fails).
   insecure registry), converges the deterministic `deploykit-builder`
   to it idempotently, and attaches the builder container to the
   worker's networks so BuildKit pushes reach Compose registries.
-* Edge-targeted deployments stop at a trusted, digest-pinned local
-  container. Release activation, gateway traffic switching, and
-  rollback are **not** implemented for edge agents (central
-  deployments activate and roll back normally). A succeeded edge job
-  means a healthy container on the agent host, not served traffic; a
-  failed or blocked rollout never touches the running deployment (see
-  `docs/edge-agent.md` §9–§10).
+* Edge-targeted deployments now complete the lifecycle locally on the
+  agent: a verified digest creates + activates a release, the previous
+  active release stops, and the deployment goes `active` (edge activation
+  and rollback work; rollback re-runs the old digest on the agent that
+  owns it, no Central rebuild). Release lifecycle is tracked centrally
+  with `runtime_instances` marked edge (`ip_address = NULL`), so the
+  central gateway and health monitor skip edge hosts — edge traffic
+  stays on the agent host (opt-in port publishing via
+  `DEPLOYKIT_EDGE_PUBLISH_PORTS`). See `docs/edge-agent.md` §9–§10.
 
 ## Phase 08 — Worker/build hardening
 

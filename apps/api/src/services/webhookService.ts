@@ -1,6 +1,20 @@
 import pool from "../db/database.js";
 import { validateBranch } from "../infrastructure/git/sourceCheckout.js";
 import { createDeployment, DeploymentConflictError } from "./deploymentService.js";
+import {
+  findOrCreatePreviewProject,
+  findPreviewProject,
+  teardownPreviewProject,
+} from "./previewService.js";
+
+/**
+ * Previews are opt-in per host: a never-deployed feature path must not start
+ * building on surprise. Ambiguous values fail closed.
+ */
+function previewDeploymentsEnabled(): boolean {
+  const raw = process.env.DEPLOYKIT_PREVIEW_DEPLOYS?.trim().toLowerCase();
+  return raw === "true" || raw === "1";
+}
 
 export class WebhookError extends Error {
   readonly code: string;
@@ -14,7 +28,7 @@ export class WebhookError extends Error {
 }
 
 export type WebhookOutcome =
-  | { status: "processed"; deploymentId: string }
+  | { status: "processed"; deploymentId?: string }
   | { status: "duplicate"; deploymentId?: string }
   | { status: "ignored"; reason: string };
 
@@ -25,6 +39,18 @@ interface PushPayload {
   ref?: unknown;
   after?: unknown;
   deleted?: unknown;
+  repository?: { full_name?: unknown; id?: unknown };
+  installation?: { id?: unknown };
+}
+
+interface PullRequestPayload {
+  action?: unknown;
+  number?: unknown;
+  pull_request?: {
+    number?: unknown;
+    head?: { sha?: unknown; ref?: unknown; repo?: { full_name?: unknown } };
+    base?: { ref?: unknown };
+  };
   repository?: { full_name?: unknown; id?: unknown };
   installation?: { id?: unknown };
 }
@@ -141,7 +167,7 @@ async function findLinkedProject(fullName: string): Promise<{
      FROM github_repositories r
      JOIN projects p ON p.github_repository_id = r.id
      LEFT JOIN github_installations i ON i.id = r.installation_id
-     WHERE lower(r.full_name) = lower($1)
+     WHERE lower(r.full_name) = lower($1) AND p.is_preview = false
      LIMIT 5`,
     [fullName]
   );
@@ -169,7 +195,7 @@ async function findLinkedProjectForBranch(
      FROM github_repositories r
      JOIN projects p ON p.github_repository_id = r.id
      LEFT JOIN github_installations i ON i.id = r.installation_id
-     WHERE lower(r.full_name) = lower($1) AND p.branch = $2
+     WHERE lower(r.full_name) = lower($1) AND p.branch = $2 AND p.is_preview = false
      LIMIT 1`,
     [fullName, branch]
   );
@@ -184,6 +210,190 @@ async function findLinkedProjectForBranch(
       installation_id: row.repo_installation_id,
     },
   };
+}
+
+async function handlePullRequestEvent(input: {
+  deliveryId: string;
+  payload: PullRequestPayload;
+}): Promise<WebhookOutcome> {
+  const { deliveryId, payload } = input;
+  const fullName =
+    typeof payload.repository?.full_name === "string"
+      ? payload.repository.full_name.trim()
+      : "";
+  if (!fullName || fullName.length > 320) {
+    await markDelivery(deliveryId, "failed", { error: "Missing repository" });
+    throw new WebhookError("INVALID_REPOSITORY", "Missing repository in payload", 400);
+  }
+  const installationId =
+    payload.installation && payload.installation.id !== undefined
+      ? Number(payload.installation.id)
+      : null;
+  if (payload.installation !== undefined && !(Number.isSafeInteger(installationId) && (installationId as number) > 0)) {
+    await markDelivery(deliveryId, "failed", { error: "Invalid installation", repository: fullName });
+    throw new WebhookError("INVALID_INSTALLATION", "Invalid installation in payload", 400);
+  }
+
+  const action = String(payload.action ?? "").toLowerCase();
+  const prNumber = Number(payload.pull_request?.number ?? payload.number);
+  if (!Number.isSafeInteger(prNumber) || prNumber <= 0) {
+    await markDelivery(deliveryId, "failed", { error: "Invalid PR number", repository: fullName });
+    throw new WebhookError("INVALID_PR_NUMBER", "Invalid pull request number in payload", 400);
+  }
+
+  if (action === "closed") {
+    const linked = await findLinkedProject(fullName);
+    if (!linked) {
+      await markDelivery(deliveryId, "ignored", { error: "repository_not_linked", repository: fullName });
+      return { status: "ignored", reason: "repository_not_linked" };
+    }
+    const previewProject = await findPreviewProject(linked.project.id as string, prNumber);
+    if (!previewProject) {
+      await markDelivery(deliveryId, "ignored", { error: "no_preview_found", repository: fullName });
+      return { status: "ignored", reason: "no_preview_found" };
+    }
+    await teardownPreviewProject(previewProject.id);
+    await markDelivery(deliveryId, "processed", {
+      repository: fullName,
+      installation: installationId ?? undefined,
+    });
+    return { status: "processed" };
+  }
+
+  if (action !== "opened" && action !== "synchronize" && action !== "reopened") {
+    await markDelivery(deliveryId, "ignored", {
+      error: `Unsupported PR action: ${action}`,
+      repository: fullName,
+      installation: installationId ?? undefined,
+    });
+    return { status: "ignored", reason: `unsupported_pr_action:${action}` };
+  }
+
+  const headSha = String(payload.pull_request?.head?.sha ?? "").toLowerCase();
+  if (!SHA_PATTERN.test(headSha)) {
+    await markDelivery(deliveryId, "failed", { error: "Invalid commit SHA", repository: fullName });
+    throw new WebhookError("INVALID_SHA", "Invalid commit SHA in payload", 400);
+  }
+
+  const rawHeadRef = String(payload.pull_request?.head?.ref ?? "").trim();
+  let headRef = `pr-${prNumber}`;
+  try {
+    headRef = validateBranch(rawHeadRef);
+  } catch {
+    headRef = `pr-${prNumber}`;
+  }
+
+  const baseRef = String(payload.pull_request?.base?.ref ?? "").trim();
+  let linked = baseRef ? await findLinkedProjectForBranch(fullName, baseRef) : null;
+  if (!linked) {
+    linked = await findLinkedProject(fullName);
+  }
+  if (!linked) {
+    await markDelivery(deliveryId, "ignored", { error: "repository_not_linked", repository: fullName });
+    return { status: "ignored", reason: "repository_not_linked" };
+  }
+
+  // Fork heads are not fetchable from the base repository's remote, so building
+  // them would fail at checkout; keep previews same-repo only.
+  const headRepo =
+    typeof payload.pull_request?.head?.repo?.full_name === "string"
+      ? String(payload.pull_request?.head?.repo?.full_name).toLowerCase()
+      : null;
+  if (headRepo !== null && headRepo !== fullName.toLowerCase()) {
+    await markDelivery(deliveryId, "ignored", {
+      error: "fork PR previews not supported",
+      repository: fullName,
+      installation: installationId ?? undefined,
+    });
+    return { status: "ignored", reason: "fork_pr_unsupported" };
+  }
+
+  if (!previewDeploymentsEnabled()) {
+    await markDelivery(deliveryId, "ignored", {
+      error: "preview deployments disabled (DEPLOYKIT_PREVIEW_DEPLOYS)",
+      repository: fullName,
+      installation: installationId ?? undefined,
+    });
+    return { status: "ignored", reason: "preview_deployments_disabled_env" };
+  }
+
+  const parentProject = linked.project;
+  if (parentProject.auto_deploy !== true) {
+    await markDelivery(deliveryId, "ignored", {
+      error: "auto_deploy disabled",
+      repository: fullName,
+      installation: installationId ?? undefined,
+    });
+    return { status: "ignored", reason: "auto_deploy_disabled" };
+  }
+  if (parentProject.preview_deployments_enabled === false) {
+    await markDelivery(deliveryId, "ignored", {
+      error: "preview_deployments disabled",
+      repository: fullName,
+      installation: installationId ?? undefined,
+    });
+    return { status: "ignored", reason: "preview_deployments_disabled" };
+  }
+  if (
+    installationId !== null &&
+    linked.repo.installation_id !== null &&
+    Number(linked.repo.installation_id) !== installationId
+  ) {
+    await markDelivery(deliveryId, "ignored", {
+      error: "installation mismatch",
+      repository: fullName,
+      installation: installationId,
+    });
+    return { status: "ignored", reason: "installation_mismatch" };
+  }
+
+  const previewProject = await findOrCreatePreviewProject({
+    parentProjectId: parentProject.id as string,
+    prNumber,
+    prHeadRef: headRef,
+  });
+
+  const idempotencyKey = `github:${deliveryId}`;
+  try {
+    const deployment = await createDeployment({
+      projectId: previewProject.id,
+      trigger: "github_pull_request",
+      idempotencyKey,
+      commitSha: headSha,
+      deferWhenBusy: true,
+    });
+    if (!deployment) {
+      await markDelivery(deliveryId, "failed", {
+        error: "Project not found",
+        repository: fullName,
+        installation: installationId ?? undefined,
+      });
+      throw new WebhookError("PROJECT_NOT_FOUND", "Project not found", 404);
+    }
+    await markDelivery(deliveryId, "processed", {
+      deploymentId: deployment.id,
+      repository: fullName,
+      installation: installationId ?? undefined,
+    });
+    return { status: "processed", deploymentId: deployment.id as string };
+  } catch (error) {
+    if (error instanceof WebhookError) throw error;
+    if (error instanceof DeploymentConflictError) {
+      await markDelivery(deliveryId, "failed", {
+        error: "Project already has an active deployment and the deferred queue is full",
+        repository: fullName,
+        installation: installationId ?? undefined,
+      }).catch(() => undefined);
+      throw new WebhookError("DEPLOYMENT_CONFLICT", "Project already has an active deployment", 409);
+    }
+    const message = error instanceof Error ? error.message.slice(0, 500) : "Deployment creation failed";
+    await markDelivery(deliveryId, "failed", {
+      error: message,
+      repository: fullName,
+      installation: installationId ?? undefined,
+    }).catch(() => undefined);
+    throw new WebhookError("DEPLOYMENT_FAILED", "Failed to create deployment", 500);
+  }
 }
 
 export async function handleGitHubWebhook(input: {
@@ -203,6 +413,22 @@ export async function handleGitHubWebhook(input: {
   const alreadyHandled = await claimDelivery(deliveryId, event);
   if (alreadyHandled) return alreadyHandled;
 
+  if (event !== "push" && event !== "pull_request") {
+    await markDelivery(deliveryId, "ignored", { error: `Unsupported event: ${event}` });
+    return { status: "ignored", reason: `unsupported_event:${event}` };
+  }
+
+  if (event === "pull_request") {
+    let payload: PullRequestPayload;
+    try {
+      payload = JSON.parse(input.rawBody.toString("utf8")) as PullRequestPayload;
+    } catch {
+      await markDelivery(deliveryId, "failed", { error: "Malformed JSON payload" });
+      throw new WebhookError("MALFORMED_PAYLOAD", "Malformed JSON payload", 400);
+    }
+    return await handlePullRequestEvent({ deliveryId, payload });
+  }
+
   let payload: PushPayload;
   try {
     payload =
@@ -210,11 +436,6 @@ export async function handleGitHubWebhook(input: {
   } catch {
     await markDelivery(deliveryId, "failed", { error: "Malformed JSON payload" });
     throw new WebhookError("MALFORMED_PAYLOAD", "Malformed JSON payload", 400);
-  }
-
-  if (event !== "push") {
-    await markDelivery(deliveryId, "ignored", { error: `Unsupported event: ${event}` });
-    return { status: "ignored", reason: `unsupported_event:${event}` };
   }
 
   const fullName =

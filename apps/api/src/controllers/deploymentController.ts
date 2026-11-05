@@ -21,6 +21,7 @@ const uuidSchema = z.string().uuid();
 const triggerSchema = z.enum([
   "manual",
   "github_push",
+  "github_pull_request",
   "rollback",
 ]);
 

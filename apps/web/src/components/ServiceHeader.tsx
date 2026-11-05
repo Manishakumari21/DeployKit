@@ -1,4 +1,4 @@
-import { GitBranch, Hammer, RotateCw } from "lucide-react";
+import { ExternalLink, GitBranch, GitPullRequest, Hammer, RotateCw } from "lucide-react";
 import { shortRepo } from "../lib/format";
 import type { ApiDeployment, Project } from "../types";
 import { DeployBtn, Eyebrow, Panel, QuietBtn, StatusPill } from "./ui";
@@ -39,7 +39,14 @@ export function ServiceHeader({
       />
       <div className="relative flex flex-wrap items-start justify-between gap-4 p-5 sm:p-6">
         <div className="min-w-0">
-          <Eyebrow>Active service</Eyebrow>
+          <div className="flex items-center gap-2">
+            <Eyebrow>{project.is_preview ? "Preview Environment" : "Active service"}</Eyebrow>
+            {project.is_preview && (
+              <span className="inline-flex items-center gap-1 rounded border border-purple-500/40 bg-purple-950/60 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-purple-300">
+                <GitPullRequest size={10} /> PR #{project.pr_number}
+              </span>
+            )}
+          </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
             <h1
               className="truncate text-2xl font-bold tracking-tight text-balance text-white sm:text-[28px] sm:leading-8"
@@ -50,17 +57,29 @@ export function ServiceHeader({
             {live && <StatusPill status={live.status} />}
           </div>
           <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[12px]">
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-edge bg-ink-950 px-2 py-1 font-mono text-fog-200">
+            <a
+              href={project.repository_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-md border border-edge bg-ink-950 px-2 py-1 font-mono text-fog-200 transition hover:border-fog-500 hover:text-white"
+            >
               <GitBranch size={12} className="text-signal-300" />
               {shortRepo(project.repository_url)}
-            </span>
+            </a>
             <span className="rounded-md border border-edge bg-ink-950 px-2 py-1 font-mono text-fog-400">
               {project.branch} · {commit}
             </span>
             {live?.status === "active" && (
-              <span className="rounded-md border border-signal-500/30 bg-signal-950 px-2 py-1 font-mono text-signal-300">
-                {gatewayHost}
-              </span>
+              <a
+                href={`http://${gatewayHost}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`Open ${gatewayHost} in new tab`}
+                className="inline-flex items-center gap-1 rounded-md border border-signal-500/30 bg-signal-950 px-2 py-1 font-mono text-signal-300 transition hover:border-signal-400 hover:text-signal-200"
+              >
+                <span>{gatewayHost}</span>
+                <ExternalLink size={11} />
+              </a>
             )}
           </p>
         </div>

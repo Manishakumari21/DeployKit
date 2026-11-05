@@ -21,3 +21,19 @@ export function shortRepo(url: string) {
     return url;
   }
 }
+
+export function formatTrigger(trigger: string): string {
+  switch (trigger) {
+    case "github_pull_request":
+      return "Pull Request";
+    case "github_push":
+      return "GitHub Push";
+    case "rollback":
+      return "Rollback";
+    case "manual":
+      return "Manual";
+    default:
+      return trigger;
+  }
+}
+

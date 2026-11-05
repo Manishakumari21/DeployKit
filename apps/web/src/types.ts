@@ -4,6 +4,11 @@ export type Project = {
   repository_url: string;
   branch: string;
   created_at: string;
+  parent_project_id?: string | null;
+  pr_number?: number | null;
+  is_preview?: boolean;
+  auto_deploy?: boolean;
+  preview_deployments_enabled?: boolean;
 };
 
 export type AuthUser = {
@@ -81,7 +86,7 @@ export type ApiDeployment = {
   id: string;
   project_id: string;
   status: DeploymentStatus;
-  trigger: "manual" | "github_push" | "rollback";
+  trigger: "manual" | "github_push" | "github_pull_request" | "rollback";
   branch: string;
   commit_sha: string | null;
   image_repository: string | null;
@@ -157,7 +162,7 @@ export type ProjectEvent = {
   created_at: string;
   branch: string;
   commit_sha: string | null;
-  trigger: "manual" | "github_push" | "rollback";
+  trigger: "manual" | "github_push" | "github_pull_request" | "rollback";
 };
 
 export type IncidentKind =

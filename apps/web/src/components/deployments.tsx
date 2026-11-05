@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { timeAgo } from "../lib/format";
+import { formatTrigger, timeAgo } from "../lib/format";
 import { cancelDeployment as apiCancelDeployment } from "../lib/api";
 import { isCancellableStatus, type ApiDeployment, type DeploymentEvent } from "../types";
 import { useDeploymentMonitor } from "../hooks/useDeployments";
@@ -63,7 +63,7 @@ export function DeploymentRow({
       <span className="flex flex-wrap items-center gap-2">
         <StatusPill status={deployment.status} />
         <span className="font-mono text-[11px] text-fog-500">
-          {shortSha(deployment.commit_sha)} · {deployment.branch} · {deployment.trigger}
+          {shortSha(deployment.commit_sha)} · {deployment.branch} · {formatTrigger(deployment.trigger)}
         </span>
         <span className="ml-auto font-mono text-[11px] text-fog-500 tabular">{timeAgo(deployment.created_at)}</span>
       </span>

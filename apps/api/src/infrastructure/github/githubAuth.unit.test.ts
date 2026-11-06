@@ -26,7 +26,7 @@ test("creates a well-formed RS256 JWT", () => {
   assert.equal(header.alg, "RS256");
   const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString());
   assert.equal(payload.iss, "12345");
-  assert.ok(payload.exp - payload.iat <= 660);
+  assert.equal(payload.exp - payload.iat, 600);
 });
 
 test("rejects a non-RSA private key", () => {

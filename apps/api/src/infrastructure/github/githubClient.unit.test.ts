@@ -87,3 +87,44 @@ test("lists installation repositories and drops malformed entries", async () => 
     __clearGitHubAuthCache();
   }
 });
+
+test("repository listing passes a validated page and reports completion", async () => {
+  setEnv();
+  __clearGitHubAuthCache();
+  const original = globalThis.fetch;
+  const urls: string[] = [];
+  (globalThis as { fetch: typeof fetch }).fetch = (async (...args: Parameters<typeof fetch>) => {
+    const url = String(args[0]);
+    if (url.endsWith("/access_tokens")) {
+      return new Response(
+        JSON.stringify({
+          token: "installation-token",
+          expires_at: new Date(Date.now() + 3600_000).toISOString(),
+        }),
+        { status: 201 }
+      );
+    }
+    urls.push(url);
+    return new Response(
+      JSON.stringify({
+        total_count: 150,
+        repositories: Array.from({ length: 50 }, (_, i) => ({
+          id: i + 1,
+          full_name: `acme/repo${i}`,
+          name: `repo${i}`,
+          html_url: `https://github.com/acme/repo${i}`,
+        })),
+      }),
+      { status: 200 }
+    );
+  }) as typeof fetch;
+  try {
+    const result = await listInstallationRepositories("123", 2);
+    assert.ok(urls.some((u) => u.includes("page=2")), "expected page=2 on the list URL");
+    assert.equal(result.repositories.length, 50);
+    assert.equal(result.truncated, false);
+  } finally {
+    globalThis.fetch = original;
+    __clearGitHubAuthCache();
+  }
+});

@@ -151,12 +151,16 @@ export async function getGitHubAppInfo(): Promise<GitHubAppInfo> {
 }
 
 export async function listInstallationRepositories(
-  installationId: string
+  installationId: string,
+  page = 1
 ): Promise<GitHubRepositoryList> {
   const config = getGitHubConfig();
   const token = await getInstallationToken(installationId);
+  // page defaults to 1 so existing callers keep today's behavior exactly;
+  // only integers >= 1 should ever reach this query.
+  const pageQuery = page > 1 ? `&page=${page}` : "";
   const body = await githubJson<{ total_count?: unknown; repositories?: unknown }>(
-    `${config.apiBaseUrl}/installation/repositories?per_page=100`,
+    `${config.apiBaseUrl}/installation/repositories?per_page=100${pageQuery}`,
     {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -176,7 +180,7 @@ export async function listInstallationRepositories(
     typeof body.total_count === "number" && Number.isFinite(body.total_count)
       ? body.total_count
       : repositories.length;
-  return { repositories, truncated: totalCount > repositories.length };
+  return { repositories, truncated: totalCount > (page - 1) * 100 + repositories.length };
 }
 
 export async function getRepository(

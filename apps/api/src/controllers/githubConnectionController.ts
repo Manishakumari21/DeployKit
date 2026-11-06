@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { z } from "zod";
 import { getAllowedOrigins } from "../config/corsConfig.js";
 import {
   getGitHubConnection,
@@ -119,12 +120,19 @@ export async function getGitHubConnectionController(
   }
 }
 
+const pageSchema = z.coerce.number().int().min(1).max(50);
+
 export async function listGitHubRepositoriesController(
-  _req: Request,
+  req: Request,
   res: Response
 ): Promise<void> {
+  const page = pageSchema.safeParse(req.query.page ?? 1);
+  if (!page.success) {
+    res.status(400).json({ error: "Invalid page" });
+    return;
+  }
   try {
-    res.json(await listGitHubRepositories());
+    res.json(await listGitHubRepositories(page.data));
   } catch (error) {
     if (error instanceof GitHubConnectionError) {
       res.status(error.status).json({ error: error.message, code: error.code });

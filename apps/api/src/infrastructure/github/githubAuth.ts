@@ -3,10 +3,12 @@ import { getGitHubConfig } from "./githubConfig.js";
 
 export class GitHubAuthError extends Error {
   readonly code: string;
-  constructor(code: string, message: string) {
+  readonly status: number;
+  constructor(code: string, message: string, status = 500) {
     super(message);
     this.name = "GitHubAuthError";
     this.code = code;
+    this.status = status;
   }
 }
 
@@ -35,21 +37,23 @@ export function createGitHubAppJwt(
   try {
     key = createPrivateKey(privateKeyPem);
   } catch {
-    throw new GitHubAuthError("INVALID_PRIVATE_KEY", "Invalid GitHub App private key");
+    throw new GitHubAuthError("INVALID_PRIVATE_KEY", "Invalid GitHub App private key", 400);
   }
   if (key.asymmetricKeyType !== "rsa") {
-    throw new GitHubAuthError("INVALID_PRIVATE_KEY", "GitHub App private key must be RSA");
+    throw new GitHubAuthError("INVALID_PRIVATE_KEY", "GitHub App private key must be RSA", 400);
   }
   const header = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+  const iat = nowSec - 60;
+  const exp = iat + 600; // GitHub requires exp - iat <= 10 minutes (600 seconds)
   const payload = base64url(
-    JSON.stringify({ iat: nowSec - 60, exp: nowSec + 600, iss: appId })
+    JSON.stringify({ iat, exp, iss: appId })
   );
   const data = `${header}.${payload}`;
   let signature: Buffer;
   try {
     signature = sign("sha256", Buffer.from(data), key);
   } catch {
-    throw new GitHubAuthError("JWT_SIGN_FAILED", "Failed to sign GitHub App JWT");
+    throw new GitHubAuthError("JWT_SIGN_FAILED", "Failed to sign GitHub App JWT", 500);
   }
   return `${data}.${base64url(signature)}`;
 }
@@ -75,7 +79,7 @@ async function requestInstallationToken(
 ): Promise<{ token: string; expiresAt: number }> {
   const normalizedId = installationId.trim();
   if (!/^\d{1,20}$/.test(normalizedId)) {
-    throw new GitHubAuthError("INVALID_INSTALLATION_ID", "Invalid installation ID");
+    throw new GitHubAuthError("INVALID_INSTALLATION_ID", "Invalid installation ID", 400);
   }
   const url = `${apiBaseUrl}/app/installations/${normalizedId}/access_tokens`;
   let res: Response;
@@ -95,39 +99,40 @@ async function requestInstallationToken(
       10_000
     );
   } catch (error) {
-    throw new GitHubAuthError("TOKEN_REQUEST_FAILED", error instanceof Error ? "GitHub token request failed" : "GitHub token request failed");
+    throw new GitHubAuthError("TOKEN_REQUEST_FAILED", error instanceof Error ? "GitHub token request failed" : "GitHub token request failed", 502);
   }
   if (res.status === 401 || res.status === 403) {
-    throw new GitHubAuthError("INSTALLATION_AUTH_FAILED", "GitHub installation not authorized");
+    throw new GitHubAuthError("INSTALLATION_AUTH_FAILED", "GitHub installation not authorized", res.status);
   }
   if (res.status === 404) {
-    throw new GitHubAuthError("INSTALLATION_NOT_FOUND", "GitHub installation not found");
+    throw new GitHubAuthError("INSTALLATION_NOT_FOUND", "GitHub installation not found", 404);
   }
   if (res.status === 429) {
-    throw new GitHubAuthError("RATE_LIMITED", "GitHub API rate limited");
+    throw new GitHubAuthError("RATE_LIMITED", "GitHub API rate limited", 429);
   }
   if (!res.ok) {
-    throw new GitHubAuthError("TOKEN_REQUEST_FAILED", `GitHub token request failed (${res.status})`);
+    const status = res.status >= 500 ? res.status : 502;
+    throw new GitHubAuthError("TOKEN_REQUEST_FAILED", `GitHub token request failed (${res.status})`, status);
   }
   const text = await res.text();
   if (text.length > 64 * 1024) {
-    throw new GitHubAuthError("TOKEN_RESPONSE_TOO_LARGE", "GitHub token response too large");
+    throw new GitHubAuthError("TOKEN_RESPONSE_TOO_LARGE", "GitHub token response too large", 502);
   }
   let body: { token?: unknown; expires_at?: unknown };
   try {
     body = JSON.parse(text);
   } catch {
-    throw new GitHubAuthError("TOKEN_RESPONSE_INVALID", "Invalid GitHub token response");
+    throw new GitHubAuthError("TOKEN_RESPONSE_INVALID", "Invalid GitHub token response", 502);
   }
   if (typeof body.token !== "string" || !body.token) {
-    throw new GitHubAuthError("TOKEN_RESPONSE_INVALID", "Invalid GitHub token response");
+    throw new GitHubAuthError("TOKEN_RESPONSE_INVALID", "Invalid GitHub token response", 502);
   }
   const expiresAt =
     typeof body.expires_at === "string"
       ? Date.parse(body.expires_at)
       : Date.now() + 60 * 60 * 1000;
   if (!Number.isSafeInteger(expiresAt)) {
-    throw new GitHubAuthError("TOKEN_RESPONSE_INVALID", "Invalid token expiry");
+    throw new GitHubAuthError("TOKEN_RESPONSE_INVALID", "Invalid token expiry", 502);
   }
   return { token: body.token, expiresAt };
 }

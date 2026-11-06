@@ -2,8 +2,10 @@ import pool from "../db/database.js";
 import {
   getGitHubAppInfo,
   listInstallationRepositories,
+  GitHubApiError,
   type GitHubRepository,
 } from "../infrastructure/github/githubClient.js";
+import { GitHubAuthError } from "../infrastructure/github/githubAuth.js";
 import { isGitHubConfigured } from "../infrastructure/github/githubConfig.js";
 import { createGitHubState } from "../infrastructure/github/githubState.js";
 
@@ -71,7 +73,7 @@ export async function getGitHubConnection(
   }
 }
 
-export async function listGitHubRepositories(): Promise<GitHubRepositoryResponse> {
+export async function listGitHubRepositories(page = 1): Promise<GitHubRepositoryResponse> {
   if (!isGitHubConfigured()) {
     throw new GitHubConnectionError(
       "GITHUB_NOT_CONFIGURED",
@@ -92,19 +94,38 @@ export async function listGitHubRepositories(): Promise<GitHubRepositoryResponse
   const repositories: ConnectedGitHubRepository[] = [];
   let truncated = false;
   let failed = 0;
+  let lastError: unknown = null;
   for (const row of installations.rows) {
     const installationId = String(row.github_installation_id);
     try {
-      const result = await listInstallationRepositories(installationId);
+      const result = await listInstallationRepositories(installationId, page);
       repositories.push(
         ...result.repositories.map((repo) => ({ ...repo, installationId }))
       );
       truncated = truncated || result.truncated;
-    } catch {
+    } catch (error) {
       failed += 1;
+      lastError = error;
+      console.error(`Failed to list repositories for installation ${installationId}:`, error);
     }
   }
   if (repositories.length === 0) {
+    if (failed > 0 && failed === installations.rowCount) {
+      if (lastError instanceof GitHubAuthError) {
+        throw new GitHubConnectionError(
+          lastError.code,
+          `GitHub authentication failed: ${lastError.message}`,
+          lastError.status
+        );
+      }
+      if (lastError instanceof GitHubApiError) {
+        throw new GitHubConnectionError(
+          lastError.code,
+          lastError.message,
+          lastError.status ?? 502
+        );
+      }
+    }
     throw new GitHubConnectionError(
       "GITHUB_NO_REPOSITORIES",
       failed > 0

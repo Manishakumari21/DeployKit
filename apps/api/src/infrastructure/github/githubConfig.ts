@@ -10,18 +10,38 @@ export interface GitHubConfig {
 
 function read(name: string): string | undefined {
   const raw = process.env[name];
-  if (raw === undefined || raw === "") return undefined;
-  return raw;
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (trimmed === "") return undefined;
+  return trimmed;
 }
 
-function normalizePrivateKey(raw: string): string {
-  const withNewlines = raw.includes("\\n") ? raw.replace(/\\n/g, "\n") : raw;
-  return withNewlines.trim();
+export function normalizePrivateKey(raw: string): string {
+  let trimmed = raw.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    trimmed = trimmed.slice(1, -1).trim();
+  }
+  let key = trimmed.includes("\\n") ? trimmed.replace(/\\n/g, "\n") : trimmed;
+  if (!key.includes("-----BEGIN")) {
+    try {
+      const decoded = Buffer.from(key, "base64").toString("utf8");
+      if (decoded.includes("-----BEGIN")) {
+        key = decoded;
+      }
+    } catch {
+      // not base64, leave key as is
+    }
+  }
+  return key.trim();
 }
 
 export function getGitHubConfig(): GitHubConfig {
   const appId = read("GITHUB_APP_ID");
-  const privateKeyRaw = read("GITHUB_APP_PRIVATE_KEY");
+  const privateKeyRaw =
+    read("GITHUB_APP_PRIVATE_KEY") ?? read("GITHUB_APP_PRIVATE_KEY_BASE64");
   const webhookSecret = read("GITHUB_WEBHOOK_SECRET");
   if (!appId) throw new Error("Missing required env var GITHUB_APP_ID");
   if (!privateKeyRaw)
@@ -34,7 +54,7 @@ export function getGitHubConfig(): GitHubConfig {
     appId,
     privateKey: normalizePrivateKey(privateKeyRaw),
     webhookSecret,
-    apiBaseUrl: apiBaseUrl.replace(/\/$/, ""),
+    apiBaseUrl: apiBaseUrl.replace(/\/+$/, ""),
     defaultInstallationId: read("GITHUB_INSTALLATION_ID") ?? null,
   };
 }
@@ -48,7 +68,7 @@ export function getWebhookSecret(): string {
 export function isGitHubConfigured(): boolean {
   return Boolean(
     read("GITHUB_APP_ID") &&
-      read("GITHUB_APP_PRIVATE_KEY") &&
+      (read("GITHUB_APP_PRIVATE_KEY") || read("GITHUB_APP_PRIVATE_KEY_BASE64")) &&
       read("GITHUB_WEBHOOK_SECRET")
   );
 }

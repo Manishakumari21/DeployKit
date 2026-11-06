@@ -25,6 +25,7 @@ export type NavKey =
   | "deployments"
   | "releases"
   | "build"
+  | "github"
   | "events"
   | "incidents"
   | "domains"
@@ -207,6 +208,17 @@ export type GitHubConnection = {
   error: string | null;
 };
 
+export type GitHubLink = {
+  project_id: string;
+  linked: boolean;
+  auto_deploy?: boolean;
+  branch?: string | null;
+  repository_id?: string | null;
+  full_name?: string | null;
+  private?: boolean | null;
+  installation_id?: string | null;
+};
+
 export type GitHubRepository = {
   id: number;
   fullName: string;
@@ -228,5 +240,5 @@ export type GitHubRepositoriesResponse = {
 export type GitHubSelection = {
   installationId: string;
   repositoryFullName: string;
-  repositoryId: number;
+  repositoryId?: number;
 };

@@ -3,6 +3,7 @@ import { BuildConfigPanel } from "./components/BuildConfigPanel";
 import { DeploymentDetails, DeploymentList } from "./components/deployments";
 import { CommandBar } from "./components/CommandBar";
 import { EventsView } from "./components/EventsView";
+import { GitHubView } from "./components/GitHubView";
 import { IncidentsView } from "./components/IncidentsView";
 import { DomainsView, LogsView, SettingsView } from "./components/OpsViews";
 import { UsersView } from "./components/UsersView";
@@ -313,6 +314,23 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
               </p>
             </div>
             <BuildConfigPanel key={buildProject?.id ?? "none"} project={buildProject} onNotify={setToast} />
+          </div>
+        )}
+        {nav === "github" && (
+          <div className="dk-stagger flex flex-col gap-4">
+            <div>
+              <Eyebrow>Source control</Eyebrow>
+              <h1
+                className="mt-1 text-2xl font-bold tracking-tight text-balance text-white"
+                style={{ letterSpacing: "-0.02em" }}
+              >
+                GitHub integration
+              </h1>
+              <p className="mt-1 text-[13px] text-fog-500">
+                Connect your GitHub App to browse repositories and link them to DeployKit services for automatic push deployments.
+              </p>
+            </div>
+            <GitHubView projects={projects} onNotify={setToast} onProjectUpdate={load} />
           </div>
         )}
         {nav === "domains" && <DomainsView projectId={selectedProjectId} />}

@@ -10,6 +10,7 @@ import type {
   AuthUser,
   DeploymentEvent,
   GitHubConnection,
+  GitHubLink,
   GitHubRepositoriesResponse,
   GitHubSelection,
   Incident,
@@ -170,9 +171,26 @@ export function fetchGitHubConnection(signal?: AbortSignal): Promise<GitHubConne
 }
 
 export function fetchGitHubRepositories(
+  pageOrSignal?: number | AbortSignal,
   signal?: AbortSignal
 ): Promise<GitHubRepositoriesResponse> {
-  return request<GitHubRepositoriesResponse>("/github/repositories", { signal });
+  const page = typeof pageOrSignal === "number" ? pageOrSignal : 1;
+  const actualSignal = pageOrSignal instanceof AbortSignal ? pageOrSignal : signal;
+  return request<GitHubRepositoriesResponse>(
+    `/github/repositories?page=${encodeURIComponent(String(page))}`,
+    { signal: actualSignal }
+  );
+}
+
+export function fetchProjectGithubLink(
+  projectId: string,
+  signal?: AbortSignal
+): Promise<GitHubLink> {
+  return request<GitHubLink>(`/projects/${projectId}/github-link`, { signal });
+}
+
+export function unlinkProjectGithub(projectId: string): Promise<unknown> {
+  return request(`/projects/${projectId}/github-link`, { method: "DELETE" });
 }
 
 export function linkProjectGithub(

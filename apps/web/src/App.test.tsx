@@ -4,7 +4,15 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import App from "./App";
 import { useAuth } from "./hooks/useAuth";
-import { detectProject, fetchBuildConfig, fetchIncidents, fetchProjectMetrics } from "./lib/api";
+import {
+  detectProject,
+  fetchBuildConfig,
+  fetchGitHubConnection,
+  fetchGitHubRepositories,
+  fetchIncidents,
+  fetchProjectGithubLink,
+  fetchProjectMetrics,
+} from "./lib/api";
 import type { ProjectMetrics } from "./lib/api";
 import type { BuildConfig, DetectionResponse } from "./lib/buildConfig";
 import type { AuthUser } from "./types";
@@ -62,6 +70,9 @@ vi.mock("./lib/api", async (importOriginal) => {
     fetchIncidents: vi.fn(),
     acknowledgeIncident: vi.fn(),
     resolveIncident: vi.fn(),
+    fetchGitHubConnection: vi.fn(),
+    fetchGitHubRepositories: vi.fn(),
+    fetchProjectGithubLink: vi.fn(),
   };
 });
 
@@ -70,6 +81,9 @@ const fetchBuildConfigMock = vi.mocked(fetchBuildConfig);
 const fetchProjectMetricsMock = vi.mocked(fetchProjectMetrics);
 const detectProjectMock = vi.mocked(detectProject);
 const fetchIncidentsMock = vi.mocked(fetchIncidents);
+const fetchGitHubConnectionMock = vi.mocked(fetchGitHubConnection);
+const fetchGitHubRepositoriesMock = vi.mocked(fetchGitHubRepositories);
+const fetchProjectGithubLinkMock = vi.mocked(fetchProjectGithubLink);
 
 const user: AuthUser = {
   id: "user-1",
@@ -175,6 +189,21 @@ beforeEach(() => {
   fetchProjectMetricsMock.mockResolvedValue(metrics);
   detectProjectMock.mockResolvedValue(detection());
   fetchIncidentsMock.mockResolvedValue([]);
+  fetchGitHubConnectionMock.mockResolvedValue({
+    configured: true,
+    installUrl: "https://github.com/apps/deploykit/installations/new",
+    callbackUrl: "https://api.deploykit.local/api/github/callback",
+    error: null,
+  });
+  fetchGitHubRepositoriesMock.mockResolvedValue({
+    repositories: [],
+    truncated: false,
+    failed: 0,
+  });
+  fetchProjectGithubLinkMock.mockResolvedValue({
+    project_id: fixtures.project.id,
+    linked: false,
+  });
 });
 
 afterEach(() => {
@@ -243,5 +272,21 @@ describe("incidents navigation", () => {
       { status: "active", limit: 100 },
       expect.any(AbortSignal)
     );
+  });
+});
+
+describe("github navigation", () => {
+  test("opens the github integration view from the command bar", async () => {
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "web" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "GitHub" }));
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "GitHub integration" })
+    ).toBeTruthy();
+    expect(await screen.findByText("GitHub connection")).toBeTruthy();
+    expect(screen.getByText("Repositories")).toBeTruthy();
+    expect(screen.getByText("Linked services")).toBeTruthy();
   });
 });

@@ -69,6 +69,15 @@ export function ServiceHeader({
             <span className="rounded-md border border-edge bg-ink-950 px-2 py-1 font-mono text-fog-400">
               {project.branch} · {commit}
             </span>
+            {project.auto_deploy && (
+              <span
+                title="Continuous deployment enabled on push"
+                className="inline-flex items-center gap-1 rounded-md border border-signal-500/30 bg-signal-950/60 px-2 py-1 font-mono text-[11px] font-medium text-signal-300"
+              >
+                <span className="size-1.5 rounded-full bg-signal-400" />
+                auto-deploy
+              </span>
+            )}
             {live?.status === "active" && (
               <a
                 href={`http://${gatewayHost}`}

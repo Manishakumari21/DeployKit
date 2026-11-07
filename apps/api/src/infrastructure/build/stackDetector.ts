@@ -6,12 +6,13 @@ export type StackKind =
   | "node"
   | "python"
   | "rust"
+  | "go"
   | "static"
   | "needs-config";
 
 export type Confidence = "high" | "medium" | "low";
 
-export type Language = "dockerfile" | "node" | "python" | "rust" | "static" | "unknown";
+export type Language = "dockerfile" | "node" | "python" | "rust" | "go" | "static" | "unknown";
 
 export type Framework =
   | "vite"
@@ -759,6 +760,218 @@ function detectedNode(
   };
 }
 
+function detectGoEntrypoint(
+  workspace: string,
+  root: Set<string>
+): {
+  entrypoint: string | null;
+  multiple: boolean;
+  detail: string | null;
+  suggestions: DetectionSuggestion[];
+} {
+  const rootGoFiles = [...root].filter((f) => f.endsWith(".go"));
+  let rootHasMain = false;
+  for (const f of rootGoFiles) {
+    const content = readBounded(path.join(workspace, f), 4096) ?? "";
+    if (/^\s*package\s+main\b/m.test(content)) {
+      rootHasMain = true;
+      break;
+    }
+  }
+  if (rootHasMain) {
+    return { entrypoint: ".", multiple: false, detail: null, suggestions: [] };
+  }
+
+  const cmdDir = path.join(workspace, "cmd");
+  const cmdCandidates: string[] = [];
+  try {
+    const st = lstatSync(cmdDir);
+    if (st.isDirectory() && !st.isSymbolicLink()) {
+      for (const entry of readdirSync(cmdDir)) {
+        try {
+          const sub = path.join(cmdDir, entry);
+          if (lstatSync(sub).isDirectory() && !lstatSync(sub).isSymbolicLink()) {
+            cmdCandidates.push(`./cmd/${entry}`);
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+
+  if (cmdCandidates.length === 1) {
+    const ep = cmdCandidates[0];
+    return {
+      entrypoint: ep,
+      multiple: false,
+      detail: `Go entrypoint detected at ${ep}; smart Dockerfile generation available`,
+      suggestions: [
+        {
+          field: "buildCommand",
+          value: `go build -o /app/server ${ep}`,
+          basis: `Single entrypoint in ${ep}`,
+          confidence: "high",
+        },
+      ],
+    };
+  }
+
+  if (cmdCandidates.length > 1) {
+    return {
+      entrypoint: null,
+      multiple: true,
+      detail: `Multiple Go entrypoints detected under cmd/ (${cmdCandidates.sort().join(", ")}); set an explicit build command`,
+      suggestions: cmdCandidates.map((c) => ({
+        field: "buildCommand",
+        value: `go build -o /app/server ${c}`,
+        basis: `Candidate entrypoint ${c}`,
+        confidence: "medium",
+      })),
+    };
+  }
+
+  return {
+    entrypoint: null,
+    multiple: false,
+    detail: "Go module detected without a main package at root or under cmd/; set an explicit build command",
+    suggestions: [],
+  };
+}
+
+function detectRustTargets(
+  workspace: string
+): {
+  binaryName: string | null;
+  multiple: boolean;
+  isLibOnly: boolean;
+  detail: string | null;
+  suggestions: DetectionSuggestion[];
+} {
+  const content = readBounded(path.join(workspace, "Cargo.toml")) ?? "";
+  const nameMatch = content.match(/^name\s*=\s*["']([^"']+)["']/m);
+  const pkgName = nameMatch ? nameMatch[1].trim() : null;
+
+  const binMatches = [...content.matchAll(/\[\[bin\]\][\s\S]*?name\s*=\s*["']([^"']+)["']/g)].map((m) =>
+    m[1].trim()
+  );
+  if (binMatches.length > 1) {
+    return {
+      binaryName: null,
+      multiple: true,
+      isLibOnly: false,
+      detail: `Multiple Rust binary targets defined in Cargo.toml (${binMatches.join(", ")}); set an explicit start command`,
+      suggestions: binMatches.map((b) => ({
+        field: "startCommand",
+        value: `/app/${b}`,
+        basis: `Binary target ${b}`,
+        confidence: "medium",
+      })),
+    };
+  }
+  if (binMatches.length === 1) {
+    return {
+      binaryName: binMatches[0],
+      multiple: false,
+      isLibOnly: false,
+      detail: null,
+      suggestions: [
+        {
+          field: "startCommand",
+          value: `/app/${binMatches[0]}`,
+          basis: `Explicit binary target ${binMatches[0]}`,
+          confidence: "high",
+        },
+      ],
+    };
+  }
+
+  try {
+    const srcBin = path.join(workspace, "src", "bin");
+    if (lstatSync(srcBin).isDirectory()) {
+      const files = readdirSync(srcBin).filter((f) => f.endsWith(".rs"));
+      if (files.length > 1) {
+        return {
+          binaryName: null,
+          multiple: true,
+          isLibOnly: false,
+          detail: `Multiple Rust binaries found in src/bin/ (${files.join(", ")}); set an explicit start command`,
+          suggestions: files.map((f) => {
+            const b = f.replace(/\.rs$/, "");
+            return {
+              field: "startCommand",
+              value: `/app/${b}`,
+              basis: `Binary target in src/bin/${f}`,
+              confidence: "medium",
+            };
+          }),
+        };
+      }
+      if (files.length === 1) {
+        const b = files[0].replace(/\.rs$/, "");
+        return {
+          binaryName: b,
+          multiple: false,
+          isLibOnly: false,
+          detail: null,
+          suggestions: [
+            {
+              field: "startCommand",
+              value: `/app/${b}`,
+              basis: `Binary target in src/bin/${files[0]}`,
+              confidence: "high",
+            },
+          ],
+        };
+      }
+    }
+  } catch {}
+
+  const hasMain = isRegularFile(path.join(workspace, "src", "main.rs"));
+  if (hasMain && pkgName) {
+    return {
+      binaryName: pkgName,
+      multiple: false,
+      isLibOnly: false,
+      detail: null,
+      suggestions: [
+        {
+          field: "startCommand",
+          value: `/app/${pkgName}`,
+          basis: `Default package binary ${pkgName}`,
+          confidence: "high",
+        },
+      ],
+    };
+  }
+
+  const hasLib = isRegularFile(path.join(workspace, "src", "lib.rs"));
+  if (hasLib && !hasMain) {
+    return {
+      binaryName: null,
+      multiple: false,
+      isLibOnly: true,
+      detail: "Rust library crate detected without a binary target; explicit build configuration required",
+      suggestions: [],
+    };
+  }
+
+  return {
+    binaryName: pkgName,
+    multiple: false,
+    isLibOnly: false,
+    detail: null,
+    suggestions: pkgName
+      ? [
+          {
+            field: "startCommand",
+            value: `/app/${pkgName}`,
+            basis: `Default binary target ${pkgName}`,
+            confidence: "medium",
+          },
+        ]
+      : [],
+  };
+}
+
 export function detectStack(workspace: string): StackDetection {
   const root = new Set(rootEntries(workspace));
   const dockerfilePath = path.join(workspace, "Dockerfile");
@@ -777,6 +990,7 @@ export function detectStack(workspace: string): StackDetection {
     isRegularFile(path.join(workspace, name))
   );
   const hasCargoToml = isRegularFile(path.join(workspace, "Cargo.toml"));
+  const hasGoMod = isRegularFile(path.join(workspace, "go.mod"));
   const hasIndexHtml = isRegularFile(path.join(workspace, "index.html"));
 
   if (hasDockerfile) {
@@ -843,11 +1057,36 @@ export function detectStack(workspace: string): StackDetection {
       type: "marker" as const,
     }));
     const framework = detectPythonFramework(workspace, evidence);
+    const hasPoetryLock = isRegularFile(path.join(workspace, "poetry.lock"));
+    const hasPyproject = isRegularFile(path.join(workspace, "pyproject.toml"));
+    const hasRequirements = isRegularFile(path.join(workspace, "requirements.txt"));
+    const hasPipfile = isRegularFile(path.join(workspace, "Pipfile"));
+
+    let pm: string | null = null;
+    let detail = `Python application detected (${pythonMarkers[0]}) without a Dockerfile; explicit configuration required`;
+    let needsReview = true;
+
+    if (hasRequirements || hasPyproject) {
+      if (hasPoetryLock && hasPyproject) {
+        pm = "poetry";
+        detail = "Python application detected with Poetry (pyproject.toml + poetry.lock); smart Dockerfile generation available";
+        needsReview = false;
+      } else {
+        pm = "pip";
+        detail = `Python application detected (${hasRequirements ? "requirements.txt" : "pyproject.toml"}) without a Dockerfile; smart Dockerfile generation available`;
+        needsReview = false;
+      }
+    } else if (hasPipfile) {
+      pm = "pipenv";
+      detail = "Pipfile detected without requirements.txt; explicit build command or exported requirements.txt required";
+      needsReview = true;
+    }
+
     return {
       kind: "python",
       hasDockerfile: false,
-      packageManager: null,
-      detail: `Python application detected (${pythonMarkers[0]}) without a Dockerfile; explicit configuration required`,
+      packageManager: pm,
+      detail,
       language: "python",
       framework,
       buildCommand: null,
@@ -855,28 +1094,70 @@ export function detectStack(workspace: string): StackDetection {
       outputDirectory: null,
       evidence,
       suggestions: [],
-      confidence: framework !== "none" ? "medium" : "low",
-      needsReview: true,
+      confidence: needsReview ? "low" : framework !== "none" ? "high" : "medium",
+      needsReview,
     };
   }
 
   if (hasCargoToml) {
+    const targets = detectRustTargets(workspace);
+    const detail = targets.detail
+      ? targets.detail
+      : `Rust application detected (Cargo.toml${targets.binaryName ? `: ${targets.binaryName}` : ""}) without a Dockerfile; smart Dockerfile generation available`;
+    const isUncertain = targets.multiple || targets.isLibOnly || !targets.binaryName;
     return {
       kind: "rust",
       hasDockerfile: false,
       packageManager: "cargo",
-      detail:
-        "Rust application detected (Cargo.toml) without a Dockerfile; explicit configuration required",
+      detail,
       language: "rust",
       framework: "none",
       buildCommand: null,
-      startCommand: null,
+      startCommand: targets.binaryName ? `/app/${targets.binaryName}` : null,
       outputDirectory: null,
       evidence: [
         { file: "Cargo.toml", fact: "Cargo.toml present at the application root", type: "marker" },
       ],
-      suggestions: [],
-      confidence: "high",
+      suggestions: targets.suggestions,
+      confidence: isUncertain ? "low" : "high",
+      needsReview: true,
+    };
+  }
+
+  if (hasGoMod) {
+    const goModContent = readBounded(path.join(workspace, "go.mod")) ?? "";
+    const moduleMatch = goModContent.match(/^module\s+([^\s]+)/m);
+    const goVersionMatch = goModContent.match(/^go\s+([0-9]+(?:\.[0-9]+)?)/m);
+    const moduleName = moduleMatch ? moduleMatch[1] : null;
+    const goVersion = goVersionMatch ? goVersionMatch[1] : null;
+    const goEntrypoint = detectGoEntrypoint(workspace, root);
+    const evidence: DetectionEvidence[] = [
+      {
+        file: "go.mod",
+        fact: `go.mod present at the application root${moduleName ? ` (module ${moduleName})` : ""}${goVersion ? ` targeting Go ${goVersion}` : ""}`,
+        type: "marker",
+      },
+    ];
+    const detail = goEntrypoint.detail
+      ? `Go application detected (go.mod${moduleName ? `: ${moduleName}` : ""}): ${goEntrypoint.detail}`
+      : `Go application detected (go.mod${moduleName ? `: ${moduleName}` : ""}) without a Dockerfile; smart Dockerfile generation available`;
+    const isUncertain = goEntrypoint.multiple || !goEntrypoint.entrypoint;
+    return {
+      kind: "go",
+      hasDockerfile: false,
+      packageManager: "go",
+      detail,
+      language: "go",
+      framework: "none",
+      buildCommand:
+        goEntrypoint.entrypoint && goEntrypoint.entrypoint !== "."
+          ? `go build -ldflags="-w -s" -o /app/server ${goEntrypoint.entrypoint}`
+          : null,
+      startCommand: null,
+      outputDirectory: null,
+      evidence,
+      suggestions: goEntrypoint.suggestions,
+      confidence: isUncertain ? "low" : "high",
       needsReview: true,
     };
   }
@@ -903,6 +1184,6 @@ export function detectStack(workspace: string): StackDetection {
 
   throw new StackDetectorError(
     "PREFLIGHT_MISSING_INPUTS",
-    "No Dockerfile, package.json, Python project file, Cargo.toml, or index.html found at the application root"
+    "No Dockerfile, package.json, Python project file, Cargo.toml, go.mod, or index.html found at the application root"
   );
 }

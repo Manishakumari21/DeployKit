@@ -169,3 +169,16 @@ test("unreadable workspace fails the check without executing anything", () => {
     "PREFLIGHT_CHECK_FAILED"
   );
 });
+
+test("Go application with go.mod is detected as go stack", () => {
+  const dir = workspace({ "go.mod": "module github.com/example/server\n\ngo 1.22\n" });
+  try {
+    const result = detectStack(dir);
+    assert.equal(result.kind, "go");
+    assert.equal(result.language, "go");
+    assert.equal(result.hasDockerfile, false);
+    assert.ok(result.detail.includes("github.com/example/server"));
+  } finally {
+    cleanup(dir);
+  }
+});

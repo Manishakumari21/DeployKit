@@ -3,6 +3,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  realpath,
   rm,
 } from "node:fs/promises";
 import os from "node:os";
@@ -77,6 +78,7 @@ export interface BuildxBuildArgsInput {
   policy: BuildPolicy;
   push?: boolean;
   cacheRef?: string | null;
+  dockerfilePath?: string | null;
 }
 
 export const BUILD_CACHE_TAG = "buildcache";
@@ -177,6 +179,10 @@ export function buildBuildxArgs(input: BuildxBuildArgsInput): string[] {
     input.policy.networkEnabled ? "default" : "none"
   );
 
+  if (input.dockerfilePath) {
+    args.push("--file", input.dockerfilePath);
+  }
+
   if (input.push ?? false) {
     appendCacheArgs(args, input.cacheRef ?? null);
   }
@@ -216,10 +222,11 @@ async function getDirectorySize(
   return total;
 }
 
-async function assertBuildContext(
+export async function assertBuildContext(
   workspace: string,
-  maxBytes: number
-): Promise<void> {
+  maxBytes: number,
+  dockerfilePath?: string | null
+): Promise<string> {
   const resolvedWorkspace = path.resolve(workspace);
   const stat = await lstat(resolvedWorkspace);
 
@@ -227,30 +234,54 @@ async function assertBuildContext(
     throw new BuildExecutorError("INVALID_BUILD_CONTEXT", "Build context must be a directory");
   }
 
-  const dockerfile = path.join(
-    resolvedWorkspace,
-    "Dockerfile"
-  );
+  const rawDockerfile = dockerfilePath && dockerfilePath.trim().length > 0
+    ? dockerfilePath.trim()
+    : "Dockerfile";
 
-  let dockerfileStat;
+  const targetDockerfile = path.isAbsolute(rawDockerfile)
+    ? path.resolve(rawDockerfile)
+    : path.resolve(resolvedWorkspace, rawDockerfile);
 
-  try {
-    dockerfileStat = await lstat(dockerfile);
-  } catch {
-    throw new BuildExecutorError("DOCKERFILE_NOT_FOUND", "Repository does not contain a Dockerfile");
+  const rel = path.relative(resolvedWorkspace, targetDockerfile);
+  if (rel.startsWith("..") || path.isAbsolute(rel) || rel === "") {
+    throw new BuildExecutorError(
+      "INVALID_DOCKERFILE",
+      `Dockerfile must be inside the build context: ${rawDockerfile}`
+    );
   }
 
-  if (
-    !dockerfileStat.isFile() ||
-    dockerfileStat.isSymbolicLink()
-  ) {
+  let dockerfileStat;
+  try {
+    dockerfileStat = await lstat(targetDockerfile);
+  } catch {
+    throw new BuildExecutorError(
+      "DOCKERFILE_NOT_FOUND",
+      dockerfilePath
+        ? `Dockerfile not found at ${dockerfilePath}`
+        : "Repository does not contain a Dockerfile"
+    );
+  }
+
+  if (!dockerfileStat.isFile() || dockerfileStat.isSymbolicLink()) {
     throw new BuildExecutorError("INVALID_DOCKERFILE", "Dockerfile must be a regular file");
+  }
+
+  const realContext = await realpath(resolvedWorkspace);
+  const realTarget = await realpath(targetDockerfile);
+  const realRel = path.relative(realContext, realTarget);
+  if (realRel.startsWith("..") || path.isAbsolute(realRel) || realRel === "") {
+    throw new BuildExecutorError(
+      "INVALID_DOCKERFILE",
+      "Dockerfile must not escape the build context via symlinks"
+    );
   }
 
   await getDirectorySize(
     resolvedWorkspace,
     maxBytes
   );
+
+  return targetDockerfile;
 }
 
 async function runBuild(
@@ -400,9 +431,10 @@ export class BuildxBuildExecutor
       throw new BuildExecutorError("INVALID_BUILD_POLICY", "Build CPU limit must be positive");
     }
 
-    await assertBuildContext(
+    const validatedDockerfilePath = await assertBuildContext(
       request.workspace,
-      request.policy.maxBuildContextBytes
+      request.policy.maxBuildContextBytes,
+      request.dockerfilePath
     );
 
     const metadataDirectory = await mkdtemp(
@@ -433,7 +465,8 @@ export class BuildxBuildExecutor
           request,
           metadataFile,
           push,
-          cacheRef
+          cacheRef,
+          validatedDockerfilePath
         );
       } catch (error) {
         if (
@@ -449,7 +482,8 @@ export class BuildxBuildExecutor
             request,
             metadataFile,
             push,
-            null
+            null,
+            validatedDockerfilePath
           );
         }
         throw error;
@@ -482,9 +516,14 @@ export class BuildxBuildExecutor
     request: BuildRequest,
     metadataFile: string,
     push: boolean,
-    cacheRef: string | null
+    cacheRef: string | null,
+    validatedDockerfilePath?: string
   ): Promise<BuildResult> {
     const imageReference = `${repository}:${tag}`;
+
+    const dockerfilePath = request.dockerfilePath
+      ? (validatedDockerfilePath ?? request.dockerfilePath)
+      : null;
 
     const args = buildBuildxArgs({
       builder: this.builder,
@@ -493,6 +532,7 @@ export class BuildxBuildExecutor
       policy: request.policy,
       push,
       cacheRef,
+      dockerfilePath,
     }).map((arg) =>
       arg === "<metadata-file>" ? metadataFile : arg
     );

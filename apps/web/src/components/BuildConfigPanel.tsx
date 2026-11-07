@@ -1,6 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { AlertTriangle, CheckCircle2, RotateCcw, Save, Search } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Check,
+  FileCode,
+  RotateCcw,
+  Save,
+  Search,
+} from "lucide-react";
+import { getDockerfilePreview } from "../lib/dockerfilePreview";
 
 import {
   ApiError,
@@ -63,6 +75,8 @@ export function BuildConfigPanel({
   const [detecting, setDetecting] = useState(false);
   const [detection, setDetection] = useState<DetectionResponse | null>(null);
   const [detectError, setDetectError] = useState<string | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const [copied, setCopied] = useState(false);
   const loadAbort = useRef<AbortController | null>(null);
   const detectAbort = useRef<AbortController | null>(null);
 
@@ -438,13 +452,64 @@ export function BuildConfigPanel({
                 </Field>
 
                 {draft.builder !== "" && draft.builder !== "dockerfile" && (
-                  <p
+                  <div
                     role="status"
-                    className="rounded-lg border border-amber-900/60 bg-amber-950/30 px-3 py-2 text-[12px] text-amber-200 sm:col-span-2"
+                    className="flex flex-col gap-2 rounded-lg border border-signal-500/40 bg-signal-950/40 p-3 sm:col-span-2"
                   >
-                    {BUILDER_LABELS[draft.builder as keyof typeof BUILDER_LABELS]} is not executed
-                    by the deployment pipeline yet. Saving this configuration will not enable it.
-                  </p>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-[12px] font-medium text-signal-200">
+                        <CheckCircle2 size={14} className="text-signal-400 shrink-0" />
+                        <span>Smart Dockerfile generation enabled for {BUILDER_LABELS[draft.builder as keyof typeof BUILDER_LABELS]}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowPreview(!showPreview)}
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-signal-300 hover:text-signal-100 transition"
+                      >
+                        <FileCode size={13} />
+                        {showPreview ? "Hide Dockerfile preview" : "Preview generated Dockerfile"}
+                        {showPreview ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-fog-400">
+                      DeployKit will automatically build a secure, multi-stage container at deploy time without requiring a Dockerfile in your repository.
+                    </p>
+                    {showPreview && (
+                      <div className="mt-2 rounded-lg border border-edge bg-ink-950 p-2.5">
+                        <div className="flex items-center justify-between pb-2 border-b border-edge/60">
+                          <span className="font-mono text-[10px] text-fog-400 uppercase tracking-wider">
+                            Generated Dockerfile (.deploykit.generated.Dockerfile)
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const content = getDockerfilePreview(draft.builder, {
+                                buildCommand: draft.buildCommand,
+                                startCommand: draft.startCommand,
+                                outputDirectory: draft.outputDirectory,
+                                framework: detection?.detected?.framework,
+                              });
+                              navigator.clipboard.writeText(content);
+                              setCopied(true);
+                              setTimeout(() => setCopied(false), 2000);
+                            }}
+                            className="inline-flex items-center gap-1 text-[10px] text-fog-300 hover:text-white"
+                          >
+                            {copied ? <Check size={11} className="text-signal-400" /> : <Copy size={11} />}
+                            {copied ? "Copied" : "Copy"}
+                          </button>
+                        </div>
+                        <pre className="mt-2 max-h-60 overflow-y-auto font-mono text-[11px] leading-relaxed text-fog-200 select-all whitespace-pre">
+                          {getDockerfilePreview(draft.builder, {
+                            buildCommand: draft.buildCommand,
+                            startCommand: draft.startCommand,
+                            outputDirectory: draft.outputDirectory,
+                            framework: detection?.detected?.framework,
+                          })}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 {notice && (

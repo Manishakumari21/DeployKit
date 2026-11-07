@@ -1,4 +1,4 @@
-export const BUILDERS = ["dockerfile", "node", "python", "rust", "static"] as const;
+export const BUILDERS = ["dockerfile", "node", "python", "rust", "go", "static"] as const;
 export type Builder = (typeof BUILDERS)[number];
 
 export const BUILDER_LABELS: Record<Builder, string> = {
@@ -6,6 +6,7 @@ export const BUILDER_LABELS: Record<Builder, string> = {
   node: "Node.js",
   python: "Python",
   rust: "Rust",
+  go: "Go",
   static: "Static site",
 };
 

@@ -17,12 +17,29 @@ import {
   diskPressureLevel,
 } from "../infrastructure/registry/registryDiskGuard.js";
 import type { RegistryDiskUsage, DiskThresholds } from "../infrastructure/registry/registryDiskGuard.js";
-import { pruneRegistryImages } from "../infrastructure/registry/registryGarbageCollector.js";
+import { writeFileSync, existsSync } from "node:fs";
+import path from "node:path";
 import {
   detectStack,
   StackDetectorError,
 } from "../infrastructure/build/stackDetector.js";
+import {
+  getProjectBuildConfig,
+  validateBuildConfigAgainstWorkspace,
+  BuildConfigError,
+  type StoredBuildConfig,
+  type ValidatedBuildConfig,
+} from "../services/buildConfigService.js";
+import { generateDockerfileForStack } from "../infrastructure/build/dockerfileGenerator.js";
 import { recordDeploymentEvent } from "../deployments/deploymentEvents.js";
+
+export interface PreflightResult {
+  stack: string;
+  detail: string;
+  dockerfilePath: string | null;
+  generatedDockerfile: boolean;
+  effectiveWorkspace: string;
+}
 import {
   DockerRuntimeManager,
   RuntimeManagerError,
@@ -527,7 +544,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
             "info",
             `checkout complete at ${commitSha.slice(0, 12)}`
           );
-          await this.runPreflight(projectId, context.deploymentId, workspace, context.signal);
+          const preflight = await this.runPreflight(projectId, context.deploymentId, workspace, context.signal);
 
           const imageRepository = registryRepositoryForProject(registry, projectId);
           const imageTag = registryTagForDeployment(context.deploymentId, commitSha);
@@ -544,13 +561,14 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
           let build;
           try {
             build = await this.buildExecutor.build({
-              workspace,
+              workspace: preflight.effectiveWorkspace,
               imageRepository,
               imageTag,
               commitSha,
               policy,
               push: true,
               cacheTag: BUILD_CACHE_TAG,
+              dockerfilePath: preflight.dockerfilePath,
               signal: context.signal,
               onLog: (line) => {
                 if (buildLines.length < 500) buildLines.push(line);
@@ -741,7 +759,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         async ({ commitSha, workspace }) => {
           await this.assertNotCancelled(context.deploymentId, context.signal);
           await dlog(projectId, context.deploymentId, "git", "info", `checkout complete at ${commitSha.slice(0, 12)}`);
-          await this.runPreflight(projectId, context.deploymentId, workspace, context.signal);
+          const preflight = await this.runPreflight(projectId, context.deploymentId, workspace, context.signal);
           const policy = getBuildPolicy();
           const imageRepository = registry
             ? registryRepositoryForProject(registry, projectId)
@@ -770,13 +788,14 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
           let build;
           try {
             build = await this.buildExecutor.build({
-              workspace,
+              workspace: preflight.effectiveWorkspace,
               imageRepository,
               imageTag,
               commitSha,
               policy,
               push: registry !== null,
               cacheTag: registry ? BUILD_CACHE_TAG : undefined,
+              dockerfilePath: preflight.dockerfilePath,
               signal: context.signal,
               onLog: (line) => {
                 if (buildLines.length < 500) buildLines.push(line);
@@ -1021,7 +1040,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
     deploymentId: string,
     workspace: string,
     signal?: AbortSignal
-  ): Promise<void> {
+  ): Promise<PreflightResult> {
     await dlog(projectId, deploymentId, "build", "info", "preflight started");
     const emit = async (
       failed: boolean,
@@ -1058,24 +1077,151 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
         { retryable: false }
       );
     }
+    let storedConfig: StoredBuildConfig | null = null;
+    try {
+      storedConfig = await getProjectBuildConfig(projectId);
+    } catch (error) {
+      if (error instanceof BuildConfigError) {
+        if (error.code === "PROJECT_NOT_FOUND") {
+          storedConfig = null;
+        } else {
+          await fail(error.code, error.message);
+        }
+      }
+    }
+
+    let validatedConfig: ValidatedBuildConfig | null = null;
+    if (storedConfig?.config) {
+      try {
+        validatedConfig = validateBuildConfigAgainstWorkspace(workspace, storedConfig.config);
+      } catch (error) {
+        if (error instanceof BuildConfigError) {
+          await fail(error.code, error.message);
+        }
+        throw error;
+      }
+    }
+
+    const effectiveWorkspace = validatedConfig
+      ? validatedConfig.applicationRootAbsolute
+      : workspace;
+
     let detection;
     try {
-      detection = detectStack(workspace);
+      detection = detectStack(effectiveWorkspace);
     } catch (error) {
       if (error instanceof StackDetectorError) {
-        await fail(error.code, error.message);
+        await fail(error.code, error.message, { candidates: error.candidates });
       }
       throw error;
     }
-    if (detection.kind !== "dockerfile") {
-      await fail(
-        PIPELINE_ERROR_CODES.PREFLIGHT_NEEDS_CONFIG,
-        detection.detail,
-        { stack: detection.kind }
-      );
+
+    if (storedConfig?.config.builder === "dockerfile" || detection.kind === "dockerfile") {
+      const dockerfilePath =
+        validatedConfig?.dockerfileAbsolute ??
+        (existsSync(path.join(effectiveWorkspace, "Dockerfile"))
+          ? path.join(effectiveWorkspace, "Dockerfile")
+          : null);
+
+      const detail = detection.kind === "dockerfile" ? detection.detail : "Dockerfile-based application";
+      await dlog(projectId, deploymentId, "build", "info", `preflight passed: ${detail}`);
+      await emit(false, `Preflight passed: ${detail}`, { stack: "dockerfile" });
+      return {
+        stack: "dockerfile",
+        detail,
+        dockerfilePath,
+        generatedDockerfile: false,
+        effectiveWorkspace,
+      };
     }
-    await dlog(projectId, deploymentId, "build", "info", `preflight passed: ${detection.detail}`);
-    await emit(false, `Preflight passed: ${detection.detail}`, { stack: detection.kind });
+
+    const supportedStacks = new Set(["node", "python", "rust", "go", "static"]);
+    const effectiveBuilder = storedConfig?.config.builder ?? (supportedStacks.has(detection.kind) ? detection.kind : null);
+
+    if (effectiveBuilder) {
+      let needsConfigReason: string | null = null;
+
+      if (effectiveBuilder === "node") {
+        const hasStart = Boolean(
+          storedConfig?.config.startCommand ||
+          detection.startCommand ||
+          detection.framework !== "none"
+        );
+        if (!hasStart) {
+          needsConfigReason = "Node.js application requires a start command";
+        }
+      } else if (effectiveBuilder === "python") {
+        const hasManifest = detection.packageManager === "poetry" || detection.packageManager === "pip";
+        const hasCustomBuild = Boolean(storedConfig?.config.buildCommand);
+        if (!hasManifest && !hasCustomBuild) {
+          needsConfigReason = detection.detail || "Python application requires requirements.txt or an explicit build command";
+        }
+      } else if (effectiveBuilder === "rust") {
+        const hasStart = Boolean(storedConfig?.config.startCommand || detection.startCommand);
+        if (!hasStart) {
+          needsConfigReason = detection.detail || "Rust application with multiple binary targets requires a start command";
+        }
+      } else if (effectiveBuilder === "go") {
+        const hasBuild = Boolean(
+          storedConfig?.config.buildCommand ||
+          detection.buildCommand ||
+          (detection.language === "go" && !detection.detail.includes("multiple"))
+        );
+        if (!hasBuild) {
+          needsConfigReason = detection.detail || "Go application with multiple entrypoints requires a build command";
+        }
+      }
+
+      if (needsConfigReason) {
+        await fail(
+          PIPELINE_ERROR_CODES.PREFLIGHT_NEEDS_CONFIG,
+          needsConfigReason,
+          { stack: effectiveBuilder }
+        );
+      }
+
+      try {
+        const dockerfileContent = generateDockerfileForStack(
+          detection,
+          storedConfig?.config ?? null
+        );
+        const generatedPath = path.join(effectiveWorkspace, ".deploykit.generated.Dockerfile");
+        writeFileSync(generatedPath, dockerfileContent, "utf8");
+
+        await dlog(
+          projectId,
+          deploymentId,
+          "build",
+          "info",
+          `preflight passed: smart Dockerfile generated for ${effectiveBuilder} stack`
+        );
+        await emit(
+          false,
+          `Preflight passed: Generated Dockerfile for ${effectiveBuilder}`,
+          { stack: effectiveBuilder, generated: true }
+        );
+
+        return {
+          stack: effectiveBuilder,
+          detail: `Smart Dockerfile generated for ${effectiveBuilder}`,
+          dockerfilePath: generatedPath,
+          generatedDockerfile: true,
+          effectiveWorkspace,
+        };
+      } catch (genError) {
+        await fail(
+          PIPELINE_ERROR_CODES.PREFLIGHT_NEEDS_CONFIG,
+          `Failed to generate Dockerfile: ${genError instanceof Error ? genError.message : String(genError)}`,
+          { stack: effectiveBuilder }
+        );
+      }
+    }
+
+    await fail(
+      PIPELINE_ERROR_CODES.PREFLIGHT_NEEDS_CONFIG,
+      detection.detail,
+      { stack: detection.kind }
+    );
   }
 
   private async assertNotCancelled(deploymentId: string, signal?: AbortSignal): Promise<void> {

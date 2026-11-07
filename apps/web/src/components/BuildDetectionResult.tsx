@@ -105,6 +105,11 @@ export function DetectionResult({
             <Badge tone={confidenceTone(detection.detected.confidence)}>
               {detection.detected.confidence} confidence
             </Badge>
+            {detection.detected.config.builder === "dockerfile" ? (
+              <Badge tone="signal">Dockerfile detected</Badge>
+            ) : (
+              <Badge tone="signal">Smart Dockerfile generation: {detection.detected.config.builder}</Badge>
+            )}
             {detection.detected.needsReview && <Badge tone="amber">review needed</Badge>}
             <span className="font-mono text-[11px] text-fog-500">
               {detection.detected.language} · {detection.detected.framework}

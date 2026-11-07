@@ -18,6 +18,8 @@ export interface BuildRequest {
 
   cacheTag?: string | null;
 
+  dockerfilePath?: string | null;
+
   signal?: AbortSignal;
 
   onLog?: (line: string) => void;

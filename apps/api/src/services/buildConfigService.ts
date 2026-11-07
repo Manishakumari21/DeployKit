@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import pool from "../db/database.js";
 
-export const BUILDERS = ["dockerfile", "node", "python", "rust", "static"] as const;
+export const BUILDERS = ["dockerfile", "node", "python", "rust", "go", "static"] as const;
 export type Builder = (typeof BUILDERS)[number];
 
 export class BuildConfigError extends Error {

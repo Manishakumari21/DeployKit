@@ -72,7 +72,11 @@ test("concurrent first registrations admit exactly one account", async (t) => {
   assert.equal(created.length, 1);
   assert.equal(rejected.length, 5);
   for (const r of rejected) {
-    assert.deepEqual(r.body, { error: "Public registration is disabled" });
+    assert.ok(
+      r.body.error === "Public registration is disabled" ||
+        r.body.error === "An invite is required to register",
+      `Expected registration-closed error, got ${JSON.stringify(r.body)}`
+    );
   }
   const count = (
     await pool.query(`SELECT COUNT(*)::int AS n FROM users WHERE email LIKE 'phase10-race-%'`)

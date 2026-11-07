@@ -131,10 +131,22 @@ export async function registerController(req: Request, res: Response): Promise<v
     const hasUsers = await hasAnyUsers();
     if (!hasUsers) {
       // Fresh server: the very first account self-registers as admin.
-      const user = await createBootstrapUser({ email, password: parsed.data.password });
-      await clearEmailRateLimit("register", email);
-      res.status(201).json(user);
-      return;
+      try {
+        const user = await createBootstrapUser({ email, password: parsed.data.password });
+        await clearEmailRateLimit("register", email);
+        res.status(201).json(user);
+        return;
+      } catch (error) {
+        if (error instanceof UserError) {
+          const message =
+            error.code === "WEAK_PASSWORD"
+              ? "Password must be 12–72 characters."
+              : error.message;
+          res.status(error.status).json({ error: message });
+          return;
+        }
+        throw error;
+      }
     }
 
     // Invite-only afterwards: an open signup path must not exist, so a valid

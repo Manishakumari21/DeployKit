@@ -17,6 +17,7 @@ import {
   diskPressureLevel,
 } from "../infrastructure/registry/registryDiskGuard.js";
 import type { RegistryDiskUsage, DiskThresholds } from "../infrastructure/registry/registryDiskGuard.js";
+import { pruneRegistryImages } from "../infrastructure/registry/registryGarbageCollector.js";
 import { writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import {
@@ -1217,7 +1218,7 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
       }
     }
 
-    await fail(
+    return await fail(
       PIPELINE_ERROR_CODES.PREFLIGHT_NEEDS_CONFIG,
       detection.detail,
       { stack: detection.kind }

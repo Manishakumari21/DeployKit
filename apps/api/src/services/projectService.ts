@@ -169,6 +169,66 @@ export async function deleteProject(id: string) {
   return result.rows[0] ?? null;
 }
 
+export interface UpdateProjectInput {
+  name?: string;
+  branch?: string;
+}
+
+export async function updateProject(id: string, input: UpdateProjectInput) {
+  if (!UUID_PATTERN.test(id)) {
+    throw new ProjectError("INVALID_PROJECT_ID", "Invalid project id");
+  }
+
+  const updates: string[] = [];
+  const values: unknown[] = [];
+  let paramIndex = 1;
+
+  if (input.name !== undefined) {
+    const trimmed = typeof input.name === "string" ? input.name.trim() : "";
+    if (!trimmed || trimmed.length > 100) {
+      throw new ProjectError("INVALID_NAME", "Project name must be between 1 and 100 characters");
+    }
+    updates.push(`name = $${paramIndex++}`);
+    values.push(trimmed);
+  }
+
+  if (input.branch !== undefined) {
+    const trimmed = typeof input.branch === "string" ? input.branch.trim() : "";
+    try {
+      validateBranch(trimmed);
+    } catch (error) {
+      throw new ProjectError("INVALID_BRANCH", error instanceof Error ? error.message : "Invalid branch");
+    }
+    updates.push(`branch = $${paramIndex++}`);
+    values.push(trimmed);
+  }
+
+  if (updates.length === 0) {
+    const existing = await getProjectById(id);
+    if (!existing) {
+      throw new ProjectError("PROJECT_NOT_FOUND", "Project not found", 404);
+    }
+    return existing;
+  }
+
+  values.push(id);
+  const result = await pool.query(
+    `
+    UPDATE projects
+    SET ${updates.join(", ")}, updated_at = NOW()
+    WHERE id = $${paramIndex}
+    RETURNING *
+    `,
+    values
+  );
+
+  if (result.rows.length === 0) {
+    throw new ProjectError("PROJECT_NOT_FOUND", "Project not found", 404);
+  }
+
+  return result.rows[0];
+}
+
 export interface ProjectMembership {
   project_id: string;
   user_id: string;

@@ -343,7 +343,17 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
           />
         )}
         {nav === "settings" && (
-          <SettingsView project={featured} onNotify={setToast} />
+          <SettingsView
+            project={featured}
+            onNotify={setToast}
+            onProjectUpdate={load}
+            onProjectDelete={async (id) => {
+              await remove(id);
+              setStoredId(null);
+              localStorage.removeItem(SELECTED_KEY);
+              setNav("overview");
+            }}
+          />
         )}
 
         <footer className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-2 pb-4 font-mono text-[11px] text-fog-500">

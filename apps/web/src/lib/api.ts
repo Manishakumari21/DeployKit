@@ -18,6 +18,7 @@ import type {
   IncidentStatusFilter,
   Invite,
   Project,
+  ProjectEnvVar,
   ProjectEvent,
   RegistrationStatus,
   Release,
@@ -164,6 +165,50 @@ export async function deleteProject(id: string) {
   });
   const data = await json(res);
   if (!res.ok) throw new ApiError(data.error || `Request failed (${res.status})`, res.status);
+}
+
+export async function updateProject(
+  id: string,
+  input: { name?: string; branch?: string }
+): Promise<Project> {
+  return request<Project>(`/projects/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function fetchProjectEnvVars(projectId: string, signal?: AbortSignal): Promise<ProjectEnvVar[]> {
+  return request<ProjectEnvVar[]>(`/projects/${projectId}/env-vars`, { signal });
+}
+
+export async function createProjectEnvVar(
+  projectId: string,
+  input: { key: string; value: string; isSecret?: boolean }
+): Promise<ProjectEnvVar> {
+  return request<ProjectEnvVar>(`/projects/${projectId}/env-vars`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateProjectEnvVar(
+  projectId: string,
+  varId: string,
+  input: { key?: string; value?: string; isSecret?: boolean }
+): Promise<ProjectEnvVar> {
+  return request<ProjectEnvVar>(`/projects/${projectId}/env-vars/${varId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteProjectEnvVar(projectId: string, varId: string): Promise<void> {
+  await request<{ message: string }>(`/projects/${projectId}/env-vars/${varId}`, {
+    method: "DELETE",
+  });
 }
 
 export function fetchGitHubConnection(signal?: AbortSignal): Promise<GitHubConnection> {

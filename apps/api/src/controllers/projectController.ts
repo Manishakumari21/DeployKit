@@ -4,6 +4,7 @@ import {
   createProject,
   getProjectsForUser,
   getProjectById,
+  updateProject,
   deleteProject,
   ProjectError,
 } from "../services/projectService.js";
@@ -116,6 +117,36 @@ export async function deleteProjectController(
 
     return res.status(500).json({
       error: "Failed to delete project",
+    });
+  }
+}
+
+export async function updateProjectController(
+  req: Request,
+  res: Response
+) {
+  try {
+    const { name, branch } = req.body;
+    if (name === undefined && branch === undefined) {
+      return res.status(400).json({
+        error: "At least one of name or branch must be provided",
+      });
+    }
+
+    const updated = await updateProject(String(req.params.id), {
+      name,
+      branch,
+    });
+
+    return res.json(updated);
+  } catch (error) {
+    if (error instanceof ProjectError) {
+      return res.status(error.status).json({ error: error.message });
+    }
+    console.error("Update project error:", error instanceof Error ? redactForLog(error.message) : "Unknown error");
+
+    return res.status(500).json({
+      error: "Failed to update project",
     });
   }
 }

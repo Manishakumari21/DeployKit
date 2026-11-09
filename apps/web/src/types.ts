@@ -242,3 +242,13 @@ export type GitHubSelection = {
   repositoryFullName: string;
   repositoryId?: number;
 };
+
+export type ProjectEnvVar = {
+  id: string;
+  project_id: string;
+  key: string;
+  value: string;
+  is_secret: boolean;
+  created_at: string;
+  updated_at: string;
+};

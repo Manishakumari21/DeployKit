@@ -31,6 +31,7 @@ import {
   type StoredBuildConfig,
   type ValidatedBuildConfig,
 } from "../services/buildConfigService.js";
+import { getProjectRuntimeEnv } from "../services/envVarService.js";
 import { generateDockerfileForStack } from "../infrastructure/build/dockerfileGenerator.js";
 import { recordDeploymentEvent } from "../deployments/deploymentEvents.js";
 
@@ -1449,12 +1450,36 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
 
       await this.runtimeManager.remove(containerName).catch(() => undefined);
 
+      let projectEnv: Record<string, string>;
+      try {
+        projectEnv = await getProjectRuntimeEnv(input.projectId);
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : "Failed to load environment variables";
+        await dlog(input.projectId, input.deploymentId, "runtime", "error", `Environment configuration failed: ${errorMsg}`);
+        await withTransaction(async (client) => {
+          await recordDeploymentEvent(client, {
+            deploymentId: input.deploymentId,
+            eventType: "deployment.env_failed",
+            statusFrom: null,
+            statusTo: null,
+            message: `Failed to load environment variables: ${errorMsg}`,
+            metadata: { projectId: input.projectId },
+          });
+        }).catch(() => undefined);
+        throw new PipelineError(
+          PIPELINE_ERROR_CODES.RUNTIME_FAILED,
+          `Runtime environment configuration failed: ${errorMsg}`,
+          { retryable: false }
+        );
+      }
+
       const spec = {
         containerName,
         imageReference: imageRef,
         networkName: this.runtimeNetwork,
         containerPort,
         environment: {
+          ...projectEnv,
           PORT: String(containerPort),
           DEPLOYKIT_DEPLOYMENT_ID: input.deploymentId,
         },

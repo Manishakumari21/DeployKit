@@ -4,8 +4,15 @@ import {
   createProjectController,
   getProjectsController,
   getProjectController,
+  updateProjectController,
   deleteProjectController,
 } from "../controllers/projectController.js";
+import {
+  listEnvVarsController,
+  createEnvVarController,
+  updateEnvVarController,
+  deleteEnvVarController,
+} from "../controllers/envVarController.js";
 import {
   linkProjectGithubController,
   getProjectGithubLinkController,
@@ -38,8 +45,14 @@ router.post("/", authenticate, createProjectController);
 router.get("/", authenticate, getProjectsController);
 
 router.get("/:id", requireProjectAccess, getProjectController);
+router.patch("/:id", requireProjectAccess, updateProjectController);
 router.delete("/:id", requireProjectAccess, deleteProjectController);
 router.get("/:id/events", requireProjectAccess, getProjectEventsController);
+
+router.get("/:id/env-vars", requireProjectAccess, listEnvVarsController);
+router.post("/:id/env-vars", requireProjectAccess, createEnvVarController);
+router.patch("/:id/env-vars/:varId", requireProjectAccess, updateEnvVarController);
+router.delete("/:id/env-vars/:varId", requireProjectAccess, deleteEnvVarController);
 
 router.get("/:id/incidents", requireProjectAccess, listIncidentsController);
 router.get(

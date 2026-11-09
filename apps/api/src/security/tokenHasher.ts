@@ -41,6 +41,10 @@ export function tokenPepperSource(): TokenPepperSource {
   return resolvePepper().source;
 }
 
+export function getTokenPepperValue(): string {
+  return resolvePepper().value;
+}
+
 export function hashSecret(secret: string): string {
   return crypto
     .createHmac("sha256", resolvePepper().value)

@@ -2,10 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { timeAgo } from "../lib/format";
 import { useDeploymentLogs } from "../hooks/useDeploymentLogs";
 import { createDomain, deleteDomain, fetchDomains, requestDomainCertificate, verifyDomain } from "../lib/api";
-import type { ApiDeployment, CustomDomain, Project } from "../types";
-import { EmptyState, Eyebrow, Panel, PanelHead } from "./ui";
+import type { ApiDeployment, CustomDomain } from "../types";
+import { EmptyState, Panel, PanelHead } from "./ui";
 import { cx } from "../lib/format";
-import { BuildConfigPanel } from "./BuildConfigPanel";
 
 export function DomainsView({ projectId }: { projectId: string | null }) {
   const [domains, setDomains] = useState<CustomDomain[]>([]);
@@ -350,50 +349,4 @@ function FilterChip({ active, onClick, label }: { active: boolean; onClick: () =
   );
 }
 
-export function SettingsView({
-  project,
-  onNotify,
-}: {
-  project?: Project;
-  onNotify?: (message: string) => void;
-}) {
-  return (
-    <div className="grid gap-3 lg:grid-cols-2">
-      <BuildConfigPanel key={project?.id ?? "none"} project={project} onNotify={onNotify} />
-      <Panel>
-        <PanelHead title="Workspace" />
-        <div className="flex flex-col gap-3 p-4 text-[13px]">
-          <Eyebrow>Identity</Eyebrow>
-          <label className="flex flex-col gap-1 font-medium text-fog-200">
-            Workspace name
-            <input defaultValue="acme-prod" className="rounded-lg border border-edge bg-ink-950 px-3 py-2 text-fog-100 outline-none focus:border-signal-500" />
-          </label>
-          <label className="flex flex-col gap-1 font-medium text-fog-200">
-            Default branch
-            <input defaultValue="main" className="rounded-lg border border-edge bg-ink-950 px-3 py-2 font-mono text-fog-100 outline-none focus:border-signal-500" />
-          </label>
-        </div>
-      </Panel>
-      <Panel>
-        <PanelHead title="Environment" right={<span className="font-mono text-[11px] text-fog-500">.env · sealed</span>} />
-        <table className="w-full text-left font-mono text-[12px]">
-          <tbody className="divide-y divide-edge/70">
-            {[["DATABASE_URL", "postgres://•••"], ["REDIS_URL", "redis://•••"], ["API_TOKEN", "dk_••••••••"]].map(([k, v]) => (
-              <tr key={k}>
-                <td className="px-4 py-2.5 text-fog-100">{k}</td>
-                <td className="px-4 py-2.5 text-fog-500">{v}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Panel>
-      <Panel className="border-red-900/60 lg:col-span-2">
-        <PanelHead title="Danger zone" />
-        <div className="flex flex-wrap items-center justify-between gap-2 p-4 text-[13px]">
-          <p className="text-fog-400">Delete this workspace and all services. This cannot be undone.</p>
-          <button className="cursor-pointer rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 font-semibold text-red-200 transition hover:bg-red-950 active:scale-[0.98]">Delete workspace</button>
-        </div>
-      </Panel>
-    </div>
-  );
-}
+export { SettingsView, type SettingsViewProps } from "./SettingsView";

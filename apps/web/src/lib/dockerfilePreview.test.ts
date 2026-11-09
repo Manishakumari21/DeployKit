@@ -121,4 +121,42 @@ describe("dockerfilePreview", () => {
     expect(preview).toContain("EXPOSE 9090");
     expect(preview).not.toContain("EXPOSE 8080");
   });
+
+  test("generates preview safely formatting shell bracket commands vs JSON arrays", () => {
+    const bracketPreview = getDockerfilePreview("node", {
+      startCommand: "[ -f .env ] && node server.js",
+    });
+    expect(bracketPreview).toContain('CMD ["sh", "-c", "[ -f .env ] && node server.js"]');
+
+    const jsonPreview = getDockerfilePreview("node", {
+      startCommand: '["node", "server.js"]',
+    });
+    expect(jsonPreview).toContain('CMD ["node", "server.js"]');
+  });
+
+  test("generates preview sanitizing invalid ports and bounds", () => {
+    const zeroPreview = getDockerfilePreview("node", { port: 0 });
+    expect(zeroPreview).toContain("EXPOSE 3000");
+    expect(zeroPreview).toContain("PORT=3000");
+
+    const negativePreview = getDockerfilePreview("node", { port: -3000 });
+    expect(negativePreview).toContain("EXPOSE 3000");
+
+    const nanPreview = getDockerfilePreview("node", { port: NaN });
+    expect(nanPreview).toContain("EXPOSE 3000");
+  });
+
+  test("generates static preview quoting output directories with spaces", () => {
+    const spacePreview = getDockerfilePreview("static", { outputDirectory: "my build dist" });
+    expect(spacePreview).toContain('COPY ["my build dist", "."]');
+  });
+
+  test("generates preview collapsing command newlines into single line", () => {
+    const newlinePreview = getDockerfilePreview("node", {
+      buildCommand: "npm run build\nRUN echo injected",
+      startCommand: "npm start\nRUN echo injected",
+    });
+    expect(newlinePreview).toContain("RUN npm run build RUN echo injected");
+    expect(newlinePreview).toContain('CMD ["sh", "-c", "npm start RUN echo injected"]');
+  });
 });

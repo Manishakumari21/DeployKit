@@ -153,3 +153,50 @@ test("Go generator supports custom entrypoint in build command", () => {
   assert.ok(goCmdDf.includes("CGO_ENABLED=0 GOOS=linux go build -ldflags=\"-w -s\" -o /app/server ./cmd/server"));
   assert.ok(goCmdDf.includes("EXPOSE 9000"));
 });
+
+test("generator rejects commands containing newline characters", () => {
+  assert.throws(
+    () => generateNodeDockerfile({ buildCommand: "npm run build\nRUN echo injected" }),
+    /Command must not contain newline characters/
+  );
+  assert.throws(
+    () => generateNodeDockerfile({ startCommand: "npm start\nRUN echo injected" }),
+    /Command must not contain newline characters/
+  );
+  assert.throws(
+    () => generateStaticDockerfile({ outputDirectory: "dist\nRUN echo injected" }),
+    /Output directory must not contain newline characters/
+  );
+});
+
+test("generator safely formats shell bracket commands vs JSON arrays", () => {
+  const bracketDf = generateNodeDockerfile({
+    startCommand: "[ -f .env ] && node server.js",
+  });
+  assert.ok(bracketDf.includes('CMD ["sh", "-c", "[ -f .env ] && node server.js"]'));
+
+  const jsonDf = generateNodeDockerfile({
+    startCommand: '["node", "server.js"]',
+  });
+  assert.ok(jsonDf.includes('CMD ["node", "server.js"]'));
+});
+
+test("generator sanitizes invalid ports and bounds", () => {
+  const zeroDf = generateNodeDockerfile({ port: 0 });
+  assert.ok(zeroDf.includes("EXPOSE 3000"));
+  assert.ok(zeroDf.includes("PORT=3000"));
+
+  const negativeDf = generateNodeDockerfile({ port: -80 });
+  assert.ok(negativeDf.includes("EXPOSE 3000"));
+
+  const outOfRangeDf = generateNodeDockerfile({ port: 70000 });
+  assert.ok(outOfRangeDf.includes("EXPOSE 3000"));
+
+  const nanDf = generateNodeDockerfile({ port: NaN });
+  assert.ok(nanDf.includes("EXPOSE 3000"));
+});
+
+test("static generator quotes output directories with spaces", () => {
+  const spaceDf = generateStaticDockerfile({ outputDirectory: "my build dist" });
+  assert.ok(spaceDf.includes('COPY ["my build dist", "."]'));
+});

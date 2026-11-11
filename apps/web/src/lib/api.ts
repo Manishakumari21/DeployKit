@@ -18,6 +18,8 @@ import type {
   IncidentStatusFilter,
   Invite,
   Project,
+  ProjectAgent,
+  EnrolledAgentResponse,
   ProjectEnvVar,
   ProjectEvent,
   RegistrationStatus,
@@ -207,6 +209,40 @@ export async function updateProjectEnvVar(
 
 export async function deleteProjectEnvVar(projectId: string, varId: string): Promise<void> {
   await request<{ message: string }>(`/projects/${projectId}/env-vars/${varId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function revealProjectEnvVar(
+  projectId: string,
+  varId: string
+): Promise<{ id: string; key: string; value: string }> {
+  return request<{ id: string; key: string; value: string }>(
+    `/projects/${projectId}/env-vars/${varId}/reveal`
+  );
+}
+
+export function fetchProjectAgents(projectId: string, signal?: AbortSignal): Promise<ProjectAgent[]> {
+  return request<ProjectAgent[]>(`/projects/${projectId}/agents`, { signal });
+}
+
+export function enrollProjectAgent(
+  projectId: string,
+  name: string,
+  expiresAt?: string
+): Promise<EnrolledAgentResponse> {
+  return request<EnrolledAgentResponse>(`/projects/${projectId}/agents`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, expiresAt }),
+  });
+}
+
+export function revokeProjectAgent(
+  projectId: string,
+  agentId: string
+): Promise<{ message: string }> {
+  return request<{ message: string }>(`/projects/${projectId}/agents/${agentId}`, {
     method: "DELETE",
   });
 }

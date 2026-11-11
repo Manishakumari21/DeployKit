@@ -1,10 +1,11 @@
-import { AlertTriangle, Check, Edit2, Lock, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, Edit2, Eye, EyeOff, Lock, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import {
   createProjectEnvVar,
   deleteProject,
   deleteProjectEnvVar,
   fetchProjectEnvVars,
+  revealProjectEnvVar,
   updateProject,
   updateProjectEnvVar,
 } from "../lib/api";
@@ -61,6 +62,31 @@ export function SettingsView({
   const [deleteConfirmationText, setDeleteConfirmationText] = useState("");
   const [deletingWorkspace, setDeletingWorkspace] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // Secret reveal state
+  const [revealedSecrets, setRevealedSecrets] = useState<Record<string, string>>({});
+  const [revealingId, setRevealingId] = useState<string | null>(null);
+
+  const toggleRevealSecret = async (varId: string) => {
+    if (!project?.id) return;
+    if (revealedSecrets[varId]) {
+      setRevealedSecrets((prev) => {
+        const next = { ...prev };
+        delete next[varId];
+        return next;
+      });
+      return;
+    }
+    setRevealingId(varId);
+    try {
+      const res = await revealProjectEnvVar(project.id, varId);
+      setRevealedSecrets((prev) => ({ ...prev, [varId]: res.value }));
+    } catch (err) {
+      onNotify?.(err instanceof Error ? err.message : "Failed to reveal secret");
+    } finally {
+      setRevealingId(null);
+    }
+  };
 
   // Reset identity when project changes
   useEffect(() => {
@@ -513,10 +539,22 @@ export function SettingsView({
                         <td className="px-3 py-2.5 font-semibold text-fog-100">{v.key}</td>
                         <td className="px-3 py-2.5 text-fog-400">
                           {v.is_secret ? (
-                            <span className="flex items-center gap-1.5 text-fog-500">
-                              <Lock size={12} className="text-amber-400/80" />
-                              <span>{v.value}</span>
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="flex items-center gap-1.5 text-fog-400 font-mono text-[12px]">
+                                <Lock size={12} className="text-amber-400/80 shrink-0" />
+                                <span>{revealedSecrets[v.id] ?? v.value}</span>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => void toggleRevealSecret(v.id)}
+                                disabled={revealingId === v.id}
+                                title={revealedSecrets[v.id] ? "Hide secret" : "Reveal secret"}
+                                aria-label={revealedSecrets[v.id] ? "Hide secret" : "Reveal secret"}
+                                className="cursor-pointer rounded p-1 text-fog-500 hover:bg-ink-800 hover:text-white"
+                              >
+                                {revealedSecrets[v.id] ? <EyeOff size={13} /> : <Eye size={13} />}
+                              </button>
+                            </div>
                           ) : (
                             <span className="truncate">{v.value}</span>
                           )}

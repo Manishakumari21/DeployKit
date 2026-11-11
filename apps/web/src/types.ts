@@ -26,6 +26,7 @@ export type NavKey =
   | "releases"
   | "build"
   | "github"
+  | "servers"
   | "events"
   | "incidents"
   | "domains"
@@ -251,4 +252,27 @@ export type ProjectEnvVar = {
   is_secret: boolean;
   created_at: string;
   updated_at: string;
+};
+
+export type AgentStatus = "pending" | "online" | "offline" | "revoked";
+
+export type ProjectAgent = {
+  id: string;
+  projectId: string;
+  name: string;
+  status: AgentStatus;
+  lastHeartbeatAt: string | null;
+  version: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EnrolledAgentResponse = {
+  agent: ProjectAgent;
+  credential: {
+    id: string;
+    token: string;
+    expiresAt: string | null;
+  };
+  installCommand: string;
 };

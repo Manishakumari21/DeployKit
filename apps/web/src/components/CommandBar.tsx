@@ -27,6 +27,7 @@ const ITEMS: { key: NavKey; label: string; icon: typeof Server; group: string; a
   { key: "incidents", label: "Incidents", icon: AlertTriangle, group: "observe" },
   { key: "logs", label: "Logs", icon: ScrollText, group: "observe" },
   { key: "domains", label: "Domains", icon: Globe, group: "observe" },
+  { key: "servers", label: "Servers", icon: Server, group: "observe" },
   { key: "users", label: "Users", icon: Users, group: "observe", adminOnly: true },
   { key: "settings", label: "Settings", icon: Settings, group: "observe" },
 ];

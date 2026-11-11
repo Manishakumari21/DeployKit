@@ -1,91 +1,67 @@
-# DeployKit
+# DeployKit — Production-Grade Self-Hosted PaaS
 
-DeployKit is a self-hosted deployment platform that helps developers deploy applications from Git repositories.
+> **Your infrastructure. Your deployments. Your control.**
+> A reliable, secure, production-grade alternative to Vercel, Render, and Railway that installs on any Linux VPS or bare metal.
 
-The goal is to understand and build the core systems behind modern deployment platforms.
+[![Backend Tests](https://img.shields.io/badge/backend%20tests-804%20passed-2ea44f?style=flat-square)](docs/PRODUCTION_ACCEPTANCE_REPORT.md)
+[![Frontend Tests](https://img.shields.io/badge/frontend%20tests-113%20passed-2ea44f?style=flat-square)](docs/PRODUCTION_ACCEPTANCE_REPORT.md)
+[![Migrations](https://img.shields.io/badge/migrations-24%20reconciled-blue?style=flat-square)](database/migrations)
+[![Architecture](https://img.shields.io/badge/architecture-Docker%20%7C%20OpenResty%20%7C%20Postgres-blueviolet?style=flat-square)](docs/ARCHITECTURE.md)
+[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
-## Tech Stack
+---
 
-* TypeScript
-* Node.js
-* Express
-* React
-* PostgreSQL
-* Docker
-* Nginx
-* GitHub Actions
+## Quickstart (One-Line Automated Installation)
 
-## Architecture
-
-```text
-GitHub
-   ↓
-DeployKit
-   ↓
-Build
-   ↓
-Docker
-   ↓
-Application
-```
-
-## Project Structure
-
-```text
-deploykit/
-├── apps/
-│   ├── api/          # Backend API
-│   └── web/          # Web dashboard
-├── database/         # Database files
-├── docs/             # Documentation
-├── .env.example
-├── .gitignore
-└── README.md
-```
-
-## Development
-
-### API
+DeployKit installs on Ubuntu 22.04 / 24.04, Debian 12, or any modern Linux VPS:
 
 ```bash
-cd apps/api
-npm install
-npm run dev
+git clone https://github.com/Manishakumari21/DeployKit.git /opt/deploykit
+cd /opt/deploykit
+./install.sh
 ```
 
-API:
+The installer verifies Docker and ports, generates high-entropy cryptographic secrets, initializes PostgreSQL, reconciles all 24 schema migrations, launches the containerized stack, and outputs your Web Console URL (`http://<SERVER_IP>:8081`).
 
-```text
-http://localhost:3000
-```
+---
 
-Health check:
+## Why DeployKit?
 
-```bash
-curl http://localhost:3000/api/health
-```
+| Feature | DeployKit (Self-Hosted) | Vercel | Render | Railway |
+| :--- | :--- | :--- | :--- | :--- |
+| **Hosting Cost** | **$0 PaaS markup** (Your VPS flat rate) | Per-seat & bandwidth tier markups | Tiered compute markup | Usage-based execution markup |
+| **Data & Secret Sovereignty** | **100% on your server** (AES-256-GCM) | Proprietary cloud storage | Cloud infrastructure | Cloud infrastructure |
+| **Edge Server Nodes** | **Included** (Attach remote bare metal) | Enterprise edge network only | Single cloud region | Cloud regions only |
+| **Docker & Monorepo Support** | **Full Docker & BuildKit engine** | Function-first / Buildpacks | Standard container runtime | Standard container runtime |
+| **Zero-Downtime Blue/Green** | **Atomic OpenResty gateway reload** | Automated | Automated | Automated |
+| **Database Migrations** | **Advisory-locked schema runner** | External tool | Add-on | Add-on |
+| **Automated Backups** | **Non-blocking pg_dump custom format** | Managed add-on | Managed add-on | Managed add-on |
 
-Expected:
+---
 
-```json
-{
-  "status": "ok"
-}
-```
+## Documentation Suite
 
-## Goal
+- 🚀 **[Installation & VPS Setup Guide](docs/INSTALLATION.md)** — Step-by-step instructions, firewall rules, ports, and troubleshooting.
+- 🏗️ **[System Architecture & Internals](docs/ARCHITECTURE.md)** — Deep dive into API, Worker, OpenResty Gateway, Edge Agent, and database design.
+- ⚙️ **[Environment Variables Reference](docs/ENVIRONMENT_VARIABLES.md)** — Complete reference of every configuration key and production defaults.
+- 🌐 **[Edge Servers & Distributed Execution](docs/EDGE_SERVERS.md)** — How to enroll remote server nodes and run hybrid multi-node deployments.
+- 🛡️ **[Security Architecture & Hardening](docs/SECURITY.md)** — AES-256-GCM encryption, token peppers, Docker argv safety, and CSRF defense.
+- 💾 **[Backup & Disaster Recovery Guide](docs/BACKUP_AND_RESTORE.md)** — Non-destructive database backup, verification, and live restore procedures.
+- 📋 **[Production Acceptance Report](docs/PRODUCTION_ACCEPTANCE_REPORT.md)** — Verification results, test coverage, and sign-off audit.
 
-DeployKit will eventually handle:
+---
 
-* Git repository integration
-* Application builds
-* Docker deployments
-* Health checks
-* Logs
-* Rollbacks
-* CI/CD
-* Monitoring
-* Infrastructure automation
+## Core Capabilities
+
+- **Git-Driven Automated Deployments**: Connect repositories (GitHub App or HTTPS git clone) with automatic webhook-triggered builds.
+- **Durable Job Queue**: Postgres-backed concurrency queue (`SELECT FOR UPDATE SKIP LOCKED`) with timed fenced leases and crash recovery.
+- **Multi-Stack Polyglot Engine**: Automatic stack detection for Node.js, Python, Go, Rust, Ruby, PHP, Dockerfile, and static sites.
+- **Zero-Downtime Blue/Green Routing**: Launches new containers, validates HTTP health check, atomically reloads OpenResty gateway routes, and gracefully terminates superseded releases.
+- **Automated ACME TLS Certificates**: Built-in Let's Encrypt automated certificate issuance and renewals with zero manual intervention.
+- **Distributed Edge Computing**: Deploy applications across edge nodes or on-premise hardware using the lightweight edge agent.
+- **Production Observability**: Real-time deployment event streaming, bounded log buffering, health monitors, and automated incident detection.
+
+---
 
 ## Phase 03 — Deployment Engine
 

@@ -37,7 +37,7 @@ export function runCommand(
     const child = spawn(binary, args, {
       stdio: ["ignore", "pipe", "pipe"],
       shell: false,
-      ...(env ? { env } : {}),
+      env: env ? { ...process.env, ...env } : process.env,
     });
     let stdout = "";
     let stderr = "";

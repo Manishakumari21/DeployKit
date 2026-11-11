@@ -5,6 +5,7 @@ import {
   createProjectEnvVar,
   updateProjectEnvVar,
   deleteProjectEnvVar,
+  revealProjectEnvVar,
   EnvVarError,
 } from "../services/envVarService.js";
 
@@ -93,5 +94,21 @@ export async function deleteEnvVarController(req: Request, res: Response) {
     }
     console.error("Delete env var error:", error instanceof Error ? redactForLog(error.message) : "Unknown error");
     return res.status(500).json({ error: "Failed to delete environment variable" });
+  }
+}
+
+export async function revealEnvVarController(req: Request, res: Response) {
+  try {
+    const projectId = String(req.params.id);
+    const varId = String(req.params.varId);
+
+    const revealed = await revealProjectEnvVar(projectId, varId);
+    return res.json(revealed);
+  } catch (error) {
+    if (error instanceof EnvVarError) {
+      return res.status(error.status).json({ error: error.message, code: error.code });
+    }
+    console.error("Reveal env var error:", error instanceof Error ? redactForLog(error.message) : "Unknown error");
+    return res.status(500).json({ error: "Failed to reveal environment variable" });
   }
 }

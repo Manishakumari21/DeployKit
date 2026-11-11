@@ -278,3 +278,31 @@ export async function deleteProjectEnvVar(projectId: string, varId: string): Pro
 
   return (result.rowCount ?? 0) > 0;
 }
+
+export async function revealProjectEnvVar(
+  projectId: string,
+  varId: string
+): Promise<{ id: string; key: string; value: string }> {
+  validateId(projectId, "project id");
+  validateId(varId, "environment variable id");
+
+  const result = await pool.query(
+    `
+    SELECT id, key, value_encrypted
+    FROM project_env_vars
+    WHERE id = $1 AND project_id = $2
+    `,
+    [varId, projectId]
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    throw new EnvVarError("ENV_VAR_NOT_FOUND", "Environment variable not found", 404);
+  }
+
+  return {
+    id: row.id,
+    key: row.key,
+    value: decryptSecret(row.value_encrypted),
+  };
+}

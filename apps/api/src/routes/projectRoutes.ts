@@ -12,6 +12,7 @@ import {
   createEnvVarController,
   updateEnvVarController,
   deleteEnvVarController,
+  revealEnvVarController,
 } from "../controllers/envVarController.js";
 import {
   linkProjectGithubController,
@@ -32,6 +33,11 @@ import {
   resolveIncidentController,
 } from "../controllers/incidentController.js";
 import {
+  listProjectAgentsController,
+  enrollProjectAgentController,
+  revokeProjectAgentController,
+} from "../controllers/projectAgentController.js";
+import {
   authenticate,
   requireProjectAccess,
 } from "../middleware/auth.js";
@@ -51,6 +57,7 @@ router.get("/:id/events", requireProjectAccess, getProjectEventsController);
 
 router.get("/:id/env-vars", requireProjectAccess, listEnvVarsController);
 router.post("/:id/env-vars", requireProjectAccess, createEnvVarController);
+router.get("/:id/env-vars/:varId/reveal", requireProjectAccess, revealEnvVarController);
 router.patch("/:id/env-vars/:varId", requireProjectAccess, updateEnvVarController);
 router.delete("/:id/env-vars/:varId", requireProjectAccess, deleteEnvVarController);
 
@@ -79,5 +86,9 @@ router.post("/:id/detect", requireProjectAccess, detectProjectController);
 router.post("/:id/github-link", requireProjectAccess, linkProjectGithubController);
 router.get("/:id/github-link", requireProjectAccess, getProjectGithubLinkController);
 router.delete("/:id/github-link", requireProjectAccess, unlinkProjectGithubController);
+
+router.get("/:id/agents", requireProjectAccess, listProjectAgentsController);
+router.post("/:id/agents", requireProjectAccess, enrollProjectAgentController);
+router.delete("/:id/agents/:agentId", requireProjectAccess, revokeProjectAgentController);
 
 export default router;

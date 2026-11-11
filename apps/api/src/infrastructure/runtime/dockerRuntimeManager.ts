@@ -90,10 +90,10 @@ function validateSpecLabels(
   }
   return out;
 }
-export async function runDocker(binary: string, args: string[], timeoutMs = 30_000, signal?: AbortSignal): Promise<string> {
+export async function runDocker(binary: string, args: string[], timeoutMs = 30_000, signal?: AbortSignal, extraEnv?: NodeJS.ProcessEnv): Promise<string> {
   let result;
   try {
-    result = await runCommand(binary, args, timeoutMs, undefined, signal);
+    result = await runCommand(binary, args, timeoutMs, extraEnv, signal);
   } catch (e) {
     if (signal?.aborted) throw new RuntimeManagerError("RUNTIME_CANCELLED", "Docker operation was cancelled");
     throw new RuntimeManagerError("DOCKER_COMMAND_FAILED", e instanceof Error ? e.message : "Docker failed");
@@ -230,19 +230,21 @@ export class DockerRuntimeManager
       args.push("--publish", `${validateContainerPort(spec.containerPort)}`);
     }
 
+    const extraEnv: NodeJS.ProcessEnv = {};
     for (
       const [key, value]
       of Object.entries(spec.environment)
     ) {
       args.push(
         "--env",
-        `${key}=${value}`
+        key
       );
+      extraEnv[key] = value;
     }
 
     args.push(imageReference);
 
-    const rawId = await runDocker(this.dockerBinary, args);
+    const rawId = await runDocker(this.dockerBinary, args, 30_000, undefined, extraEnv);
     const containerId = rawId.trim().split(/\s+/)[0];
 
     if (!/^[0-9a-f]{64}$/i.test(containerId)) {

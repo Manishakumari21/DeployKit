@@ -1,4 +1,4 @@
-import { ExternalLink, GitBranch, GitPullRequest, Hammer, RotateCw } from "lucide-react";
+import { Cpu, DollarSign, ExternalLink, GitBranch, GitPullRequest, Hammer, RotateCw, ShieldCheck } from "lucide-react";
 import { shortRepo } from "../lib/format";
 import type { ApiDeployment, Project } from "../types";
 import { DeployBtn, Eyebrow, Panel, QuietBtn, StatusPill } from "./ui";
@@ -90,6 +90,29 @@ export function ServiceHeader({
                 <ExternalLink size={11} />
               </a>
             )}
+            {live?.image_digest && (
+              <span
+                title={`Immutable OCI Image Digest: ${live.image_digest}`}
+                className="inline-flex items-center gap-1 rounded-md border border-edge bg-ink-950 px-2 py-1 font-mono text-fog-300"
+              >
+                <ShieldCheck size={12} className="text-signal-400" />
+                <span>{live.image_digest.slice(0, 15)}…</span>
+              </span>
+            )}
+            <span
+              title="Self-hosted infrastructure: 512MB RAM, 1.0 vCPU, Read-Only root"
+              className="inline-flex items-center gap-1 rounded-md border border-edge bg-ink-950 px-2 py-1 font-mono text-[11px] text-fog-400"
+            >
+              <Cpu size={12} className="text-fog-500" />
+              <span>512M · 1 vCPU</span>
+            </span>
+            <span
+              title="Zero cloud markup — running on your own host"
+              className="inline-flex items-center gap-1 rounded-md border border-signal-500/20 bg-signal-950/40 px-2 py-1 font-mono text-[11px] text-signal-400"
+            >
+              <DollarSign size={11} />
+              <span>PaaS markup: $0</span>
+            </span>
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">

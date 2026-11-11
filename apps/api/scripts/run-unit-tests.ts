@@ -25,7 +25,16 @@ const mode = parseMode(process.argv.slice(2));
 mkdirSync(GATE_ROOT, { recursive: true });
 const GATE_DIR = mkdtempSync(path.join(GATE_ROOT, "run-"));
 
+import dotenv from "dotenv";
+dotenv.config();
+
 const childEnv: NodeJS.ProcessEnv = { ...process.env, DB_GATE_DIR: GATE_DIR };
+if (childEnv.DATABASE_URL && childEnv.DATABASE_URL.endsWith("/deploykit")) {
+  childEnv.DATABASE_URL = childEnv.DATABASE_URL.replace(/\/deploykit$/, "/deploykit_test");
+} else if (!childEnv.DATABASE_URL) {
+  childEnv.DATABASE_URL = "postgresql://deploykit:deploykit@localhost:5433/deploykit_test";
+}
+
 if (mode === "require-db") childEnv.REQUIRE_DB = "1";
 else delete childEnv.REQUIRE_DB;
 

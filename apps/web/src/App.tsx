@@ -5,7 +5,10 @@ import { CommandBar } from "./components/CommandBar";
 import { EventsView } from "./components/EventsView";
 import { GitHubView } from "./components/GitHubView";
 import { IncidentsView } from "./components/IncidentsView";
+import { LandingPage } from "./components/LandingPage";
+import { OnboardingChecklist } from "./components/OnboardingChecklist";
 import { DomainsView, LogsView, SettingsView } from "./components/OpsViews";
+import { ServersView } from "./components/ServersView";
 import { UsersView } from "./components/UsersView";
 import { LoginView } from "./components/LoginView";
 import { MetricsPanel } from "./components/MetricsPanel";
@@ -42,6 +45,13 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   const auth = useAuth();
+  const [showAuth, setShowAuth] = useState(() => {
+    return Boolean(
+      window.location.hash.includes("invite") ||
+        window.location.search.includes("auth") ||
+        window.location.search.includes("login")
+    );
+  });
 
   if (auth.status === "loading") {
     return (
@@ -56,9 +66,27 @@ export default function App() {
   }
 
   if (auth.status === "unauthenticated" || !auth.user) {
+    if (!showAuth) {
+      return (
+        <Shell>
+          <LandingPage
+            onGetStarted={() => setShowAuth(true)}
+            onSignIn={() => setShowAuth(true)}
+          />
+        </Shell>
+      );
+    }
     return (
       <Shell>
-        <LoginView busy={auth.busy} error={auth.error} onLogin={auth.login} onRegister={auth.register} />
+        <div className="relative">
+          <button
+            onClick={() => setShowAuth(false)}
+            className="absolute top-4 left-4 z-50 flex items-center gap-1.5 rounded-lg border border-edge bg-ink-900/90 px-3 py-1.5 text-[12px] font-medium text-fog-300 hover:text-white backdrop-blur shadow-sm cursor-pointer"
+          >
+            ← Back to product overview
+          </button>
+          <LoginView busy={auth.busy} error={auth.error} onLogin={auth.login} onRegister={auth.register} />
+        </div>
       </Shell>
     );
   }
@@ -212,6 +240,15 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
           <div className="dk-stagger flex flex-col gap-4">
             <ServiceHeader project={featured} live={live} creating={deploying} onDeploy={handleDeploy} onBuildConfig={() => setNav("build")} />
             {createError && <p role="alert" className="text-[13px] text-red-300">{createError}</p>}
+            <OnboardingChecklist
+              projects={projects}
+              deploymentCount={deployments.length}
+              onNewProject={() => {
+                setFormError("");
+                setModal(true);
+              }}
+              onNavigate={(tab) => setNav(tab)}
+            />
             <MetricsPanel projectId={selectedProjectId} />
             <div className="grid items-start gap-4 xl:grid-cols-2">
               <DeploymentList
@@ -334,6 +371,7 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
           </div>
         )}
         {nav === "domains" && <DomainsView projectId={selectedProjectId} />}
+        {nav === "servers" && <ServersView project={featured} onNotify={setToast} />}
         {nav === "users" && user.role === "admin" && <UsersView currentUserId={user.id} />}
         {nav === "logs" && (
           <LogsView

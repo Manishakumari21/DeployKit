@@ -9,8 +9,10 @@ const { Client } = pg;
 const MIGRATION_LOCK_ID = 4_217_311_902;
 const BASELINE_SCHEMA_HASH =
   "c29c363a046bcbbcb1145bf02a3b5aa2d0b1f54457b5ada1e85d45156acbbd01";
-const FULL_SCHEMA_HASH =
-  "3113e932a2c5a32c75c4669c2d69e50f847c718a0401b5c2a4b6aadb66cff9ba";
+const FULL_SCHEMA_HASHES = new Set([
+  "3113e932a2c5a32c75c4669c2d69e50f847c718a0401b5c2a4b6aadb66cff9ba",
+  "321be79fecc5397bd8dfa700d55b5d77e45fbc09730f5cd84cd2b3eb7277ec54",
+]);
 
 const BASELINE_MIGRATIONS = [
   "001_create_projects.sql",
@@ -33,6 +35,9 @@ const BASELINE_MIGRATIONS = [
   "018_edge_build_phase.sql",
   "020_project_build_config.sql",
   "021_incidents.sql",
+  "022_user_admin_invites.sql",
+  "023_preview_deployments.sql",
+  "024_project_env_vars.sql",
 ];
 
 const PENDING_MIGRATIONS = ["019_gateway_sync_queue.sql"];
@@ -280,7 +285,7 @@ async function main(): Promise<number> {
     const schemaState =
       schemaHash === BASELINE_SCHEMA_HASH
         ? "baseline"
-        : schemaHash === FULL_SCHEMA_HASH
+        : FULL_SCHEMA_HASHES.has(schemaHash)
           ? "full"
           : "unknown";
     if (schemaState === "unknown") {

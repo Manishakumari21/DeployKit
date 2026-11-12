@@ -112,10 +112,15 @@ check_port() {
   fi
 }
 
+RESOLVED_WEB_PORT=$($COMPOSE_CMD config 2>/dev/null | grep -A 5 'web:' | grep -E '\- ".*:[0-9]+:80"' | head -n1 | sed -E 's/.*:([0-9]+):80.*/\1/' || echo "")
+if [ -z "$RESOLVED_WEB_PORT" ]; then
+  RESOLVED_WEB_PORT=8081
+fi
+
 check_port 80 "HTTP Gateway"
 check_port 443 "HTTPS Gateway"
 check_port 3001 "API Service"
-check_port 8081 "Web Console"
+check_port "$RESOLVED_WEB_PORT" "Web Console"
 check_port 5433 "Postgres Port (Host Binding)"
 
 # ------------------------------------------------------------------------------
@@ -176,6 +181,13 @@ else
   fi
 fi
 
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck source=/dev/null
+  . "$ENV_FILE"
+  set +a
+fi
+
 # Ensure necessary host directories exist
 mkdir -p "$REPO_ROOT/backups"
 mkdir -p "$REPO_ROOT/ops/gateway/routes"
@@ -216,8 +228,9 @@ done
 
 # Reconcile & execute migrations
 log_info "Applying database migrations..."
+HOST_DB_URL="postgresql://${POSTGRES_USER:-deploykit}:${POSTGRES_PASSWORD:-deploykit}@127.0.0.1:5433/${POSTGRES_DB:-deploykit}"
 if command -v npm >/dev/null 2>&1 && [ -f "$REPO_ROOT/apps/api/package.json" ]; then
-  (cd "$REPO_ROOT/apps/api" && npm run db:migrate)
+  (cd "$REPO_ROOT/apps/api" && DATABASE_URL="${HOST_DB_URL}" npm run db:migrate)
   log_success "Database migrations reconciled and applied successfully."
 else
   # Fallback: run migration through temporary container
@@ -258,12 +271,12 @@ log_success "DeployKit is successfully installed and running!"
 echo "======================================================================"
 echo ""
 echo -e "${BOLD}Access the Web Console:${NC}"
-echo -e "  Direct Web Console:  ${CYAN}http://${SERVER_IP}:8081${NC} (or http://localhost:8081)"
+echo -e "  Direct Web Console:  ${CYAN}http://${SERVER_IP}:${RESOLVED_WEB_PORT}${NC} (or http://localhost:${RESOLVED_WEB_PORT})"
 echo -e "  Edge Gateway:        ${CYAN}http://${SERVER_IP}${NC} (ports 80 / 443)"
 echo -e "  Direct API:          ${CYAN}http://${SERVER_IP}:3001${NC}"
 echo ""
 echo -e "${BOLD}Next Steps (First Admin Account):${NC}"
-echo "  1. Open http://${SERVER_IP}:8081 in your browser."
+echo "  1. Open http://${SERVER_IP}:${RESOLVED_WEB_PORT} in your browser."
 echo "  2. Register the initial administrator account (only allowed on empty database)."
 echo "  3. Subsequent accounts require an invite token generated from the admin panel."
 echo ""

@@ -25,7 +25,11 @@ export function useProjects(notify: (m: string) => void) {
 
   const load = useCallback(
     async (first = false) => {
-      first ? setLoading(true) : setRefreshing(true);
+      if (first) {
+        setLoading(true);
+      } else {
+        setRefreshing(true);
+      }
       try {
         const [list, ok] = await Promise.all([fetchProjects(), checkHealth()]);
         setProjects(list);

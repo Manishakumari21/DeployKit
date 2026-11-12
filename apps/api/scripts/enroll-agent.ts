@@ -1,5 +1,20 @@
 
 
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import dotenv from "dotenv";
+
+// Load environment variables if DATABASE_URL is not already set
+dotenv.config();
+if (!process.env.DATABASE_URL) {
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  dotenv.config({ path: path.resolve(currentDir, "../.env") });
+}
+if (!process.env.DATABASE_URL) {
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  dotenv.config({ path: path.resolve(currentDir, "../../.env") });
+}
+
 import { createAgent, createEnrollmentCredential } from "../src/agents/agentService.js";
 
 function argValue(name: string): string | null {

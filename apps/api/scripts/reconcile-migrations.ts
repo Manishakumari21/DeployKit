@@ -2,9 +2,21 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import dotenv from "dotenv";
 import pg from "pg";
 
 const { Client } = pg;
+
+// Load environment variables if DATABASE_URL is not already set
+dotenv.config();
+if (!process.env.DATABASE_URL) {
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  dotenv.config({ path: path.resolve(currentDir, "../.env") });
+}
+if (!process.env.DATABASE_URL) {
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  dotenv.config({ path: path.resolve(currentDir, "../../.env") });
+}
 
 const MIGRATION_LOCK_ID = 4_217_311_902;
 const BASELINE_SCHEMA_HASH =

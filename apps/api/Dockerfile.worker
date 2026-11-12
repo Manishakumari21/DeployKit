@@ -8,13 +8,10 @@ RUN apk add --no-cache \
     docker-cli \
     docker-cli-buildx
 
-# Pin Buildx to v0.37.1: the apk-provided v0.34.1 lacks `buildx build --resource`,
-# which Phase 08 uses for real build-step resource enforcement (verified on
-# host Buildx 0.37.1). Install the official release binary over the apk plugin.
-ARG BUILDX_VERSION=v0.37.1
-RUN curl -fsSL --retry 5 --retry-connrefused --retry-delay 2 -o /usr/libexec/docker/cli-plugins/docker-buildx \
-      https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64 \
-    && chmod +x /usr/libexec/docker/cli-plugins/docker-buildx \
+# Official Buildx binary image provides pinned v0.37.1 with OCI layer caching
+# avoiding flaky HTTP downloads from GitHub releases during Docker builds.
+COPY --from=docker/buildx-bin:0.37.1 /buildx /usr/libexec/docker/cli-plugins/docker-buildx
+RUN chmod +x /usr/libexec/docker/cli-plugins/docker-buildx \
     && docker buildx version
 
 # lego ACME client (Phase 11 TLS): official release binary with pinned

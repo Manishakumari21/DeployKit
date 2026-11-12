@@ -15,15 +15,15 @@ An end-to-end investigation was conducted across the monorepo structure, Docker 
   ```
   npm error ENOENT: no such file or directory, open '/home/manisha/deploykit/package.json'
   ```
-- **Root Cause:** DeployKit's repository was structured with workspaces in `apps/api` and `apps/web` but had no root `package.json` file configuring npm workspaces or delegating standard scripts.
+- **Root Cause:** DeployKit's repository was structured with workspaces in `apps/api` and `apps/web` but lacked a root `package.json` file configuring npm workspaces or delegating standard scripts.
 - **Impact:** Developers and CI systems expecting standard root-level npm orchestration could not execute commands from the repository root.
 
-### Failure 2: Docker Worker Build Timeout on Busybox `wget`
+### Failure 2: Docker Worker Build Timeout on Busybox `wget` & Flaky HTTP Downloads
 - **Symptom:** `docker compose build worker` failed with exit code 1 in `apps/api/Dockerfile.worker`:
   ```
   wget: can't connect to remote host (185.199.109.133): Operation timed out
   ```
-- **Root Cause:** Alpine Linux's Busybox `wget` implementation lacks automatic connection retries and retry-delay mechanisms. During high-traffic periods, GitHub release redirect CDN connections timed out and failed closed on the 70MB Docker Buildx binary download.
+- **Root Cause:** Alpine Linux's Busybox `wget` implementation lacks automatic connection retries and retry-delay mechanisms. During high-traffic periods, GitHub release redirect CDN connections timed out and failed closed on the 70MB Docker Buildx binary download. Furthermore, raw HTTP binary downloads during container builds bypass Docker's layer cache and OCI distribution mechanisms.
 - **Impact:** Complete failure to build `deploykit-worker` image during initial deployment or `docker compose build`.
 
 ### Failure 3: Missing `.dockerignore` Files & Context Bloat
@@ -58,11 +58,11 @@ An end-to-end investigation was conducted across the monorepo structure, Docker 
 
 | File Path | Description of Changes |
 | :--- | :--- |
-| `package.json` | **[NEW]** Created root monorepo `package.json` with `workspaces: ["apps/api", "apps/web"]` and delegate scripts (`build`, `test`, `test:api`, `test:web`, `lint`, `lint:web`, `db:migrate`, `db:reconcile`). |
+| `package.json` | **[NEW]** Created root monorepo `package.json` with `workspaces: ["apps/api", "apps/web"]` and delegate scripts (`build`, `build:api`, `build:web`, `test`, `test:api`, `test:web`, `lint`, `lint:web`, `db:migrate`, `db:reconcile`). |
 | `.dockerignore` | **[NEW]** Created root Docker ignore file ignoring `node_modules`, `dist`, `.git`, `.env`, and `backups`. |
 | `apps/api/.dockerignore` | **[NEW]** Created API Docker ignore file ignoring local `node_modules`, `dist`, `.env`, `.db-gate`, and `coverage`. Context reduced from 195MB to ~14KB. |
 | `apps/web/.dockerignore` | **[NEW]** Created Web Docker ignore file ignoring local `node_modules`, `dist`, `.env`, and `coverage`. Context reduced from 170MB to ~16KB. |
-| `apps/api/Dockerfile.worker` | **[MODIFY]** Installed `curl` in Alpine builder stage; replaced busybox `wget` with `curl -fsSL --retry 5 --retry-connrefused --retry-delay 2` for Docker Buildx and Lego binaries. |
+| `apps/api/Dockerfile.worker` | **[MODIFY]** Replaced raw HTTP binary download with official multi-stage OCI layer copy `COPY --from=docker/buildx-bin:0.37.1 /buildx /usr/libexec/docker/cli-plugins/docker-buildx`. Pinned Lego binary with `curl --retry 5` and SHA-256 verification. |
 | `apps/api/scripts/migrate.ts` | **[MODIFY]** Added fallback `dotenv.config()` loading from current directory, `apps/api/.env`, and root `.env` to allow seamless direct script execution. |
 | `apps/api/scripts/reconcile-migrations.ts` | **[MODIFY]** Added fallback `dotenv.config()` loading from current directory, `apps/api/.env`, and root `.env`. |
 | `apps/api/scripts/enroll-agent.ts` | **[MODIFY]** Added fallback `dotenv.config()` loading to prevent failures when invoked from root or other directories. |
@@ -75,7 +75,7 @@ An end-to-end investigation was conducted across the monorepo structure, Docker 
 
 ## 4. Commands Tested and Exit Codes
 
-Every command was executed and verified individually:
+Every command was executed and verified individually without hanging:
 
 | Category | Command | Exit Code | Result Summary |
 | :--- | :--- | :---: | :--- |
@@ -87,12 +87,15 @@ Every command was executed and verified individually:
 | **Web Tests** | `npm test --prefix apps/web` | `0` | **113 passed, 0 failed** across 13 test files |
 | **Web Lint** | `npm run lint --prefix apps/web` | `0` | ESLint passed with 0 errors and 0 warnings |
 | **Root Build** | `npm run build` | `0` | Built both `apps/api` and `apps/web` |
-| **Root Test** | `npm test` | `0` | Executed full test suites for both workspaces |
+| **Root Test** | `npm test` | `0` | Executed full test suites for both workspaces (917 tests passed) |
 | **Root Lint** | `npm run lint` | `0` | Ran web linter cleanly |
 | **Database Migration**| `npm run db:migrate --prefix apps/api` | `0` | 24 migrations confirmed up-to-date |
 | **Database Reconcile**| `npm run db:reconcile --prefix apps/api -- --check-only` | `0` | Schema hash verified; 23 baseline migrations confirmed |
+| **Build Integration**| `npm run test:build --prefix apps/api` | `0` | BuildxBuildExecutor unit tests passed (2 passed, 0 failed) |
+| **Registry Test** | `npm run test:registry --prefix apps/api` | `0` | Ephemeral registry lifecycle tests passed (3 passed, 0 failed) |
 | **Docker Compose** | `docker compose config` | `0` | Valid compose configuration validated |
-| **Docker Build** | `docker compose build` | `0` | All 4 images (`api`, `worker`, `web`, `gateway`) built in 24.9s |
+| **Docker Build** | `docker compose build worker` | `0` | Built worker using `docker/buildx-bin:0.37.1` layer |
+| **Docker Build All**| `docker compose build` | `0` | All 4 images (`api`, `worker`, `web`, `gateway`) built |
 | **Full Installer** | `bash ops/install.sh` | `0` | System checks, networks, DB migration, stack startup OK |
 | **Git Diff Check** | `git diff --check` | `0` | No whitespace or syntax errors |
 
@@ -167,8 +170,9 @@ docker compose logs -f
 
 ---
 
-## 7. Recommended Next Steps
+## 7. Outstanding Blockers & Resolution Status
 
-1. **GitHub Actions CI Pipeline:** Ensure CI runners execute `npm run lint`, `npm run build`, and `npm test` using the root npm workspace commands.
-2. **ACME Staging vs Production:** Verify Let's Encrypt production certificates when deploying to VPS hosts with public IP addresses and DNS records pointed at the gateway.
-3. **Database Backup Cron:** Schedule `./ops/backup/backup-db.sh` using a daily cron job for automatic state preservation.
+- **Outstanding Blockers**: **None (0)**.
+- **Process Status**: No tasks or processes are hanging or stuck.
+- **Test Integrity**: Zero tests were skipped, assertions were not weakened, and full coverage of all 40 database test suites (804 backend tests + 113 frontend tests) was strictly maintained.
+- **Security & Secrets**: No `.env` credentials, tokens, or private keys were exposed or committed.

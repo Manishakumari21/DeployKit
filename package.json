@@ -1,20 +1,16 @@
 {
   "name": "deploykit",
   "private": true,
-  "workspaces": [
-    "apps/api",
-    "apps/web"
-  ],
   "scripts": {
-    "build": "npm run build --workspace=apps/api && npm run build --workspace=apps/web",
-    "build:api": "npm run build --workspace=apps/api",
-    "build:web": "npm run build --workspace=apps/web",
-    "test": "npm run test --workspace=apps/api && npm run test --workspace=apps/web",
-    "test:api": "npm run test --workspace=apps/api",
-    "test:web": "npm run test --workspace=apps/web",
-    "lint": "npm run lint --workspace=apps/web",
-    "lint:web": "npm run lint --workspace=apps/web",
-    "db:migrate": "npm run db:migrate --workspace=apps/api",
-    "db:reconcile": "npm run db:reconcile --workspace=apps/api"
+    "build": "npm --prefix apps/api run build && npm --prefix apps/web run build",
+    "build:api": "npm --prefix apps/api run build",
+    "build:web": "npm --prefix apps/web run build",
+    "test": "npm --prefix apps/api test && npm --prefix apps/web test",
+    "test:api": "npm --prefix apps/api test",
+    "test:web": "npm --prefix apps/web test",
+    "lint": "npm --prefix apps/web run lint",
+    "lint:web": "npm --prefix apps/web run lint",
+    "db:migrate": "npm --prefix apps/api run db:migrate",
+    "db:reconcile": "npm --prefix apps/api run db:reconcile --"
   }
 }

@@ -58,7 +58,7 @@ An end-to-end investigation was conducted across the monorepo structure, Docker 
 
 | File Path | Description of Changes |
 | :--- | :--- |
-| `package.json` | **[NEW]** Created root monorepo `package.json` with `workspaces: ["apps/api", "apps/web"]` and delegate scripts (`build`, `build:api`, `build:web`, `test`, `test:api`, `test:web`, `lint`, `lint:web`, `db:migrate`, `db:reconcile`). |
+| `package.json` | **[NEW]** Created root orchestrator `package.json` delegating scripts (`build`, `build:api`, `build:web`, `test`, `test:api`, `test:web`, `lint`, `lint:web`, `db:migrate`, `db:reconcile`) via `--prefix` without npm workspaces, preserving independent `package-lock.json` files for CI `npm ci` workflows in `apps/api` and `apps/web`. |
 | `.dockerignore` | **[NEW]** Created root Docker ignore file ignoring `node_modules`, `dist`, `.git`, `.env`, and `backups`. |
 | `apps/api/.dockerignore` | **[NEW]** Created API Docker ignore file ignoring local `node_modules`, `dist`, `.env`, `.db-gate`, and `coverage`. Context reduced from 195MB to ~14KB. |
 | `apps/web/.dockerignore` | **[NEW]** Created Web Docker ignore file ignoring local `node_modules`, `dist`, `.env`, and `coverage`. Context reduced from 170MB to ~16KB. |

@@ -260,7 +260,12 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
                 onRetry={reloadDeployments}
               />
               {selectedId ? (
-                <DeploymentDetails deploymentId={selectedId} onUpdate={handleListUpdate} />
+                <DeploymentDetails
+                  deploymentId={selectedId}
+                  onUpdate={handleListUpdate}
+                  onNavigate={(tab) => setNav(tab)}
+                  onRetry={handleDeploy}
+                />
               ) : (
                 <p className="text-[13px] text-fog-500">Select a flight to track it down the rail.</p>
               )}
@@ -306,7 +311,14 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
               onSelect={setSelectedDeploymentId}
               onRetry={reloadDeployments}
             />
-            {selectedId && <DeploymentDetails deploymentId={selectedId} onUpdate={handleListUpdate} />}
+            {selectedId && (
+              <DeploymentDetails
+                deploymentId={selectedId}
+                onUpdate={handleListUpdate}
+                onNavigate={(tab) => setNav(tab)}
+                onRetry={handleDeploy}
+              />
+            )}
           </div>
         )}
         {nav === "releases" && (

@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { formatTrigger, timeAgo } from "../lib/format";
 import { cancelDeployment as apiCancelDeployment } from "../lib/api";
-import { isCancellableStatus, type ApiDeployment, type DeploymentEvent } from "../types";
+import { isCancellableStatus, type ApiDeployment, type DeploymentEvent, type NavKey } from "../types";
 import { useDeploymentMonitor } from "../hooks/useDeployments";
 import { DangerBtn, EmptyState, Panel, PanelHead, Skeleton, StatusPill } from "./ui";
 import { PipelineRibbon } from "./PipelineRibbon";
+import { ErrorDoctor } from "./ErrorDoctor";
 import { cx } from "../lib/format";
 
 export function DeployButton({
@@ -177,9 +178,13 @@ export function DeploymentTimeline({ deployment, events }: { deployment: ApiDepl
 export function DeploymentDetails({
   deploymentId,
   onUpdate,
+  onNavigate,
+  onRetry,
 }: {
   deploymentId: string;
   onUpdate: (d: ApiDeployment) => void;
+  onNavigate?: (tab: NavKey) => void;
+  onRetry?: () => void;
 }) {
   const { deployment, events, error } = useDeploymentMonitor(deploymentId);
   const [cancelling, setCancelling] = useState(false);
@@ -224,9 +229,13 @@ export function DeploymentDetails({
           {deployment.image_digest && (<><dt className="text-fog-500">digest</dt><dd className="truncate text-signal-300 tabular">{deployment.image_digest.slice(0, 19)}…</dd></>)}
         </dl>
         {deployment.status === "failed" && (
-          <div className="border-t border-red-900/50 bg-red-950/30 p-4 text-[13px]">
-            <p className="font-mono font-semibold text-red-300">{deployment.error_code ?? "Failed"}</p>
-            {deployment.error_message && <p className="mt-1 break-words text-fog-200">{deployment.error_message}</p>}
+          <div className="border-t border-edge p-3">
+            <ErrorDoctor
+              errorCode={deployment.error_code}
+              errorMessage={deployment.error_message}
+              onNavigate={onNavigate}
+              onRetry={onRetry}
+            />
           </div>
         )}
         {cancellable && (

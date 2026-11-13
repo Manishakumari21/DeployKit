@@ -4,7 +4,7 @@
 > A reliable, secure, production-grade alternative to Vercel, Render, and Railway that installs on any Linux VPS or bare metal.
 
 [![Backend Tests](https://img.shields.io/badge/backend%20tests-804%20passed-2ea44f?style=flat-square)](docs/PRODUCTION_ACCEPTANCE_REPORT.md)
-[![Frontend Tests](https://img.shields.io/badge/frontend%20tests-113%20passed-2ea44f?style=flat-square)](docs/PRODUCTION_ACCEPTANCE_REPORT.md)
+[![Frontend Tests](https://img.shields.io/badge/frontend%20tests-119%20passed-2ea44f?style=flat-square)](docs/PRODUCTION_ACCEPTANCE_REPORT.md)
 [![Migrations](https://img.shields.io/badge/migrations-24%20reconciled-blue?style=flat-square)](database/migrations)
 [![Architecture](https://img.shields.io/badge/architecture-Docker%20%7C%20OpenResty%20%7C%20Postgres-blueviolet?style=flat-square)](docs/ARCHITECTURE.md)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)

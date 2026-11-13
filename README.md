@@ -30,12 +30,28 @@ The installer verifies Docker and ports, generates high-entropy cryptographic se
 | Feature | DeployKit (Self-Hosted) | Vercel | Render | Railway |
 | :--- | :--- | :--- | :--- | :--- |
 | **Hosting Cost** | **$0 PaaS markup** (Your VPS flat rate) | Per-seat & bandwidth tier markups | Tiered compute markup | Usage-based execution markup |
+| **Team Members** | **Unlimited free** | $20/member/mo (Pro) | Plan markups | Team seat add-on |
+| **Beginner Error Diagnosis** | **Built-in Smart Error Doctor** (plain English + code fixes) | Cryptic runtime error codes | Raw container logs | Raw container logs |
 | **Data & Secret Sovereignty** | **100% on your server** (AES-256-GCM) | Proprietary cloud storage | Cloud infrastructure | Cloud infrastructure |
 | **Edge Server Nodes** | **Included** (Attach remote bare metal) | Enterprise edge network only | Single cloud region | Cloud regions only |
 | **Docker & Monorepo Support** | **Full Docker & BuildKit engine** | Function-first / Buildpacks | Standard container runtime | Standard container runtime |
 | **Zero-Downtime Blue/Green** | **Atomic OpenResty gateway reload** | Automated | Automated | Automated |
 | **Database Migrations** | **Advisory-locked schema runner** | External tool | Add-on | Add-on |
 | **Automated Backups** | **Non-blocking pg_dump custom format** | Managed add-on | Managed add-on | Managed add-on |
+
+---
+
+## 🩺 Built for Beginners & Teams: The Smart Error Doctor
+
+Deploying applications shouldn't require deciphering cryptic terminal crashes. Unlike traditional cloud platforms that leave developers stranded with opaque error codes, DeployKit features an in-dashboard **Smart Error Doctor**:
+
+- **Detects the Docker `127.0.0.1` vs `0.0.0.0` Binding Trap**: Explains in plain English why binding your server to `localhost` fails inside a container and provides the exact 1-line configuration fix.
+- **Copy-Paste Code Fixes**: Instant tabbed code solutions for:
+  - **Node.js / Express**: `app.listen(PORT, '0.0.0.0', ...)`
+  - **Next.js**: `HOSTNAME=0.0.0.0 next start`
+  - **FastAPI / Python**: `uvicorn.run(app, host="0.0.0.0", port=PORT)`
+- **OOM & Missing Secret Diagnosis**: Identifies exit code 137 (Out Of Memory) and missing environment variables before you waste hours debugging.
+- **1-Click Remediation**: Direct action buttons to jump straight to Settings, inspect raw logs, or retry deployment.
 
 ---
 

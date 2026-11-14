@@ -29,7 +29,7 @@ export function requireTrustedOrigin(
       next();
       return;
     }
-    console.error("Untrusted request origin");
+    console.error(`Untrusted request origin: ${origin}`);
     res.status(403).json({ error: "Untrusted origin" });
     return;
   }
@@ -40,7 +40,7 @@ export function requireTrustedOrigin(
       next();
       return;
     }
-    console.error("Untrusted request origin");
+    console.error(`Untrusted request origin (referer): ${referer}`);
     res.status(403).json({ error: "Untrusted origin" });
     return;
   }

@@ -206,7 +206,7 @@ export function ProjectModal({
           <div className="mb-4 flex items-start justify-between gap-4">
             <div>
               <h2 className="text-[16px] font-bold tracking-tight text-white">
-                Commission a service
+                New Project
               </h2>
               <p className="mt-0.5 flex items-center gap-1 font-mono text-[12px] text-fog-500">
                 <GitBranch size={12} className="text-signal-300" /> connect a repository, then
@@ -445,18 +445,23 @@ export function ProjectModal({
             )}
 
             {manual && (
-              <label className="flex flex-col gap-1 text-[12px] font-medium text-fog-200">
-                Git URL
-                <input
-                  value={repo}
-                  onChange={(event) => setRepo(event.target.value)}
-                  placeholder="https://github.com/acme/website"
-                  inputMode="url"
-                  maxLength={2048}
-                  disabled={busy}
-                  className={`${input} font-mono`}
-                />
-              </label>
+              <div className="flex flex-col gap-2.5">
+                <div className="rounded-xl border border-signal-500/20 bg-signal-950/30 p-2.5 text-[11px] leading-relaxed text-fog-300">
+                  <span className="font-semibold text-signal-300">⚡ Auto-detection enabled:</span> DeployKit automatically detects and builds Static HTML/CSS/JS, Vite/React, Node.js, Python, Rust, and Go.
+                </div>
+                <label className="flex flex-col gap-1 text-[12px] font-medium text-fog-200">
+                  Git URL
+                  <input
+                    value={repo}
+                    onChange={(event) => setRepo(event.target.value)}
+                    placeholder="https://github.com/acme/website"
+                    inputMode="url"
+                    maxLength={2048}
+                    disabled={busy}
+                    className={`${input} font-mono`}
+                  />
+                </label>
+              </div>
             )}
 
             <label className="flex flex-col gap-1 text-[12px] font-medium text-fog-200">
@@ -498,8 +503,8 @@ export function ProjectModal({
               <QuietBtn type="button" onClick={onClose} disabled={busy}>
                 Cancel
               </QuietBtn>
-              <DeployBtn type="submit" disabled={!canSubmit}>
-                {busy ? "Commissioning…" : "Commission service"}
+              <DeployBtn type="submit" disabled={!canSubmit} aria-label="Commission service">
+                {busy ? "Deploying…" : "Deploy project"}
               </DeployBtn>
             </div>
           </form>

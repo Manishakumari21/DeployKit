@@ -45,34 +45,38 @@ export function useDeployments(projectId: string | null) {
     });
   }, [reload]);
 
-  const create = useCallback(async () => {
-    if (!projectId || creating) return null;
+  const create = useCallback(
+    async (overrideProjectId?: string) => {
+      const targetId = overrideProjectId ?? projectId;
+      if (!targetId || creating) return null;
 
-    const key = crypto.randomUUID();
+      const key = crypto.randomUUID();
 
-    setCreating(true);
-    setCreateError(null);
+      setCreating(true);
+      setCreateError(null);
 
-    try {
-      const d = await apiCreate(projectId, key);
+      try {
+        const d = await apiCreate(targetId, key);
 
-      setDeployments((prev) => [
-        d,
-        ...prev.filter((x) => x.id !== d.id),
-      ]);
+        setDeployments((prev) => [
+          d,
+          ...prev.filter((x) => x.id !== d.id),
+        ]);
 
-      return d;
-    } catch (e) {
-      setCreateError(
-        e instanceof Error
-          ? e.message
-          : "Failed to create deployment",
-      );
-      return null;
-    } finally {
-      setCreating(false);
-    }
-  }, [projectId, creating]);
+        return d;
+      } catch (e) {
+        setCreateError(
+          e instanceof Error
+            ? e.message
+            : "Failed to create deployment",
+        );
+        return null;
+      } finally {
+        setCreating(false);
+      }
+    },
+    [projectId, creating]
+  );
 
   const cancel = useCallback(async (deploymentId: string) => {
     const updated = await apiCancel(deploymentId);

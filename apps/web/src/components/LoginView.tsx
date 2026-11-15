@@ -212,9 +212,21 @@ export function LoginView({
             </p>
           )}
           {visibleError && (
-            <p role="alert" className="text-[13px] text-red-300">
-              {visibleError}
-            </p>
+            <div role="alert" className="flex flex-col gap-1.5 rounded-lg border border-red-900/60 bg-red-950/30 p-2.5 text-[13px] text-red-200">
+              <p>{visibleError}</p>
+              {mode === "register" && (visibleError.toLowerCase().includes("invite") || visibleError.toLowerCase().includes("email")) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("login");
+                    setFormError(null);
+                  }}
+                  className="mt-1 self-start rounded border border-edge bg-ink-800 px-2 py-1 text-[11px] font-medium text-fog-200 hover:text-white"
+                >
+                  Already have an account? Switch to Sign in →
+                </button>
+              )}
+            </div>
           )}
           <DeployBtn type="submit" disabled={busy}>
             {busy ? "Working…" : mode === "login" ? "Sign in" : "Create account & sign in"}
@@ -224,8 +236,20 @@ export function LoginView({
               {status?.mode === "bootstrap"
                 ? "This server has no accounts yet — the first account you create becomes the admin."
                 : inviteOnly
-                  ? "Accounts are created by invite. Ask an admin for an invite code."
+                  ? "Accounts are created by invite. Already set up your instance? "
                   : "Registration is open on this server."}
+              {inviteOnly && status?.mode !== "bootstrap" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("login");
+                    setFormError(null);
+                  }}
+                  className="font-medium text-signal-300 underline hover:text-signal-200"
+                >
+                  Sign in here
+                </button>
+              )}
             </p>
           )}
           {mode === "login" && inviteOnly && (

@@ -150,7 +150,7 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
     const d = await create();
     if (d) {
       setSelectedDeploymentId(d.id);
-      setToast(`Flight ${d.id.slice(0, 8)} away — ${d.status}`);
+      setToast(`Deployment started for ${d.id.slice(0, 8)}`);
     } else {
       setToast(createError ?? "Failed to create deployment");
     }
@@ -187,7 +187,7 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
     setCreating(true);
     try {
       const c = await add(name.trim(), repo.trim(), branch.trim());
-      let message = `Service "${c.name}" commissioned`;
+      let message = `Service "${c.name}" created`;
       if (github) {
         try {
           await linkProjectGithub(c.id, github);
@@ -197,8 +197,16 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
       }
       setModal(false);
       selectProject(c.id);
-      setToast(message);
-      setNav("services");
+
+      // Auto-deploy initial build immediately (Vercel/Render flow)
+      const d = await create(c.id);
+      if (d) {
+        setSelectedDeploymentId(d.id);
+        setToast(`Project "${c.name}" created — deployment started!`);
+      } else {
+        setToast(message);
+      }
+      setNav("overview");
       return true;
     } catch (e) {
       setFormError(e instanceof Error ? e.message : "Something went wrong");

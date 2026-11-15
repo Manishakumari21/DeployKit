@@ -116,6 +116,18 @@ export function ServiceHeader({
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
+          {live?.status === "active" && (
+            <a
+              href={`http://${gatewayHost}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Open live site in new tab"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-signal-400/50 bg-signal-500/15 px-3 py-1.5 text-[12px] font-semibold text-signal-200 transition hover:bg-signal-500/25 hover:text-white"
+            >
+              <span>Open live site</span>
+              <ExternalLink size={13} />
+            </a>
+          )}
           {onBuildConfig && (
             <QuietBtn type="button" onClick={onBuildConfig} aria-label="Open build configuration">
               <Hammer size={14} />

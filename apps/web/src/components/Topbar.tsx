@@ -1,4 +1,4 @@
-import { Plus, RotateCw, Search } from "lucide-react";
+import { Plus, RotateCw, Search, Zap } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { DeployBtn, Kbd, QuietBtn } from "./ui";
 
@@ -11,6 +11,7 @@ export function Topbar({
   onDeploy,
   deploying,
   canDeploy,
+  onOpenComparison,
 }: {
   query: string;
   setQuery: (q: string) => void;
@@ -20,6 +21,7 @@ export function Topbar({
   onDeploy: () => void;
   deploying: boolean;
   canDeploy: boolean;
+  onOpenComparison?: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -54,6 +56,17 @@ export function Topbar({
         </div>
 
         <div className="ml-auto flex items-center gap-1.5">
+          {onOpenComparison && (
+            <button
+              onClick={onOpenComparison}
+              title="Compare DeployKit vs Vercel, Render & Railway"
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-signal-500/30 bg-signal-950/40 px-2.5 py-1.5 text-[12px] font-semibold text-signal-300 transition hover:border-signal-400 hover:bg-signal-900/60 hover:text-signal-200 active:scale-95"
+            >
+              <Zap size={13} className="text-signal-400" />
+              <span className="hidden md:inline">Why DeployKit?</span>
+              <span className="md:hidden">Compare</span>
+            </button>
+          )}
           <QuietBtn onClick={onRefresh} title="Reload services and deployments">
             <RotateCw size={14} className={refreshing ? "animate-spin-slower" : ""} />
             <span className="hidden sm:inline">{refreshing ? "Syncing…" : "Sync"}</span>

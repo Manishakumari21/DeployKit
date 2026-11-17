@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { BuildConfigPanel } from "./components/BuildConfigPanel";
 import { DeploymentDetails, DeploymentList } from "./components/deployments";
 import { CommandBar } from "./components/CommandBar";
+import { ComparisonModal } from "./components/ComparisonModal";
 import { EventsView } from "./components/EventsView";
 import { GitHubView } from "./components/GitHubView";
 import { IncidentsView } from "./components/IncidentsView";
@@ -98,6 +99,7 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
   const [nav, setNav] = useState<NavKey>("overview");
   const [query, setQuery] = useState("");
   const [modal, setModal] = useState(false);
+  const [comparisonOpen, setComparisonOpen] = useState(false);
   const [formError, setFormError] = useState("");
   const [creating, setCreating] = useState(false);
   const { toast, setToast } = useToast();
@@ -240,6 +242,7 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
           onDeploy={handleDeploy}
           deploying={deploying}
           canDeploy={!!selectedProjectId}
+          onOpenComparison={() => setComparisonOpen(true)}
         />
       </div>
 
@@ -275,7 +278,7 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
                   onRetry={handleDeploy}
                 />
               ) : (
-                <p className="text-[13px] text-fog-500">Select a flight to track it down the rail.</p>
+                <p className="text-[13px] text-fog-500">Select a deployment to view its pipeline details and logs.</p>
               )}
             </div>
           </div>
@@ -300,7 +303,7 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
               onDelete={async (id) => {
                 try {
                   await remove(id);
-                  setToast("Service decommissioned");
+                  setToast("Service deleted");
                 } catch (e) {
                   setToast(e instanceof Error ? e.message : "Failed to delete service");
                 }
@@ -335,7 +338,7 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
             activeDeploymentBusy={deployments.some((d) => isCancellableStatus(d.status))}
             onRollbackStarted={() => {
               reloadDeployments();
-              setToast("Rollback dispatched — a new flight is queued");
+              setToast("Rollback dispatched — deployment queued");
             }}
           />
         )}
@@ -433,6 +436,10 @@ function Dashboard({ user, onLogout }: { user: AuthUser; onLogout: () => void })
           onSubmit={submit}
         />
       )}
+      <ComparisonModal
+        open={comparisonOpen}
+        onClose={() => setComparisonOpen(false)}
+      />
       <Toast msg={toast} onClose={() => setToast(null)} />
     </div>
   );

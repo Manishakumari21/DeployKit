@@ -48,14 +48,14 @@ export function MetricsPanel({ projectId }: { projectId: string | null }) {
       {metrics && (
         <div className="grid grid-cols-2 divide-edge/70 p-4 sm:grid-cols-4 sm:divide-x">
           <Stat
-            label="Flights"
+            label="Deployments"
             value={String(metrics.deployments.total)}
-            sub={`${metrics.deployments.successful} live · ${metrics.deployments.failed} lost`}
+            sub={`${metrics.deployments.successful} live · ${metrics.deployments.failed} failed`}
           />
           <Stat
             label="Success rate"
             value={metrics.deployments.success_rate === null ? "—" : `${Math.round(metrics.deployments.success_rate * 100)}%`}
-            sub={`avg ${fmtDuration(metrics.deployments.avg_duration_seconds)} per flight`}
+            sub={`avg ${fmtDuration(metrics.deployments.avg_duration_seconds)} per deploy`}
             accent
           />
           <Stat

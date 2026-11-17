@@ -263,7 +263,7 @@ export function LogsView({
         <span aria-hidden className="size-2.5 rounded-full bg-amber-300/70" />
         <span aria-hidden className="size-2.5 rounded-full bg-signal-400/70" />
         <span className="ml-2 font-mono text-[11px] text-fog-500">
-          deploykit — flight log{selectedId ? ` · ${selectedId.slice(0, 8)}` : ""}
+          deploykit — deployment log{selectedId ? ` · ${selectedId.slice(0, 8)}` : ""}
         </span>
         <span className="ml-auto font-mono text-[11px] text-fog-500 tabular">
           {logs.length} lines{truncated ? " · truncated" : ""}
@@ -312,7 +312,7 @@ export function LogsView({
       {!loading && !error && logs.length === 0 && (
         <EmptyState
           title="Channel is quiet"
-          body="No operational output for this flight yet. Git chatter, build stream, runtime and healthcheck diagnostics land here as the deployment runs."
+          body="No operational output for this deployment yet. Build stream, runtime stdout/stderr, and healthcheck diagnostics stream here in real time."
         />
       )}
       {!loading && !error && logs.length > 0 && (

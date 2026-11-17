@@ -639,7 +639,7 @@ export function SettingsView({
               <div className="flex-1">
                 <h3 className="text-[15px] font-bold text-white">Delete workspace</h3>
                 <p className="mt-1 text-[12px] leading-relaxed text-fog-300">
-                  This action <strong className="text-red-300">cannot be undone</strong>. This will permanently decommission{" "}
+                  This action <strong className="text-red-300">cannot be undone</strong>. This will permanently delete{" "}
                   <span className="font-semibold text-white">{project.name}</span> and delete all associated deployments,
                   runtime containers, and secrets.
                 </p>

@@ -106,7 +106,7 @@ export function DeploymentList({
   return (
     <Panel>
       <PanelHead
-        title="Flight queue"
+        title="Deployment history"
         right={<span className="font-mono text-[11px] text-fog-500 tabular">{deployments.length} deploys</span>}
       />
       {loading && (
@@ -214,7 +214,7 @@ export function DeploymentDetails({
     <div className="flex flex-col gap-3">
       <Panel className={deployment.status === "active" ? "dk-glow-signal" : undefined}>
         <PanelHead
-          title={`Flight ${deployment.id.slice(0, 8)}`}
+          title={`Deployment ${deployment.id.slice(0, 8)}`}
           right={<StatusPill status={deployment.status} />}
         />
         <PipelineRibbon deployment={deployment} events={events} />
@@ -222,9 +222,9 @@ export function DeploymentDetails({
           <dt className="text-fog-500">branch</dt><dd className="truncate text-fog-100">{deployment.branch}</dd>
           <dt className="text-fog-500">commit</dt><dd className="truncate text-fog-100 tabular">{deployment.commit_sha ?? "—"}</dd>
           <dt className="text-fog-500">trigger</dt><dd className="truncate text-fog-100">{deployment.trigger}</dd>
-          <dt className="text-fog-500">launched</dt><dd className="truncate text-fog-100 tabular">{timeAgo(deployment.created_at)}</dd>
-          <dt className="text-fog-500">lifted</dt><dd className="truncate text-fog-100 tabular">{deployment.started_at ? timeAgo(deployment.started_at) : "—"}</dd>
-          <dt className="text-fog-500">touched down</dt><dd className="truncate text-fog-100 tabular">{deployment.finished_at ? timeAgo(deployment.finished_at) : "—"}</dd>
+          <dt className="text-fog-500">created</dt><dd className="truncate text-fog-100 tabular">{timeAgo(deployment.created_at)}</dd>
+          <dt className="text-fog-500">started</dt><dd className="truncate text-fog-100 tabular">{deployment.started_at ? timeAgo(deployment.started_at) : "—"}</dd>
+          <dt className="text-fog-500">completed</dt><dd className="truncate text-fog-100 tabular">{deployment.finished_at ? timeAgo(deployment.finished_at) : "—"}</dd>
           {deployment.job_status && (<><dt className="text-fog-500">worker job</dt><dd className="truncate text-fog-100 tabular">{deployment.job_status} · try {deployment.job_attempts}/{deployment.max_attempts}</dd></>)}
           {deployment.image_digest && (<><dt className="text-fog-500">digest</dt><dd className="truncate text-signal-300 tabular">{deployment.image_digest.slice(0, 19)}…</dd></>)}
         </dl>
@@ -241,16 +241,16 @@ export function DeploymentDetails({
         {cancellable && (
           <div className="border-t border-edge p-4">
             <DangerBtn onClick={doCancel} disabled={cancelling}>
-              {cancelling ? "Aborting…" : "Abort flight"}
+              {cancelling ? "Cancelling…" : "Cancel deployment"}
             </DangerBtn>
             {cancelError && <p className="mt-2 text-[12px] text-red-300">{cancelError}</p>}
           </div>
         )}
       </Panel>
       <Panel>
-        <PanelHead title="Flight recorder" right={<span className="font-mono text-[11px] text-fog-500 tabular">{events.length}</span>} />
+        <PanelHead title="Pipeline events" right={<span className="font-mono text-[11px] text-fog-500 tabular">{events.length}</span>} />
         {events.length === 0 ? (
-          <p className="p-4 text-[13px] text-fog-500">No events on the recorder yet.</p>
+          <p className="p-4 text-[13px] text-fog-500">No events in this pipeline run yet.</p>
         ) : (
           <ul className="divide-y divide-edge/70">
             {events.map((e) => (

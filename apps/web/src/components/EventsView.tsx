@@ -76,7 +76,7 @@ export function EventsView({
           <Eyebrow>Observability</Eyebrow>
           <h1 className="mt-1 text-xl font-bold tracking-tight text-white">Events</h1>
           <p className="mt-1 text-[13px] text-fog-500">
-            Every state change across this service&apos;s flights, newest first.
+            Every state change across this service&apos;s deployments, newest first.
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
@@ -169,7 +169,7 @@ export function EventsView({
                   </span>
                 </div>
                 <p className="mt-1 break-words font-mono text-[11px] text-fog-500">
-                  {event.event_type} · flight {event.deployment_id.slice(0, 8)} · {event.branch}
+                  {event.event_type} · deploy {event.deployment_id.slice(0, 8)} · {event.branch}
                   {event.commit_sha ? ` · ${event.commit_sha.slice(0, 7)}` : ""} · {event.trigger}
                   {event.status_from || event.status_to
                     ? ` · ${event.status_from ?? "—"} → ${event.status_to ?? "—"}`

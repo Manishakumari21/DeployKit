@@ -89,6 +89,44 @@ export async function resolveSession(token: unknown): Promise<ResolvedSession | 
   return { sessionId: row.id, userId: row.user_id };
 }
 
+export interface AuthenticatedUserSession {
+  sessionId: string;
+  userId: string;
+  role: "admin" | "member";
+  disabledAt: string | null;
+}
+
+export async function resolveUserSession(token: unknown): Promise<AuthenticatedUserSession | null> {
+  if (typeof token !== "string" || !token) return null;
+  const result = await pool.query(
+    `
+    SELECT
+      s.id AS session_id,
+      s.user_id,
+      u.role,
+      u.disabled_at
+    FROM sessions s
+    JOIN users u ON s.user_id = u.id
+    WHERE s.token_hash = $1
+      AND s.revoked_at IS NULL
+      AND s.expires_at > NOW()
+    LIMIT 1
+    `,
+    [hashSessionToken(token)]
+  );
+  const row = result.rows[0] as
+    | { session_id: string; user_id: string; role: string; disabled_at: Date | string | null }
+    | undefined;
+  if (!row) return null;
+  if (row.disabled_at !== null) return null;
+  return {
+    sessionId: row.session_id,
+    userId: row.user_id,
+    role: row.role as "admin" | "member",
+    disabledAt: row.disabled_at ? String(row.disabled_at) : null,
+  };
+}
+
 export async function revokeSession(token: unknown): Promise<boolean> {
   if (typeof token !== "string" || !token) return false;
   const result = await pool.query(

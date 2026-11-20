@@ -91,6 +91,7 @@ import {
   type LogLevel,
   type LogSource,
 } from "../services/deploymentLogService.js";
+import { acquireAdvisoryXactLock, ADVISORY_LOCK_NAMESPACES } from "../db/advisoryLock.js";
 
 async function dlog(
   projectId: string,
@@ -1277,9 +1278,10 @@ export class RealDeploymentExecutor implements DeploymentExecutor {
   ): Promise<RuntimeRecordOutcome> {
     return withTransaction(async (client) => {
       if (runtime.containerId) {
-        await client.query(
-          `SELECT pg_advisory_xact_lock($1, hashtext($2))`,
-          [RUNTIME_CONTAINER_RECORD_LOCK, runtime.containerId]
+        await acquireAdvisoryXactLock(
+          client,
+          ADVISORY_LOCK_NAMESPACES.RUNTIME_CONTAINER_RECORD,
+          runtime.containerId
         );
         const existing = await client.query(
           `SELECT id, release_id FROM runtime_instances WHERE container_id = $1`,

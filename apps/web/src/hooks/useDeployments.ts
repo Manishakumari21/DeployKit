@@ -136,11 +136,12 @@ export function useDeploymentMonitor(deploymentId: string | null) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let inFlight = false;
     let lastUpdatedAt: string | null = null;
+    let stopped = false;
 
     const abort = new AbortController();
 
     const tick = async () => {
-      if (!alive || inFlight) return;
+      if (!alive || stopped || inFlight) return;
 
       inFlight = true;
 
@@ -150,7 +151,7 @@ export function useDeploymentMonitor(deploymentId: string | null) {
           abort.signal,
         );
 
-        if (!alive) return;
+        if (!alive || stopped) return;
 
         failures.current = 0;
 
@@ -168,9 +169,10 @@ export function useDeploymentMonitor(deploymentId: string | null) {
           try {
             const ev = await fetchDeploymentEvents(
               deploymentId,
+              abort.signal,
             );
 
-            if (alive) {
+            if (alive && !stopped) {
               setEvents(ev);
             }
           } catch {
@@ -178,11 +180,13 @@ export function useDeploymentMonitor(deploymentId: string | null) {
         }
 
         if (isTerminalStatus(d.status)) {
+          stopped = true;
           return;
         }
       } catch (e) {
         if (
           !alive ||
+          stopped ||
           (e instanceof DOMException && e.name === "AbortError")
         ) {
           return;
@@ -200,7 +204,7 @@ export function useDeploymentMonitor(deploymentId: string | null) {
       } finally {
         inFlight = false;
 
-        if (alive) {
+        if (alive && !stopped) {
           timer = setTimeout(tick, 2000);
         }
       }
@@ -210,10 +214,12 @@ export function useDeploymentMonitor(deploymentId: string | null) {
 
     return () => {
       alive = false;
+      stopped = true;
       abort.abort();
 
       if (timer) {
         clearTimeout(timer);
+        timer = undefined;
       }
     };
   }, [deploymentId]);

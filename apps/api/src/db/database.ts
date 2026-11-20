@@ -1,10 +1,18 @@
 import pg from 'pg';
 import { redactForLog } from '../agents/edgeJobSchema.js';
+import { parsePoolConfig } from './poolConfig.js';
 
 const { Pool } = pg;
 
+const config = parsePoolConfig();
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: config.connectionString,
+  max: config.max,
+  min: config.min,
+  connectionTimeoutMillis: config.connectionTimeoutMillis,
+  idleTimeoutMillis: config.idleTimeoutMillis,
+  maxLifetimeSeconds: config.maxLifetimeSeconds,
 });
 
 pool.on('error', (error) => {

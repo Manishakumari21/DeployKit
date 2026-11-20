@@ -33,6 +33,7 @@ import {
   failGatewaySyncJob,
   recoverExpiredGatewaySyncJobs,
 } from "./gatewaySyncQueue.js";
+import { tokenPepperSource } from "../security/tokenHasher.js";
 
 const WORKER_ID =
   process.env.WORKER_ID ?? `worker-${randomUUID()}`;
@@ -954,6 +955,13 @@ export async function processEdgeBuildJob(
   }
 }
 
+export function assertWorkerPepperConfigured(): void {
+  // Fail closed at boot: resolving the pepper throws in production when
+  // DEPLOYKIT_TOKEN_PEPPER is unset, so worker never claims jobs that it cannot
+  // decrypt under an ephemeral, restart-invalidated key.
+  tokenPepperSource();
+}
+
 async function run() {
   if (process.env.DEPLOYMENT_WORKER_ENABLED !== "true") {
     log(
@@ -972,6 +980,8 @@ async function run() {
     pollIntervalMs: POLL_INTERVAL_MS,
     leaseMs: LEASE_MS,
   });
+
+  assertWorkerPepperConfigured();
 
   try {
     const bootstrap = await bootstrapWorker();

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { fetchDeploymentLogs, type DeploymentLog } from "../lib/api";
+import { fetchDeployment, fetchDeploymentLogs, type DeploymentLog } from "../lib/api";
+import { isTerminalStatus } from "../types";
 
 export function useDeploymentLogs(
   deploymentId: string | null,
@@ -14,11 +15,13 @@ export function useDeploymentLogs(
 
   useEffect(() => {
     let alive = true;
+    let stopped = false;
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let inFlight = false;
     let cursor: string | null = null;
     let initialized = false;
+    let isTerminal = false;
 
     queueMicrotask(() => {
       if (!alive) return;
@@ -31,14 +34,26 @@ export function useDeploymentLogs(
     if (!deploymentId) {
       return () => {
         alive = false;
+        stopped = true;
       };
     }
 
     const tick = async () => {
-      if (!alive || inFlight) return;
+      if (!alive || stopped || inFlight) return;
       inFlight = true;
       if (!initialized) setLoading(true);
       try {
+        if (!isTerminal) {
+          try {
+            const dep = await fetchDeployment(deploymentId, abort.signal);
+            if (isTerminalStatus(dep.status)) {
+              isTerminal = true;
+            }
+          } catch {
+            // Non-fatal if fetchDeployment fails; continue fetching logs
+          }
+        }
+
         const [source, level] = filterKey.split("|");
         const res = await fetchDeploymentLogs(
           deploymentId,
@@ -51,7 +66,7 @@ export function useDeploymentLogs(
           },
           abort.signal,
         );
-        if (!alive) return;
+        if (!alive || stopped) return;
         failures.current = 0;
         setError(null);
         if (res.items.length > 0) {
@@ -73,17 +88,24 @@ export function useDeploymentLogs(
         }
         if (res.truncated) setTruncated(true);
         initialized = true;
+
+        if (isTerminal && res.items.length < 200) {
+          stopped = true;
+          return;
+        }
       } catch (e) {
-        if (!alive || (e instanceof DOMException && e.name === "AbortError")) return;
+        if (!alive || stopped || (e instanceof DOMException && e.name === "AbortError")) return;
         failures.current += 1;
         if (failures.current >= 3) {
           setError(e instanceof Error ? e.message : "Lost connection to API");
         }
       } finally {
         inFlight = false;
-        if (alive) {
+        if (alive && !stopped) {
           if (!initialized) setLoading(false);
-          timer = setTimeout(tick, 3000);
+          timer = setTimeout(tick, isTerminal ? 50 : 3000);
+        } else if (alive && stopped) {
+          setLoading(false);
         }
       }
     };
@@ -91,8 +113,12 @@ export function useDeploymentLogs(
     void tick();
     return () => {
       alive = false;
+      stopped = true;
       abort.abort();
-      if (timer) clearTimeout(timer);
+      if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
     };
   }, [deploymentId, filterKey]);
 

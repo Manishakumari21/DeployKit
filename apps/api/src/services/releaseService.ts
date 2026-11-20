@@ -1,4 +1,5 @@
 import pool from "../db/database.js";
+import { acquireAdvisoryXactLock, ADVISORY_LOCK_NAMESPACES } from "../db/advisoryLock.js";
 
 export type ReleaseStatus =
   | "pending"
@@ -172,9 +173,10 @@ export async function activateRelease(
   try {
     await client.query("BEGIN");
 
-    await client.query(
-      `SELECT pg_advisory_xact_lock(810971722, hashtext($1))`,
-      [projectId]
+    await acquireAdvisoryXactLock(
+      client,
+      ADVISORY_LOCK_NAMESPACES.PROJECT_ACTIVE_RELEASE,
+      projectId
     );
 
     const target = await client.query(

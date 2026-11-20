@@ -2,11 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  assertWorkerPepperConfigured,
   createIntervalSweep,
   processDeploymentJob,
   requestShutdown,
   resolveWorkerConcurrency,
 } from "./deploymentWorker.js";
+import { resetTokenPepperCache, TOKEN_PEPPER_ENV } from "../security/tokenHasher.js";
+import { encryptSecret, decryptSecret, EncryptionError } from "../security/encryption.js";
 import type { claimNextJob } from "./deploymentQueue.js";
 import type { DeploymentExecutor } from "./deploymentExecutor.js";
 
@@ -218,4 +221,113 @@ test("a shutdown aborts every in-flight job, not just the most recent", async ()
     results.every((r) => r.status === "fulfilled"),
     "both jobs should settle (not hang) after a shutdown abort"
   );
+});
+
+test("worker fails closed at boot in production when DEPLOYKIT_TOKEN_PEPPER is missing", () => {
+  const originalEnv = process.env.NODE_ENV;
+  const originalPepper = process.env[TOKEN_PEPPER_ENV];
+  try {
+    process.env.NODE_ENV = "production";
+    delete process.env[TOKEN_PEPPER_ENV];
+    resetTokenPepperCache();
+
+    assert.throws(
+      () => assertWorkerPepperConfigured(),
+      /DEPLOYKIT_TOKEN_PEPPER must be set explicitly in production/
+    );
+  } finally {
+    process.env.NODE_ENV = originalEnv;
+    if (originalPepper === undefined) {
+      delete process.env[TOKEN_PEPPER_ENV];
+    } else {
+      process.env[TOKEN_PEPPER_ENV] = originalPepper;
+    }
+    resetTokenPepperCache();
+  }
+});
+
+test("worker boots cleanly when DEPLOYKIT_TOKEN_PEPPER is configured", () => {
+  const originalEnv = process.env.NODE_ENV;
+  const originalPepper = process.env[TOKEN_PEPPER_ENV];
+  try {
+    process.env.NODE_ENV = "production";
+    process.env[TOKEN_PEPPER_ENV] = "test-worker-stable-pepper-value";
+    resetTokenPepperCache();
+
+    assert.doesNotThrow(() => assertWorkerPepperConfigured());
+  } finally {
+    process.env.NODE_ENV = originalEnv;
+    if (originalPepper === undefined) {
+      delete process.env[TOKEN_PEPPER_ENV];
+    } else {
+      process.env[TOKEN_PEPPER_ENV] = originalPepper;
+    }
+    resetTokenPepperCache();
+  }
+});
+
+test("cross-process encryption: worker decrypts secrets encrypted by API only when peppers match", () => {
+  const originalPepper = process.env[TOKEN_PEPPER_ENV];
+  try {
+    // 1. API encrypts with configured pepper
+    process.env[TOKEN_PEPPER_ENV] = "shared-production-pepper-32-bytes";
+    resetTokenPepperCache();
+    const secret = "DATABASE_URL=postgres://app:secret@db.internal:5432/prod";
+    const encryptedByApi = encryptSecret(secret);
+
+    // 2. Worker with matching pepper decrypts successfully
+    resetTokenPepperCache();
+    const decryptedByWorker = decryptSecret(encryptedByApi);
+    assert.equal(decryptedByWorker, secret);
+
+    // 3. Worker with mismatched pepper fails closed with DECRYPTION_FAILED
+    process.env[TOKEN_PEPPER_ENV] = "mismatched-ephemeral-pepper-xxx";
+    resetTokenPepperCache();
+    assert.throws(
+      () => decryptSecret(encryptedByApi),
+      (err: unknown) => err instanceof EncryptionError && err.code === "DECRYPTION_FAILED"
+    );
+  } finally {
+    if (originalPepper === undefined) {
+      delete process.env[TOKEN_PEPPER_ENV];
+    } else {
+      process.env[TOKEN_PEPPER_ENV] = originalPepper;
+    }
+    resetTokenPepperCache();
+  }
+});
+
+test("worker does not start processing jobs with invalid production configuration", async () => {
+  const originalEnv = process.env.NODE_ENV;
+  const originalPepper = process.env[TOKEN_PEPPER_ENV];
+  let jobsClaimed = 0;
+
+  try {
+    process.env.NODE_ENV = "production";
+    delete process.env[TOKEN_PEPPER_ENV];
+    resetTokenPepperCache();
+
+    let errorCaught: Error | null = null;
+    try {
+      assertWorkerPepperConfigured();
+      jobsClaimed++;
+    } catch (err) {
+      errorCaught = err as Error;
+    }
+
+    assert.ok(errorCaught !== null, "Must fail closed with an error");
+    assert.match(
+      errorCaught.message,
+      /DEPLOYKIT_TOKEN_PEPPER must be set explicitly in production/
+    );
+    assert.equal(jobsClaimed, 0, "No jobs must be claimed or processed with missing pepper in production");
+  } finally {
+    process.env.NODE_ENV = originalEnv;
+    if (originalPepper === undefined) {
+      delete process.env[TOKEN_PEPPER_ENV];
+    } else {
+      process.env[TOKEN_PEPPER_ENV] = originalPepper;
+    }
+    resetTokenPepperCache();
+  }
 });

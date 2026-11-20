@@ -1,4 +1,5 @@
 import pool from "../db/database.js";
+import { acquireAdvisoryXactLock, ADVISORY_LOCK_NAMESPACES } from "../db/advisoryLock.js";
 import { DomainError } from "../domains/domainName.js";
 import {
   getDomainById,
@@ -57,9 +58,7 @@ export async function claimDueCertificates(limit = 5): Promise<DomainRow[]> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query(
-      `SELECT pg_advisory_xact_lock(hashtext('deploykit_cert_claim'))`
-    );
+    await acquireAdvisoryXactLock(client, ADVISORY_LOCK_NAMESPACES.CERT_CLAIM);
     const due = await client.query(
       `
       SELECT *

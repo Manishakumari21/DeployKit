@@ -6,6 +6,7 @@ import {
 import { recordDeploymentEvent } from "../deployments/deploymentEvents.js";
 import { AgentError, getAgentById } from "../agents/agentService.js";
 import { isEdgeBuildEnabled } from "../workers/deploymentQueue.js";
+import { acquireAdvisoryXactLock, ADVISORY_LOCK_NAMESPACES } from "../db/advisoryLock.js";
 
 export type DeploymentTrigger =
   | "manual"
@@ -153,9 +154,11 @@ export async function createDeployment(
 
     let deployment;
 
-    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-      input.projectId,
-    ]);
+    await acquireAdvisoryXactLock(
+      client,
+      ADVISORY_LOCK_NAMESPACES.PROJECT_DEPLOYMENT,
+      input.projectId
+    );
 
     if (input.idempotencyKey) {
       const replayResult = await client.query(

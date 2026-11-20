@@ -390,8 +390,8 @@ export function fetchDeployment(deploymentId: string, signal?: AbortSignal): Pro
   return request<ApiDeployment>(`/deployments/${deploymentId}`, { signal });
 }
 
-export function fetchDeploymentEvents(deploymentId: string): Promise<DeploymentEvent[]> {
-  return request<DeploymentEvent[]>(`/deployments/${deploymentId}/events`);
+export function fetchDeploymentEvents(deploymentId: string, signal?: AbortSignal): Promise<DeploymentEvent[]> {
+  return request<DeploymentEvent[]>(`/deployments/${deploymentId}/events`, signal ? { signal } : undefined);
 }
 
 export function cancelDeployment(deploymentId: string): Promise<{ id: string; status: string }> {

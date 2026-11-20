@@ -6,8 +6,7 @@ import {
   getSessionLifetimeMs,
   isCookieSecure,
 } from "../config/sessionConfig.js";
-import { resolveSession } from "../services/sessionService.js";
-import { findUserById, isDisabled } from "../services/userService.js";
+import { resolveUserSession } from "../services/sessionService.js";
 import {
   AuthorizationError,
   requireDeploymentAccess,
@@ -83,13 +82,9 @@ function forbidden(res: Response): void {
 }
 
 async function authenticateRequest(req: Request): Promise<AuthContext | null> {
-  const session = await resolveSession(parseSessionCookie(req));
+  const session = await resolveUserSession(parseSessionCookie(req));
   if (!session) return null;
-  // A disabled account must lose access immediately, not just at next login,
-  // so the flag is enforced on every authenticated request.
-  const user = await findUserById(session.userId);
-  if (!user || isDisabled(user)) return null;
-  return { userId: session.userId, sessionId: session.sessionId, role: user.role };
+  return { userId: session.userId, sessionId: session.sessionId, role: session.role };
 }
 
 export async function authenticate(

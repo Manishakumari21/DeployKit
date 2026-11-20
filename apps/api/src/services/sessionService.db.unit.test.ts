@@ -10,6 +10,7 @@ import {
   deleteExpiredSessions,
   hashSessionToken,
   resolveSession,
+  resolveUserSession,
   revokeSession,
   revokeSessionById,
   SessionError,
@@ -183,4 +184,51 @@ test("sessions cannot be created for unknown users", async () => {
   await assert.rejects(createSession(""), (e: unknown) => e instanceof SessionError);
   const after = (await pool.query(`SELECT COUNT(*)::int AS n FROM sessions`)).rows[0].n;
   assert.equal(after, before);
+});
+
+test("resolveUserSession: single-query authentication validates token, enforces disabled flag, and reflects role changes", async () => {
+  if (!(await gateDb("services/sessionService.db.unit.test.ts", dbAvailable))) return;
+  const user = await makeUser("auth-opt");
+  try {
+    const session = await createSession(user.id);
+
+    // 1. Valid authentication resolves user, session, and role
+    const resolved = await resolveUserSession(session.token);
+    assert.ok(resolved);
+    assert.equal(resolved.userId, user.id);
+    assert.equal(resolved.sessionId, session.id);
+    assert.equal(resolved.role, "member");
+    assert.equal((resolved as Record<string, unknown>).password_hash, undefined);
+
+    // 2. Invalid / unknown tokens return null
+    assert.equal(await resolveUserSession("invalid-token-value"), null);
+    assert.equal(await resolveUserSession(null), null);
+
+    // 3. Role change in database is immediately reflected on subsequent resolution
+    await pool.query(`UPDATE users SET role = 'admin' WHERE id = $1`, [user.id]);
+    const resolvedAdmin = await resolveUserSession(session.token);
+    assert.ok(resolvedAdmin);
+    assert.equal(resolvedAdmin.role, "admin");
+
+    // 4. Disabled user loses access immediately even with a valid active session
+    await pool.query(`UPDATE users SET disabled_at = NOW() WHERE id = $1`, [user.id]);
+    assert.equal(await resolveUserSession(session.token), null, "Disabled user must return null immediately");
+
+    // Re-enable user
+    await pool.query(`UPDATE users SET disabled_at = NULL WHERE id = $1`, [user.id]);
+    assert.ok(await resolveUserSession(session.token), "Re-enabled user should regain access");
+
+    // 5. Revoked token returns null
+    await revokeSession(session.token);
+    assert.equal(await resolveUserSession(session.token), null, "Revoked session must return null");
+
+    // 6. Expired session returns null
+    const session2 = await createSession(user.id);
+    await pool.query(`UPDATE sessions SET expires_at = NOW() - INTERVAL '10 seconds' WHERE id = $1`, [
+      session2.id,
+    ]);
+    assert.equal(await resolveUserSession(session2.token), null, "Expired session must return null");
+  } finally {
+    await cleanup();
+  }
 });

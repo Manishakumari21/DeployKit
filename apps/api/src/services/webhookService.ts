@@ -1,4 +1,5 @@
 import pool from "../db/database.js";
+import { acquireAdvisoryXactLock, ADVISORY_LOCK_NAMESPACES } from "../db/advisoryLock.js";
 import { validateBranch } from "../infrastructure/git/sourceCheckout.js";
 import { createDeployment, DeploymentConflictError } from "./deploymentService.js";
 import {
@@ -102,7 +103,7 @@ async function claimDelivery(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [deliveryId]);
+    await acquireAdvisoryXactLock(client, ADVISORY_LOCK_NAMESPACES.WEBHOOK_DELIVERY, deliveryId);
     const existing = await client.query(
       `SELECT status, deployment_id, updated_at
        FROM github_webhook_deliveries

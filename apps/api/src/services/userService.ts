@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import type { QueryResult } from "pg";
 import pool from "../db/database.js";
 import { withTransaction } from "../db/transaction.js";
+import { acquireAdvisoryXactLock, ADVISORY_LOCK_NAMESPACES } from "../db/advisoryLock.js";
 
 export const BCRYPT_COST = 12;
 
@@ -128,8 +129,9 @@ export async function createBootstrapUser(input: {
 }): Promise<PublicUser> {
   const prepared = await prepareNewUser(input.email, input.password);
   return withTransaction(async (client) => {
-    await client.query(
-      `SELECT pg_advisory_xact_lock(hashtext('deploykit_registration_bootstrap'))`
+    await acquireAdvisoryXactLock(
+      client,
+      ADVISORY_LOCK_NAMESPACES.REGISTRATION_BOOTSTRAP
     );
     const exists = (
       await client.query(`SELECT EXISTS(SELECT 1 FROM users) AS exists`)

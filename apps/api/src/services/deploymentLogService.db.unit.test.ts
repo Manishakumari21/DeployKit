@@ -4,13 +4,16 @@ import assert from "node:assert/strict";
 import pool from "../db/database.js";
 import {
   appendLog,
+  appendLogs,
   appendOutput,
   deleteExpiredLogs,
+  deploymentUsage,
   getDeploymentLogUsage,
   listLogs,
   normalizeLogLine,
   redactSecrets,
   safeAppendLog,
+  safeAppendLogs,
 } from "./deploymentLogService.js";
 import { gateDb } from "../test/dbGate.js";
 
@@ -176,3 +179,201 @@ test("deleteExpiredLogs removes only rows past retention", async () => {
     await pool.query(`DELETE FROM projects WHERE id = $1`, [project.id]);
   }
 });
+
+test("appendLogs ingests large batches (150 lines) in a single batch operation", async () => {
+  if (!(await gateDb("services/deploymentLogService.db.unit.test.ts", dbAvailable))) return;
+  const project = await createProject(`logs-batch-${Date.now()}`);
+  const dep = await createDeployment(project.id);
+  try {
+    const inputs = Array.from({ length: 150 }, (_, i) => ({
+      deploymentId: dep.id,
+      projectId: project.id,
+      source: "build" as const,
+      level: "info" as const,
+      message: `build step output line #${i + 1}`,
+      metadata: { stepIndex: i + 1 },
+    }));
+
+    const rows = await appendLogs(inputs);
+    assert.equal(rows.length, 150);
+    assert.equal(rows[0].message, "build step output line #1");
+    assert.equal(rows[149].message, "build step output line #150");
+
+    const usage = await getDeploymentLogUsage(dep.id);
+    assert.equal(usage.lines, 150);
+    assert.equal(usage.truncated, false);
+
+    const logs = await listLogs({ deploymentId: dep.id, limit: 200, direction: "asc" });
+    assert.equal(logs.items.length, 150);
+  } finally {
+    await pool.query(`DELETE FROM projects WHERE id = $1`, [project.id]);
+  }
+});
+
+test("appendLogs enforces line quota and inserts truncation marker exactly once", async () => {
+  if (!(await gateDb("services/deploymentLogService.db.unit.test.ts", dbAvailable))) return;
+  const origMax = process.env.DEPLOYKIT_LOG_MAX_LINES_PER_DEPLOYMENT;
+  process.env.DEPLOYKIT_LOG_MAX_LINES_PER_DEPLOYMENT = "5";
+  const project = await createProject(`logs-quota-${Date.now()}`);
+  const dep = await createDeployment(project.id);
+  try {
+    const inputs = Array.from({ length: 8 }, (_, i) => ({
+      deploymentId: dep.id,
+      projectId: project.id,
+      source: "build" as const,
+      level: "info" as const,
+      message: `quota line ${i + 1}`,
+    }));
+
+    const rows = await appendLogs(inputs);
+    // 5 log rows + 1 truncation row
+    assert.equal(rows.length, 6);
+    assert.equal(rows[5].level, "warn");
+    assert.equal(rows[5].message, "Log output truncated: deployment limit reached");
+    assert.equal(rows[5].metadata?.reason, "deployment_limit");
+
+    const usage = await getDeploymentLogUsage(dep.id);
+    assert.equal(usage.lines, 6);
+    assert.equal(usage.truncated, true);
+
+    // Subsequent ingestion attempts must return the existing marker row and insert nothing new
+    const subsequent = await appendLogs([
+      {
+        deploymentId: dep.id,
+        projectId: project.id,
+        source: "build",
+        level: "info",
+        message: "this should be rejected due to limit",
+      },
+    ]);
+    assert.equal(subsequent.length, 1);
+    assert.equal(subsequent[0].metadata?.reason, "deployment_limit");
+
+    const usageAfter = await getDeploymentLogUsage(dep.id);
+    assert.equal(usageAfter.lines, 6); // count unchanged
+  } finally {
+    if (origMax !== undefined) {
+      process.env.DEPLOYKIT_LOG_MAX_LINES_PER_DEPLOYMENT = origMax;
+    } else {
+      delete process.env.DEPLOYKIT_LOG_MAX_LINES_PER_DEPLOYMENT;
+    }
+    await pool.query(`DELETE FROM projects WHERE id = $1`, [project.id]);
+  }
+});
+
+test("appendLogs enforces byte quota and gracefully truncates", async () => {
+  if (!(await gateDb("services/deploymentLogService.db.unit.test.ts", dbAvailable))) return;
+  const origMax = process.env.DEPLOYKIT_LOG_MAX_BYTES_PER_DEPLOYMENT;
+  process.env.DEPLOYKIT_LOG_MAX_BYTES_PER_DEPLOYMENT = "100";
+  const project = await createProject(`logs-bytes-${Date.now()}`);
+  const dep = await createDeployment(project.id);
+  try {
+    // Each line is ~40 bytes
+    const inputs = [
+      {
+        deploymentId: dep.id,
+        projectId: project.id,
+        source: "build" as const,
+        level: "info" as const,
+        message: "A".repeat(40),
+      },
+      {
+        deploymentId: dep.id,
+        projectId: project.id,
+        source: "build" as const,
+        level: "info" as const,
+        message: "B".repeat(40),
+      },
+      {
+        deploymentId: dep.id,
+        projectId: project.id,
+        source: "build" as const,
+        level: "info" as const,
+        message: "C".repeat(40),
+      },
+    ];
+
+    const rows = await appendLogs(inputs);
+    // Line 1 (40B) and Line 2 (40B) fit into 100B. Line 3 (40B) exceeds 100B, triggering truncation marker.
+    assert.equal(rows.length, 3); // 2 rows + 1 marker row
+    assert.equal(rows[2].metadata?.reason, "deployment_limit");
+
+    const usage = await getDeploymentLogUsage(dep.id);
+    assert.equal(usage.truncated, true);
+  } finally {
+    if (origMax !== undefined) {
+      process.env.DEPLOYKIT_LOG_MAX_BYTES_PER_DEPLOYMENT = origMax;
+    } else {
+      delete process.env.DEPLOYKIT_LOG_MAX_BYTES_PER_DEPLOYMENT;
+    }
+    await pool.query(`DELETE FROM projects WHERE id = $1`, [project.id]);
+  }
+});
+
+test("concurrent appendLogs for same deployment serialize cleanly under advisory lock", async () => {
+  if (!(await gateDb("services/deploymentLogService.db.unit.test.ts", dbAvailable))) return;
+  const project = await createProject(`logs-conc-${Date.now()}`);
+  const dep = await createDeployment(project.id);
+  try {
+    // 5 concurrent batches of 20 items each
+    const batches = Array.from({ length: 5 }, (_, batchIdx) =>
+      Array.from({ length: 20 }, (_, itemIdx) => ({
+        deploymentId: dep.id,
+        projectId: project.id,
+        source: "build" as const,
+        level: "info" as const,
+        message: `batch ${batchIdx} item ${itemIdx}`,
+      }))
+    );
+
+    const results = await Promise.all(batches.map((b) => appendLogs(b)));
+    assert.equal(results.length, 5);
+    for (const r of results) {
+      assert.equal(r.length, 20);
+    }
+
+    const usage = await getDeploymentLogUsage(dep.id);
+    assert.equal(usage.lines, 100);
+    assert.equal(usage.truncated, false);
+  } finally {
+    await pool.query(`DELETE FROM projects WHERE id = $1`, [project.id]);
+  }
+});
+
+test("appendLogs transaction rolls back on invalid input mid-batch", async () => {
+  if (!(await gateDb("services/deploymentLogService.db.unit.test.ts", dbAvailable))) return;
+  const project = await createProject(`logs-rollback-${Date.now()}`);
+  const dep = await createDeployment(project.id);
+  try {
+    // An input that passes validateAppendInput (non-empty string),
+    // but normalizeLogLine strips ANSI to empty string, causing transaction to fail and rollback.
+    const inputs = [
+      {
+        deploymentId: dep.id,
+        projectId: project.id,
+        source: "build" as const,
+        level: "info" as const,
+        message: "valid line 1",
+      },
+      {
+        deploymentId: dep.id,
+        projectId: project.id,
+        source: "build" as const,
+        level: "info" as const,
+        message: " \x1b[32m\x1b[0m ", // normalizes to empty string
+      },
+    ];
+
+    await assert.rejects(
+      () => appendLogs(inputs),
+      /Log message must not be empty/
+    );
+
+    // Verify atomic rollback: valid line 1 must NOT be in DB
+    const usage = await getDeploymentLogUsage(dep.id);
+    assert.equal(usage.lines, 0);
+  } finally {
+    await pool.query(`DELETE FROM projects WHERE id = $1`, [project.id]);
+  }
+});
+

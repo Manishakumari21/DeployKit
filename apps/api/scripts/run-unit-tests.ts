@@ -34,6 +34,12 @@ if (childEnv.DATABASE_URL && childEnv.DATABASE_URL.endsWith("/deploykit")) {
 } else if (!childEnv.DATABASE_URL) {
   childEnv.DATABASE_URL = "postgresql://deploykit:deploykit@localhost:5433/deploykit_test";
 }
+if (!childEnv.DATABASE_POOL_MIN) {
+  childEnv.DATABASE_POOL_MIN = "0";
+}
+if (!childEnv.DATABASE_POOL_IDLE_TIMEOUT_MS) {
+  childEnv.DATABASE_POOL_IDLE_TIMEOUT_MS = "1000";
+}
 
 if (mode === "require-db") childEnv.REQUIRE_DB = "1";
 else delete childEnv.REQUIRE_DB;

@@ -7,6 +7,7 @@ export const DB_GATED_SUITES: readonly string[] = [
   "agents/edgeActivation.db.unit.test.ts",
   "agents/agentService.db.unit.test.ts",
   "agents/edgeAgentClient.integration.test.ts",
+  "db/advisoryLock.db.unit.test.ts",
   "deployments/deploymentEvents.db.unit.test.ts",
   "services/authentication.db.unit.test.ts",
   "services/authorizationService.db.unit.test.ts",

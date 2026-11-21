@@ -23,6 +23,10 @@ import {
 } from "../controllers/agentController.js";
 import { gateDb } from "../test/dbGate.js";
 
+test.after(async () => {
+  await pool.end().catch(() => {});
+});
+
 async function dbAvailable(): Promise<boolean> {
   try {
     const check = await pool.query(

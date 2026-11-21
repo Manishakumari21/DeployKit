@@ -198,7 +198,7 @@ test("resolveUserSession: single-query authentication validates token, enforces 
     assert.equal(resolved.userId, user.id);
     assert.equal(resolved.sessionId, session.id);
     assert.equal(resolved.role, "member");
-    assert.equal((resolved as Record<string, unknown>).password_hash, undefined);
+    assert.equal((resolved as unknown as Record<string, unknown>).password_hash, undefined);
 
     // 2. Invalid / unknown tokens return null
     assert.equal(await resolveUserSession("invalid-token-value"), null);

@@ -149,10 +149,41 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-const RUNTIME_DEFAULTS = {
-  memoryBytes: 512 * 1024 * 1024,
-  cpuLimit: 1,
-  pidsLimit: 256,
+function parseBoundedInt(raw: string | undefined, fallback: number, min: number, max: number): number {
+  if (raw === undefined || raw === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < min) return min;
+  if (parsed > max) return max;
+  return Math.floor(parsed);
+}
+
+function parseBoundedFloat(raw: string | undefined, fallback: number, min: number, max: number): number {
+  if (raw === undefined || raw === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < min) return min;
+  if (parsed > max) return max;
+  return parsed;
+}
+
+export const RUNTIME_DEFAULTS = {
+  memoryBytes: parseBoundedInt(
+    process.env.DEPLOYKIT_RUNTIME_MEMORY_BYTES,
+    512 * 1024 * 1024,
+    64 * 1024 * 1024,
+    16 * 1024 * 1024 * 1024
+  ),
+  cpuLimit: parseBoundedFloat(
+    process.env.DEPLOYKIT_RUNTIME_CPU_LIMIT,
+    1,
+    0.1,
+    32
+  ),
+  pidsLimit: parseBoundedInt(
+    process.env.DEPLOYKIT_RUNTIME_PIDS_LIMIT,
+    256,
+    32,
+    4096
+  ),
   fallbackPort: 3000,
   healthPath: "/",
 };

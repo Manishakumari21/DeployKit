@@ -221,7 +221,21 @@ async function runCertSweep(): Promise<void> {
 }
 
 let shuttingDown = false;
+let shutdownTimer: NodeJS.Timeout | null = null;
 const activeAborts = new Set<AbortController>();
+
+export function isWorkerShuttingDown(): boolean {
+  return shuttingDown;
+}
+
+export function resetWorkerShutdownStateForTests(): void {
+  shuttingDown = false;
+  if (shutdownTimer) {
+    clearTimeout(shutdownTimer);
+    shutdownTimer = null;
+  }
+  activeAborts.clear();
+}
 
 async function runPeriodicSweeps(): Promise<void> {
   try {
@@ -398,6 +412,9 @@ export async function processDeploymentJob(
     deps.leaseRenewalMs ?? Math.max(1_000, Math.floor(leaseMs / 3));
   const cancelPollMs = deps.cancelPollMs ?? 2_000;
   const shutdownCheck = deps.isShuttingDown ?? (() => shuttingDown);
+  if (shutdownCheck()) {
+    return false;
+  }
 
   const job = await claim(WORKER_ID, leaseMs);
 
@@ -644,11 +661,17 @@ export interface GatewaySyncJobDependencies {
   fail?: typeof failGatewaySyncJob;
   sync?: (projectId: string) => Promise<unknown>;
   readRawConfig?: (projectId: string) => Promise<string | null>;
+  isShuttingDown?: () => boolean;
 }
 
 export async function processGatewaySyncJob(
   deps: GatewaySyncJobDependencies = {}
 ): Promise<boolean> {
+  const shutdownCheck = deps.isShuttingDown ?? (() => shuttingDown);
+  if (shutdownCheck()) {
+    return false;
+  }
+
   const claim = deps.claim ?? claimNextGatewaySyncJob;
   const complete = deps.complete ?? completeGatewaySyncJob;
   const fail = deps.fail ?? failGatewaySyncJob;
@@ -723,12 +746,14 @@ export interface EdgeBuildJobDependencies {
   extendLease?: typeof extendEdgeBuildLease;
   claim?: typeof claimNextEdgeBuildJob;
   queryDeploymentStatus?: (deploymentId: string) => Promise<string | undefined>;
+  isShuttingDown?: () => boolean;
 }
 
 export async function processEdgeBuildJob(
   deps: EdgeBuildJobDependencies = {}
 ) {
-  if (!isEdgeBuildEnabled()) {
+  const shutdownCheck = deps.isShuttingDown ?? (() => shuttingDown);
+  if (!isEdgeBuildEnabled() || shutdownCheck()) {
     return false;
   }
 
@@ -1023,10 +1048,24 @@ async function run() {
     slots.push(runDeploymentSlot(slot));
   }
 
-  await runMaintenanceLoop();
-  await Promise.allSettled(slots);
-
-  log("info", "worker.stopped");
+  try {
+    await runMaintenanceLoop();
+    await Promise.allSettled(slots);
+  } finally {
+    if (shutdownTimer) {
+      clearTimeout(shutdownTimer);
+      shutdownTimer = null;
+    }
+    try {
+      await pool.end();
+      log("info", "worker.pool_closed");
+    } catch (poolErr) {
+      log("error", "worker.pool_close_failed", {
+        error: poolErr instanceof Error ? poolErr.message : String(poolErr),
+      });
+    }
+    log("info", "worker.stopped");
+  }
 }
 
 async function runDeploymentSlot(slot: number): Promise<void> {
@@ -1043,7 +1082,9 @@ async function runDeploymentSlot(slot: number): Promise<void> {
           error instanceof Error ? error.message : "Unknown worker error",
       });
 
-      await sleep(POLL_INTERVAL_MS);
+      if (!shuttingDown) {
+        await sleep(POLL_INTERVAL_MS);
+      }
     }
   }
 }
@@ -1054,8 +1095,13 @@ async function runMaintenanceLoop(): Promise<void> {
       await recoverExpiredJobs();
       await recoverExpiredGatewaySyncJobs();
 
+      if (shuttingDown) break;
+
       const synced = await processGatewaySyncJob();
+      if (shuttingDown) break;
+
       const builtEdge = isEdgeBuildEnabled() ? await processEdgeBuildJob() : false;
+      if (shuttingDown) break;
 
       const demoted = await demoteEdgeBuildJobsWhenDisabled();
       if (demoted.length > 0) {
@@ -1065,10 +1111,13 @@ async function runMaintenanceLoop(): Promise<void> {
         });
       }
 
-      if (!builtEdge && !synced) {
+      if (!builtEdge && !synced && !shuttingDown) {
         await runCertSweep();
+        if (shuttingDown) break;
         await runPeriodicSweeps();
-        await sleep(POLL_INTERVAL_MS);
+        if (!shuttingDown) {
+          await sleep(POLL_INTERVAL_MS);
+        }
       }
     } catch (error) {
       log("error", "worker.loop_error", {
@@ -1078,27 +1127,52 @@ async function runMaintenanceLoop(): Promise<void> {
             : "Unknown worker error",
       });
 
-      await sleep(POLL_INTERVAL_MS);
+      if (!shuttingDown) {
+        await sleep(POLL_INTERVAL_MS);
+      }
     }
   }
 }
 
-export function requestShutdown(signal: string) {
+export const WORKER_SHUTDOWN_TIMEOUT_MS = Math.max(
+  5_000,
+  Number(process.env.DEPLOYKIT_WORKER_SHUTDOWN_TIMEOUT_MS ?? 30_000)
+);
+
+export function requestShutdown(
+  signal: string,
+  options: { timeoutMs?: number; onExit?: (code: number) => void } = {}
+) {
   if (shuttingDown) {
     return;
   }
 
   shuttingDown = true;
 
+  const timeoutMs = options.timeoutMs ?? WORKER_SHUTDOWN_TIMEOUT_MS;
+  const onExit = options.onExit ?? ((code: number) => process.exit(code));
+
   log("info", "worker.shutdown_requested", {
     signal,
+    timeoutMs,
   });
+
+  shutdownTimer = setTimeout(() => {
+    log("error", "worker.shutdown_timeout_expired", {
+      timeoutMs,
+    });
+    onExit(1);
+  }, timeoutMs);
+  shutdownTimer.unref();
 
   try {
     for (const controller of activeAborts) {
       controller.abort();
     }
-  } catch {
+  } catch (err) {
+    log("error", "worker.abort_failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 

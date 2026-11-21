@@ -1,6 +1,8 @@
 import "dotenv/config";
 import app from "./app.js";
+import pool from "./db/database.js";
 import { tokenPepperSource } from "./security/tokenHasher.js";
+import { createGracefulShutdown } from "./lifecycle/gracefulShutdown.js";
 
 const PORT = process.env.PORT || 3000;
 
@@ -9,15 +11,9 @@ const PORT = process.env.PORT || 3000;
 // session/agent tokens under an ephemeral, restart-invalidated key.
 tokenPepperSource();
 
-const server = app.listen(PORT, () => {
+export const server = app.listen(PORT, () => {
   console.log(`DeployKit API running on port ${PORT}`);
 });
 
-function shutdown(signal: string): void {
-  console.log(`${signal} received, shutting down`);
-  server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 5000).unref();
-}
-
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
+export const shutdownController = createGracefulShutdown(server, pool);
+shutdownController.registerSignalHandlers();

@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { DockerRuntimeManager } from "../infrastructure/runtime/dockerRuntimeManager.js";
-import { shouldPullImage, assertRegistryDiskHasSpace } from "./deploymentPipeline.js";
+import {
+  shouldPullImage,
+  assertRegistryDiskHasSpace,
+  RUNTIME_DEFAULTS,
+} from "./deploymentPipeline.js";
 
 const CONFIG = {
   registryHost: "localhost:5000",
@@ -94,4 +98,12 @@ test("an unknown or failing disk reading never blocks a deploy (fail open)", asy
       throw new Error("docker unreachable");
     }, { softPercent: 85, hardPercent: 95 })
   );
+});
+
+test("RUNTIME_DEFAULTS enforces valid container resource controls", () => {
+  assert.equal(RUNTIME_DEFAULTS.memoryBytes >= 64 * 1024 * 1024, true);
+  assert.equal(RUNTIME_DEFAULTS.cpuLimit >= 0.1, true);
+  assert.equal(RUNTIME_DEFAULTS.pidsLimit >= 32, true);
+  assert.equal(RUNTIME_DEFAULTS.fallbackPort, 3000);
+  assert.equal(RUNTIME_DEFAULTS.healthPath, "/");
 });

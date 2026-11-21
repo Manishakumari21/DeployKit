@@ -4,8 +4,12 @@ import assert from "node:assert/strict";
 import {
   assertWorkerPepperConfigured,
   createIntervalSweep,
+  isWorkerShuttingDown,
   processDeploymentJob,
+  processEdgeBuildJob,
+  processGatewaySyncJob,
   requestShutdown,
+  resetWorkerShutdownStateForTests,
   resolveWorkerConcurrency,
 } from "./deploymentWorker.js";
 import { resetTokenPepperCache, TOKEN_PEPPER_ENV } from "../security/tokenHasher.js";
@@ -329,5 +333,147 @@ test("worker does not start processing jobs with invalid production configuratio
       process.env[TOKEN_PEPPER_ENV] = originalPepper;
     }
     resetTokenPepperCache();
+  }
+});
+
+test("processDeploymentJob refuses to claim jobs when worker is shutting down", async () => {
+  let claimCalled = false;
+  const processed = await processDeploymentJob({
+    isShuttingDown: () => true,
+    claim: async () => {
+      claimCalled = true;
+      return fakeJob();
+    },
+  });
+
+  assert.equal(processed, false, "Must return false without processing");
+  assert.equal(claimCalled, false, "Must not attempt to claim a job when shutting down");
+});
+
+test("processGatewaySyncJob refuses to claim jobs when worker is shutting down", async () => {
+  let claimCalled = false;
+  const processed = await processGatewaySyncJob({
+    isShuttingDown: () => true,
+    claim: async () => {
+      claimCalled = true;
+      return { id: "g1", projectId: "p1", reason: "test", attempts: 1, maxAttempts: 3, leaseToken: "tok" } as never;
+    },
+  });
+
+  assert.equal(processed, false, "Must return false without processing");
+  assert.equal(claimCalled, false, "Must not attempt to claim a gateway sync job when shutting down");
+});
+
+test("processEdgeBuildJob refuses to claim jobs when worker is shutting down", async () => {
+  let claimCalled = false;
+  const processed = await processEdgeBuildJob({
+    isShuttingDown: () => true,
+    claim: async () => {
+      claimCalled = true;
+      return fakeJob() as never;
+    },
+  });
+
+  assert.equal(processed, false, "Must return false without processing");
+  assert.equal(claimCalled, false, "Must not attempt to claim an edge build job when shutting down");
+});
+
+test("requestShutdown is idempotent and manages worker shutdown state", () => {
+  try {
+    resetWorkerShutdownStateForTests();
+    assert.equal(isWorkerShuttingDown(), false);
+
+    let exitCalled = false;
+    requestShutdown("SIGTERM", {
+      timeoutMs: 5000,
+      onExit: () => {
+        exitCalled = true;
+      },
+    });
+
+    assert.equal(isWorkerShuttingDown(), true);
+
+    // Subsequent calls must be ignored
+    requestShutdown("SIGINT", {
+      timeoutMs: 5000,
+      onExit: () => {
+        exitCalled = true;
+      },
+    });
+
+    assert.equal(isWorkerShuttingDown(), true);
+    assert.equal(exitCalled, false, "Exit should not be called until timeout expires");
+  } finally {
+    resetWorkerShutdownStateForTests();
+  }
+});
+
+test("worker shutdown timeout triggers forced exit(1) when tasks hang", async () => {
+  try {
+    resetWorkerShutdownStateForTests();
+    let exitCode: number | null = null;
+
+    await new Promise<void>((resolve) => {
+      requestShutdown("SIGTERM", {
+        timeoutMs: 40,
+        onExit: (code) => {
+          exitCode = code;
+          resolve();
+        },
+      });
+    });
+
+    assert.equal(exitCode, 1, "Must force exit with code 1 upon timeout expiry");
+  } finally {
+    resetWorkerShutdownStateForTests();
+  }
+});
+
+test("in-flight deployment job aborted during shutdown releases lease back to queued", async () => {
+  let isDown = false;
+  let released = false;
+  let releaseReason = "";
+  let failed = false;
+
+  try {
+    resetWorkerShutdownStateForTests();
+    await processDeploymentJob({
+      claim: async () => fakeJob(),
+      extendLease: async () => true,
+      leaseRenewalMs: 500,
+      cancelPollMs: 500,
+      isShuttingDown: () => isDown,
+      readDeploymentStatus: async () => "building",
+      executor: {
+        execute: async (ctx) => {
+          isDown = true;
+          requestShutdown("SIGTERM", { timeoutMs: 5000, onExit: () => {} });
+          await new Promise<void>((resolve) => {
+            if (ctx.signal?.aborted) return resolve();
+            ctx.signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+          throw new Error("aborted on shutdown");
+        },
+      } as DeploymentExecutor,
+      complete: async () => undefined,
+      fail: async () => {
+        failed = true;
+        return "retrying" as const;
+      },
+      failTerminal: async () => {
+        failed = true;
+      },
+      release: async (_jobId, _depId, _workerId, _token, reason) => {
+        released = true;
+        releaseReason = reason ?? "";
+        return true;
+      },
+    });
+
+    assert.equal(released, true, "Job lease must be released when aborted during shutdown");
+    assert.match(releaseReason, /Worker is shutting down/);
+    assert.equal(failed, false, "Aborted job on shutdown must NOT be marked as failed");
+  } finally {
+    resetWorkerShutdownStateForTests();
   }
 });

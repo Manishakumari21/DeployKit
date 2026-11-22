@@ -465,7 +465,26 @@ export async function getDeploymentById(id: string) {
   return result.rows[0] ?? null;
 }
 
-export async function getProjectDeployments(projectId: string) {
+export interface PaginationOptions {
+  limit?: number;
+  cursor?: string | null;
+}
+
+export async function getProjectDeployments(
+  projectId: string,
+  options: PaginationOptions = {}
+) {
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 100);
+  const values: unknown[] = [projectId, limit];
+  let cursorClause = "";
+
+  if (options.cursor) {
+    values.push(options.cursor);
+    cursorClause = `AND (d.created_at, d.id) < (
+      SELECT created_at, id FROM deployments WHERE id = $3
+    )`;
+  }
+
   const result = await pool.query(
     `
     SELECT
@@ -477,24 +496,42 @@ export async function getProjectDeployments(projectId: string) {
     LEFT JOIN deployment_jobs j
       ON j.deployment_id = d.id
     WHERE d.project_id = $1
-    ORDER BY d.created_at DESC
+    ${cursorClause}
+    ORDER BY d.created_at DESC, d.id DESC
+    LIMIT $2
     `,
-    [projectId]
+    values
   );
 
   return result.rows;
 }
 
-export async function getDeploymentEvents(deploymentId: string) {
+export async function getDeploymentEvents(
+  deploymentId: string,
+  options: PaginationOptions = {}
+) {
+  const limit = Math.min(Math.max(options.limit ?? 100, 1), 200);
+  const values: unknown[] = [deploymentId, limit];
+  let cursorClause = "";
+
+  if (options.cursor) {
+    values.push(options.cursor);
+    cursorClause = `AND (created_at, id) > (
+      SELECT created_at, id FROM deployment_events WHERE id = $3
+    )`;
+  }
+
   const result = await pool.query(
     `
     SELECT id, deployment_id, event_type, status_from, status_to,
            message, metadata, created_at
     FROM deployment_events
     WHERE deployment_id = $1
+    ${cursorClause}
     ORDER BY created_at ASC, id ASC
+    LIMIT $2
     `,
-    [deploymentId]
+    values
   );
   return result.rows;
 }

@@ -121,3 +121,76 @@ export async function checkAuthRateLimit(input: {
 export async function clearEmailRateLimit(kind: "login" | "register", email: string): Promise<void> {
   await resetRateLimitKey(emailBucket(kind, email));
 }
+
+export interface DeploymentRateLimitConfig {
+  windowSeconds: number;
+  projectMaxAttempts: number;
+  userMaxAttempts: number;
+}
+
+export function getDeploymentRateLimitConfig(): DeploymentRateLimitConfig {
+  return {
+    windowSeconds: readPositiveInteger("DEPLOYKIT_DEPLOYMENT_RATE_LIMIT_WINDOW_SECONDS", 60, 3600),
+    projectMaxAttempts: readPositiveInteger("DEPLOYKIT_DEPLOYMENT_RATE_LIMIT_PROJECT_MAX", 10, 1000),
+    userMaxAttempts: readPositiveInteger("DEPLOYKIT_DEPLOYMENT_RATE_LIMIT_USER_MAX", 20, 1000),
+  };
+}
+
+export function deploymentProjectBucket(projectId: string): string {
+  return `deployment:project:${projectId}`;
+}
+
+export function deploymentUserBucket(userIdOrIp: string): string {
+  return `deployment:user:${userIdOrIp || "unknown"}`;
+}
+
+export async function checkDeploymentRateLimit(input: {
+  projectId: string;
+  userId?: string;
+  ip: string;
+}): Promise<void> {
+  const config = getDeploymentRateLimitConfig();
+  const proj = await consume(
+    deploymentProjectBucket(input.projectId),
+    config.projectMaxAttempts,
+    config.windowSeconds
+  );
+  if (!proj.allowed) {
+    throw new RateLimitError(proj.retryAfterSeconds);
+  }
+  const userKey = input.userId || input.ip;
+  const user = await consume(
+    deploymentUserBucket(userKey),
+    config.userMaxAttempts,
+    config.windowSeconds
+  );
+  if (!user.allowed) {
+    throw new RateLimitError(user.retryAfterSeconds);
+  }
+}
+
+export interface WebhookRateLimitConfig {
+  windowSeconds: number;
+  ipMaxAttempts: number;
+}
+
+export function getWebhookRateLimitConfig(): WebhookRateLimitConfig {
+  return {
+    windowSeconds: readPositiveInteger("DEPLOYKIT_WEBHOOK_RATE_LIMIT_WINDOW_SECONDS", 60, 3600),
+    ipMaxAttempts: readPositiveInteger("DEPLOYKIT_WEBHOOK_RATE_LIMIT_IP_MAX", 60, 5000),
+  };
+}
+
+export function webhookIpBucket(ip: string): string {
+  return `webhook:ip:${ip || "unknown"}`;
+}
+
+export async function checkWebhookRateLimit(input: { ip: string }): Promise<void> {
+  const config = getWebhookRateLimitConfig();
+  const res = await consume(webhookIpBucket(input.ip), config.ipMaxAttempts, config.windowSeconds);
+  if (!res.allowed) {
+    throw new RateLimitError(res.retryAfterSeconds);
+  }
+}
+
+export { consume as consumeRateLimit };

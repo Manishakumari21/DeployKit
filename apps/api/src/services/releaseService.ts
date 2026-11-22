@@ -307,10 +307,29 @@ export async function getActiveRelease(projectId: string) {
   return result.rows[0] ?? null;
 }
 
-export async function getProjectReleases(projectId: string) {
+export interface ReleasePaginationOptions {
+  limit?: number;
+  cursor?: string | null;
+}
+
+export async function getProjectReleases(
+  projectId: string,
+  options: ReleasePaginationOptions = {}
+) {
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 100);
+  const values: unknown[] = [projectId, limit];
+  let cursorClause = "";
+
+  if (options.cursor) {
+    values.push(options.cursor);
+    cursorClause = `AND (created_at, id) < (
+      SELECT created_at, id FROM releases WHERE id = $3
+    )`;
+  }
+
   const result = await pool.query(
-    `SELECT * FROM releases WHERE project_id = $1 ORDER BY created_at DESC LIMIT 50`,
-    [projectId]
+    `SELECT * FROM releases WHERE project_id = $1 ${cursorClause} ORDER BY created_at DESC, id DESC LIMIT $2`,
+    values
   );
   return result.rows;
 }

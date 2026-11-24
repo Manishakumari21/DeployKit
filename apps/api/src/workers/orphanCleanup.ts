@@ -70,3 +70,5 @@ export async function cleanupOrphanedContainers(dockerBinary = "docker", timeout
   }
   return removed;
 }
+
+export { sweepUnactivatedContainers } from "./containerSweep.js";

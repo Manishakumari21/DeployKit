@@ -27,6 +27,7 @@ export const ADVISORY_LOCK_NAMESPACES = {
   REGISTRATION_BOOTSTRAP: "deploykit:registration_bootstrap",
   CERT_CLAIM: "deploykit:cert_claim",
   DEPLOYMENT_LOG_INGESTION: "deploykit:deployment_log_ingestion",
+  CONTAINER_SWEEP: "deploykit:container_sweep",
 } as const;
 
 /**
@@ -57,4 +58,40 @@ export async function tryAcquireAdvisoryXactLock(
     [lockKey]
   );
   return result.rows[0]?.acquired === true;
+}
+
+/**
+ * Attempts to acquire a session-level advisory lock without blocking.
+ * Returns true if the lock was acquired, false if held by another session.
+ * Does not require an active transaction.
+ * Must be released via releaseSessionAdvisoryLock or by closing/releasing the client connection.
+ */
+export async function tryAcquireSessionAdvisoryLock(
+  client: PoolClient,
+  namespace: string,
+  key: string = ""
+): Promise<boolean> {
+  const lockKey = deriveAdvisoryLockKey(namespace, key);
+  const result = await client.query<{ acquired: boolean }>(
+    "SELECT pg_try_advisory_lock($1::bigint) AS acquired",
+    [lockKey]
+  );
+  return result.rows[0]?.acquired === true;
+}
+
+/**
+ * Releases a session-level advisory lock previously acquired via tryAcquireSessionAdvisoryLock.
+ * Returns true if the lock was successfully released.
+ */
+export async function releaseSessionAdvisoryLock(
+  client: PoolClient,
+  namespace: string,
+  key: string = ""
+): Promise<boolean> {
+  const lockKey = deriveAdvisoryLockKey(namespace, key);
+  const result = await client.query<{ released: boolean }>(
+    "SELECT pg_advisory_unlock($1::bigint) AS released",
+    [lockKey]
+  );
+  return result.rows[0]?.released === true;
 }

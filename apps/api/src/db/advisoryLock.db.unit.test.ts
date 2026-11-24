@@ -110,3 +110,36 @@ test("advisory locking: failure paths (rollback) do not leave locks held", async
     client2.release();
   }
 });
+
+test("session-level advisory lock: mutual exclusion and explicit unlock outside transactions", async () => {
+  if (!(await gateDb("db/advisoryLock.db.unit.test.ts", dbAvailable))) return;
+
+  const { tryAcquireSessionAdvisoryLock, releaseSessionAdvisoryLock } = await import("./advisoryLock.js");
+  const client1 = await pool.connect();
+  const client2 = await pool.connect();
+  const namespace = ADVISORY_LOCK_NAMESPACES.CONTAINER_SWEEP;
+  const sweepKey = "worker-lock";
+
+  try {
+    // 1. Client 1 acquires session lock without BEGIN/COMMIT
+    const acquired1 = await tryAcquireSessionAdvisoryLock(client1, namespace, sweepKey);
+    assert.equal(acquired1, true, "Client 1 must acquire session advisory lock");
+
+    // 2. Client 2 attempts to acquire lock -> must fail
+    const acquired2 = await tryAcquireSessionAdvisoryLock(client2, namespace, sweepKey);
+    assert.equal(acquired2, false, "Client 2 must be rejected while Client 1 holds session lock");
+
+    // 3. Client 1 explicitly releases lock
+    const released = await releaseSessionAdvisoryLock(client1, namespace, sweepKey);
+    assert.equal(released, true, "Client 1 must release session lock");
+
+    // 4. Client 2 can now acquire lock
+    const acquired2AfterRelease = await tryAcquireSessionAdvisoryLock(client2, namespace, sweepKey);
+    assert.equal(acquired2AfterRelease, true, "Client 2 must acquire lock after Client 1 release");
+
+    await releaseSessionAdvisoryLock(client2, namespace, sweepKey);
+  } finally {
+    client1.release();
+    client2.release();
+  }
+});

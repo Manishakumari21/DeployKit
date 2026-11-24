@@ -26,6 +26,7 @@ import {
   diskPressureLevel,
 } from "../infrastructure/registry/registryDiskGuard.js";
 import { pruneRegistryImages, type RegistryGcSummary } from "../infrastructure/registry/registryGarbageCollector.js";
+import type { ContainerSweepSummary } from "./containerSweep.js";
 import { BootstrapError, bootstrapWorker } from "./workerBootstrap.js";
 import {
   claimNextGatewaySyncJob,
@@ -80,6 +81,11 @@ const REGISTRY_DISK_POLL_INTERVAL_MS = Math.max(
 const REGISTRY_GC_INTERVAL_MS = Math.max(
   60_000,
   Number(process.env.DEPLOYKIT_REGISTRY_GC_SWEEP_INTERVAL_MS ?? 21_600_000)
+);
+
+const CONTAINER_SWEEP_INTERVAL_MS = Math.max(
+  10_000,
+  Number(process.env.DEPLOYKIT_CONTAINER_SWEEP_INTERVAL_MS ?? 60_000)
 );
 
 const MIN_WORKER_CONCURRENCY = 1;
@@ -185,6 +191,14 @@ const registryDiskSweep = createIntervalSweep<{
 const registryGcSweep = createIntervalSweep<RegistryGcSummary | null>(
   REGISTRY_GC_INTERVAL_MS,
   async () => await pruneRegistryImages()
+);
+
+const containerSweep = createIntervalSweep<ContainerSweepSummary | null>(
+  CONTAINER_SWEEP_INTERVAL_MS,
+  async () => {
+    const { sweepUnactivatedContainers } = await import("./containerSweep.js");
+    return await sweepUnactivatedContainers();
+  }
 );
 
 let certSweepInProgress = false;
@@ -314,6 +328,24 @@ async function runPeriodicSweeps(): Promise<void> {
     }
   } catch (error) {
     log("error", "worker.registry_gc_failed", {
+      error: error instanceof Error ? error.message.slice(0, 300) : "Unknown error",
+    });
+  }
+
+  try {
+    const containers = await containerSweep.sweep();
+    if (containers && (containers.swept > 0 || containers.errors > 0)) {
+      const level = containers.errors > 0 ? "error" : "info";
+      log(level, "worker.container_sweep", {
+        inspected: containers.inspected,
+        swept: containers.swept,
+        skipped: containers.skipped,
+        errors: containers.errors,
+        reasons: containers.reasons,
+      });
+    }
+  } catch (error) {
+    log("error", "worker.container_sweep_failed", {
       error: error instanceof Error ? error.message.slice(0, 300) : "Unknown error",
     });
   }

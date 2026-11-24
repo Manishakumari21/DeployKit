@@ -22,7 +22,17 @@ test("orphan cleanup never runs global destructive commands", async () => {
 
   const { readFile } = await import("node:fs/promises");
   const { join } = await import("node:path");
-  const src = await readFile(join(process.cwd(), "src/workers/orphanCleanup.ts"), "utf8");
+  const candidatePaths = [
+    join(process.cwd(), "apps/api/src/workers/orphanCleanup.ts"),
+    join(process.cwd(), "src/workers/orphanCleanup.ts"),
+  ];
+  let src = "";
+  for (const p of candidatePaths) {
+    try {
+      src = await readFile(p, "utf8");
+      break;
+    } catch {}
+  }
   assert.ok(!src.includes("system prune"));
   assert.ok(!src.includes("rmi "));
   assert.ok(src.includes("io.deploykit.managed=true"));

@@ -13,6 +13,7 @@ import {
   tryAcquireSessionAdvisoryLock,
   releaseSessionAdvisoryLock,
 } from "../db/advisoryLock.js";
+import { getInstallationId } from "../infrastructure/runtime/installationIdentity.js";
 import type { ExecResult } from "../infrastructure/process/dockerExec.js";
 
 async function dbAvailable(): Promise<boolean> {
@@ -106,6 +107,7 @@ test("containerSweep: real database classification of active, failed, cancelled,
       state: "running",
       createdAtMs: oldTime,
       id: "cid-active",
+      installationId: getInstallationId(),
       projectPrefix: "11111111",
       deploymentPrefix: "22222222",
     };
@@ -119,6 +121,7 @@ test("containerSweep: real database classification of active, failed, cancelled,
       state: "exited",
       createdAtMs: oldTime,
       id: "cid-failed",
+      installationId: getInstallationId(),
       projectPrefix: "11111111",
       deploymentPrefix: "33333333",
     };
@@ -132,6 +135,7 @@ test("containerSweep: real database classification of active, failed, cancelled,
       state: "exited",
       createdAtMs: oldTime,
       id: "cid-cancelled",
+      installationId: getInstallationId(),
       projectPrefix: "11111111",
       deploymentPrefix: "44444444",
     };
@@ -139,18 +143,33 @@ test("containerSweep: real database classification of active, failed, cancelled,
     assert.equal(decisionCancelled.action, "sweep");
     assert.equal(decisionCancelled.reason, "deployment_cancelled");
 
-    // Verify Foreign Container is Protected
+    // Verify Foreign Container is Protected (matching DB absent)
     const cForeign: DiscoveredContainer = {
       name: nameForeign,
       state: "running",
       createdAtMs: oldTime,
       id: "cid-foreign",
+      installationId: getInstallationId(),
       projectPrefix: "99999999",
       deploymentPrefix: "88888888",
     };
     const decisionForeign = await classifyContainer(cForeign, pool, now, 300_000);
     assert.equal(decisionForeign.action, "protect");
     assert.equal(decisionForeign.reason, "foreign_installation");
+
+    // Verify Mismatched Installation ID is Protected
+    const cMismatchInst: DiscoveredContainer = {
+      name: nameFailed,
+      state: "exited",
+      createdAtMs: oldTime,
+      id: "cid-mismatch-inst",
+      installationId: "other-installation-uuid",
+      projectPrefix: "11111111",
+      deploymentPrefix: "33333333",
+    };
+    const decisionMismatch = await classifyContainer(cMismatchInst, pool, now, 300_000);
+    assert.equal(decisionMismatch.action, "protect");
+    assert.equal(decisionMismatch.reason, "mismatched_installation_id");
   } finally {
     await pool.query(`DELETE FROM runtime_instances WHERE container_name IN ($1, $2, $3)`, [nameActive, nameFailed, nameCancelled]);
     await pool.query(`DELETE FROM releases WHERE project_id = $1`, [projectId]);
@@ -230,7 +249,7 @@ test("containerSweep: real database updates runtime_instances to stopped after r
       [rel.rows[0].id, containerName]
     );
 
-    const dockerLs = `${containerName}\texited\t2026-11-22 10:00:00 +0000 UTC\tcid-update\n`;
+    const dockerLs = `${containerName}\texited\t2026-11-22 10:00:00 +0000 UTC\tcid-update\t${getInstallationId()}\n`;
     const runFn = async (binary: string, args: string[]) => {
       if (args[0] === "container" && args[1] === "ls") return mockExecOk(dockerLs);
       if (args[0] === "container" && args[1] === "rm") return mockExecOk();

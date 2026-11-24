@@ -5,6 +5,10 @@ import type {
   RuntimeManager,
   RuntimeSpec,
 } from "./runtimeManager.js";
+import {
+  INSTALLATION_ID_LABEL,
+  getInstallationId,
+} from "./installationIdentity.js";
 
 export class RuntimeManagerError extends Error {
   readonly code: string;
@@ -209,6 +213,9 @@ export class DockerRuntimeManager
 
       "--label",
       "io.deploykit.managed=true",
+
+      "--label",
+      `${INSTALLATION_ID_LABEL}=${getInstallationId()}`,
 
       "--label",
       `io.deploykit.container=${containerName}`,

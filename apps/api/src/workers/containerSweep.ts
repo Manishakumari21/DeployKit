@@ -6,6 +6,10 @@ import {
   tryAcquireSessionAdvisoryLock,
   releaseSessionAdvisoryLock,
 } from "../db/advisoryLock.js";
+import {
+  INSTALLATION_ID_LABEL,
+  getInstallationId,
+} from "../infrastructure/runtime/installationIdentity.js";
 
 export const MANAGED_CONTAINER_REGEX = /^dk-p([0-9a-f]{8})-d([0-9a-f]{8})$/;
 
@@ -28,19 +32,21 @@ export interface DiscoveredContainer {
   state: string;
   createdAtMs: number;
   id: string;
+  installationId?: string;
   projectPrefix: string;
   deploymentPrefix: string;
 }
 
 export type SweepDecision =
   | { action: "protect"; reason: string }
-  | { action: "sweep"; reason: string; releaseId?: string; deploymentId?: string };
+  | { action: "sweep"; reason: string; projectId: string; deploymentId?: string; releaseId?: string };
 
 export interface ContainerSweepOptions {
   minAgeMs?: number;
   batchLimit?: number;
   dockerTimeoutMs?: number;
   dockerBinary?: string;
+  installationId?: string;
 }
 
 export interface ContainerSweepSummary {
@@ -70,7 +76,7 @@ export function parseDockerLsLine(line: string, nowMs: number): DiscoveredContai
   const parts = trimmed.split("\t");
   if (parts.length < 3) return null;
 
-  const [name, state, rawCreatedAt, id = ""] = parts;
+  const [name, state, rawCreatedAt, id = "", rawInstallationId = ""] = parts;
   const parsed = parseManagedContainerName(name);
   if (!parsed.valid || !parsed.projectPrefix || !parsed.deploymentPrefix) {
     return null;
@@ -85,33 +91,83 @@ export function parseDockerLsLine(line: string, nowMs: number): DiscoveredContai
     }
   }
 
+  const trimmedInstallationId = rawInstallationId.trim();
+
   return {
     name,
     state: state.toLowerCase(),
     createdAtMs,
     id: id.trim(),
+    installationId: trimmedInstallationId || undefined,
     projectPrefix: parsed.projectPrefix,
     deploymentPrefix: parsed.deploymentPrefix,
   };
+}
+
+export async function checkCandidateActiveOrInFlight(
+  client: PoolClient | Pool,
+  projectId: string,
+  deploymentId?: string
+): Promise<boolean> {
+  if (deploymentId) {
+    const res = await client.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+       FROM deployments d
+       LEFT JOIN deployment_jobs dj ON dj.deployment_id = d.id
+       LEFT JOIN releases r ON r.deployment_id = d.id
+       WHERE d.id = $1
+         AND (
+           d.status IN ('queued', 'building', 'deploying', 'active')
+           OR r.status = 'active'
+           OR (dj.lease_expires_at IS NOT NULL AND dj.lease_expires_at > NOW())
+         )`,
+      [deploymentId]
+    );
+    if (Number(res.rows[0]?.count ?? 0) > 0) return true;
+  }
+
+  const projRes = await client.query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count
+     FROM releases r
+     WHERE r.project_id = $1
+       AND r.status = 'active'
+       AND ($2::uuid IS NULL OR r.deployment_id = $2::uuid)`,
+    [projectId, deploymentId ?? null]
+  );
+  if (Number(projRes.rows[0]?.count ?? 0) > 0) return true;
+
+  return false;
 }
 
 export async function classifyContainer(
   container: DiscoveredContainer,
   clientOrPool: Pool | PoolClient,
   nowMs: number,
-  minAgeMs: number
+  minAgeMs: number,
+  expectedInstallationId: string = getInstallationId()
 ): Promise<SweepDecision> {
-  // 1. Age as Safety Filter: if inside grace period, strictly protect
+  // 1. Installation Ownership Verification via Container Label:
+  if (!container.installationId) {
+    return { action: "protect", reason: "missing_installation_label" };
+  }
+  if (container.installationId !== expectedInstallationId) {
+    return { action: "protect", reason: "mismatched_installation_id" };
+  }
+
+  // 2. Age as Safety Filter: if inside grace period, strictly protect
   const ageMs = nowMs - container.createdAtMs;
   if (ageMs < minAgeMs) {
     return { action: "protect", reason: "in_grace_period" };
   }
 
-  // 2. Query database for project, deployment, release, and runtime_instance state
+  // 3. Query database with LIMIT 2 for ambiguous prefixes:
   const projRes = await clientOrPool.query<{ id: string }>(
-    `SELECT id FROM projects WHERE id::text LIKE ($1 || '%') LIMIT 1`,
+    `SELECT id FROM projects WHERE id::text LIKE ($1 || '%') LIMIT 2`,
     [container.projectPrefix]
   );
+  if (projRes.rows.length > 1) {
+    return { action: "protect", reason: "ambiguous_project_prefix" };
+  }
 
   const depRes = await clientOrPool.query<{
     id: string;
@@ -126,9 +182,12 @@ export async function classifyContainer(
      FROM deployments d
      LEFT JOIN deployment_jobs j ON j.deployment_id = d.id
      WHERE d.id::text LIKE ($1 || '%')
-     LIMIT 1`,
+     LIMIT 2`,
     [container.deploymentPrefix]
   );
+  if (depRes.rows.length > 1) {
+    return { action: "protect", reason: "ambiguous_deployment_prefix" };
+  }
 
   const riRes = await clientOrPool.query<{
     id: string;
@@ -148,14 +207,25 @@ export async function classifyContainer(
   const deployment = depRes.rows[0];
   const runtimeInstance = riRes.rows[0];
 
-  // 3. Multi-Installation Protection:
-  // If neither project nor deployment exists in our database, this container
-  // belongs to another DeployKit installation on this Docker host or an unknown system.
+  // 4. Multi-Installation & Unverified Ownership Protection:
   if (!project && !deployment) {
     return { action: "protect", reason: "foreign_installation" };
   }
 
-  // 4. In-Flight & Active Protections (regardless of age):
+  if (project && deployment && deployment.project_id !== project.id) {
+    return { action: "protect", reason: "mismatched_ownership" };
+  }
+
+  if (!deployment && !runtimeInstance) {
+    return { action: "protect", reason: "unverified_ownership" };
+  }
+
+  const resolvedProjectId = project?.id ?? deployment?.project_id;
+  if (!resolvedProjectId) {
+    return { action: "protect", reason: "unverified_ownership" };
+  }
+
+  // 5. In-Flight & Active Protections (regardless of age):
   if (runtimeInstance?.rel_status === "active") {
     return { action: "protect", reason: "active_release" };
   }
@@ -186,35 +256,33 @@ export async function classifyContainer(
     return { action: "protect", reason: "in_flight_deployment" };
   }
 
-  // 5. Sweepable Categories:
+  // 6. Sweepable Categories (retaining exact UUIDs):
   if (runtimeInstance) {
     if (runtimeInstance.rel_status === "stopped") {
-      return { action: "sweep", reason: "release_superseded", releaseId: runtimeInstance.release_id };
+      return { action: "sweep", reason: "release_superseded", projectId: resolvedProjectId, releaseId: runtimeInstance.release_id, deploymentId: deployment?.id };
     }
     if (runtimeInstance.rel_status === "failed") {
-      return { action: "sweep", reason: "release_failed", releaseId: runtimeInstance.release_id };
+      return { action: "sweep", reason: "release_failed", projectId: resolvedProjectId, releaseId: runtimeInstance.release_id, deploymentId: deployment?.id };
     }
     if (deployment?.status === "cancelled") {
-      return { action: "sweep", reason: "deployment_cancelled", deploymentId: deployment.id };
+      return { action: "sweep", reason: "deployment_cancelled", projectId: resolvedProjectId, deploymentId: deployment.id };
     }
     if (deployment?.status === "failed") {
-      return { action: "sweep", reason: "unactivated_failed", deploymentId: deployment.id };
+      return { action: "sweep", reason: "unactivated_failed", projectId: resolvedProjectId, deploymentId: deployment.id };
     }
     if (runtimeInstance.status === "starting" || runtimeInstance.status === "unhealthy") {
-      return { action: "sweep", reason: "unactivated_stale", releaseId: runtimeInstance.release_id };
+      return { action: "sweep", reason: "unactivated_stale", projectId: resolvedProjectId, releaseId: runtimeInstance.release_id, deploymentId: deployment?.id };
     }
-    return { action: "sweep", reason: "runtime_stopped", releaseId: runtimeInstance.release_id };
+    return { action: "sweep", reason: "runtime_stopped", projectId: resolvedProjectId, releaseId: runtimeInstance.release_id, deploymentId: deployment?.id };
   }
 
   if (deployment) {
     if (deployment.status === "failed") {
-      return { action: "sweep", reason: "unactivated_crash_orphan", deploymentId: deployment.id };
+      return { action: "sweep", reason: "unactivated_crash_orphan", projectId: resolvedProjectId, deploymentId: deployment.id };
     }
     if (deployment.status === "cancelled") {
-      return { action: "sweep", reason: "deployment_cancelled", deploymentId: deployment.id };
+      return { action: "sweep", reason: "deployment_cancelled", projectId: resolvedProjectId, deploymentId: deployment.id };
     }
-  } else if (project) {
-    return { action: "sweep", reason: "deleted_deployment_orphan" };
   }
 
   return { action: "protect", reason: "unmatched_state" };
@@ -231,6 +299,7 @@ export async function sweepUnactivatedContainers(
   const minAgeMs = options.minAgeMs ?? Number(process.env.DEPLOYKIT_CONTAINER_SWEEP_MIN_AGE_MS ?? DEFAULT_MIN_AGE_MS);
   const batchLimit = options.batchLimit ?? Number(process.env.DEPLOYKIT_CONTAINER_SWEEP_BATCH_LIMIT ?? DEFAULT_BATCH_LIMIT);
   const dockerTimeoutMs = options.dockerTimeoutMs ?? Number(process.env.DEPLOYKIT_CONTAINER_SWEEP_DOCKER_TIMEOUT_MS ?? DEFAULT_DOCKER_TIMEOUT_MS);
+  const expectedInstallationId = options.installationId ?? getInstallationId();
 
   const summary: ContainerSweepSummary = {
     inspected: 0,
@@ -279,7 +348,7 @@ export async function sweepUnactivatedContainers(
           "--filter",
           "label=io.deploykit.managed=true",
           "--format",
-          "{{.Names}}\t{{.State}}\t{{.CreatedAt}}\t{{.ID}}",
+          `{{.Names}}\t{{.State}}\t{{.CreatedAt}}\t{{.ID}}\t{{.Label "${INSTALLATION_ID_LABEL}"}}`,
         ],
         dockerTimeoutMs
       );
@@ -315,7 +384,7 @@ export async function sweepUnactivatedContainers(
 
       let decision: SweepDecision;
       try {
-        decision = await classifyContainer(container, client, nowMs, minAgeMs);
+        decision = await classifyContainer(container, client, nowMs, minAgeMs, expectedInstallationId);
       } catch (classifyErr) {
         summary.errors++;
         continue;
@@ -327,38 +396,76 @@ export async function sweepUnactivatedContainers(
         continue;
       }
 
-      // Pre-deletion race prevention safety check:
+      // Shared coordination mechanism with activateRelease & deployment transitions:
+      // Uses a session advisory lock on PROJECT_ACTIVE_RELEASE for the candidate's exact projectId.
+      let coordLockAcquired = false;
       try {
-        const raceCheck = await client.query<{ count: string }>(
-          `SELECT COUNT(*)::text AS count
-           FROM deployments d
-           LEFT JOIN deployment_jobs dj ON dj.deployment_id = d.id
-           LEFT JOIN releases r ON r.deployment_id = d.id
-           WHERE d.id::text LIKE ($1 || '%')
-             AND (
-               d.status IN ('queued', 'building', 'deploying', 'active')
-               OR r.status = 'active'
-               OR (dj.lease_expires_at IS NOT NULL AND dj.lease_expires_at > NOW())
-             )`,
-          [container.deploymentPrefix]
+        coordLockAcquired = await tryAcquireSessionAdvisoryLock(
+          client,
+          ADVISORY_LOCK_NAMESPACES.PROJECT_ACTIVE_RELEASE,
+          decision.projectId
         );
-
-        if (Number(raceCheck.rows[0]?.count ?? 0) > 0) {
-          summary.skipped++;
-          recordReason("race_abort_active");
-          continue;
-        }
       } catch {
         summary.errors++;
         continue;
       }
 
-      // Safe Docker deletion without shell interpolation
+      if (!coordLockAcquired) {
+        summary.skipped++;
+        recordReason("race_abort_active");
+        continue;
+      }
+
       try {
-        if (container.state === "running" || container.state === "restarting") {
-          await run(dockerBinary, ["container", "stop", "-t", "5", container.name], dockerTimeoutMs).catch(() => undefined);
+        // Step 1: Pre-stop state validation using exact UUIDs (not prefix matching)
+        const isPreActive = await checkCandidateActiveOrInFlight(
+          client,
+          decision.projectId,
+          decision.deploymentId
+        );
+        if (isPreActive) {
+          summary.skipped++;
+          recordReason("race_abort_active");
+          continue;
         }
 
+        // Step 2: Stop container if running or restarting
+        let stopFailed = false;
+        if (container.state === "running" || container.state === "restarting") {
+          const stopResult = await run(
+            dockerBinary,
+            ["container", "stop", "-t", "5", container.name],
+            dockerTimeoutMs
+          ).catch(() => ({ code: 1, stderr: "stop timed out", timedOut: true, stdout: "", aborted: false }));
+
+          if (
+            stopResult.timedOut ||
+            (stopResult.code !== 0 &&
+              !stopResult.stderr.toLowerCase().includes("no such container") &&
+              !stopResult.stderr.toLowerCase().includes("is not running"))
+          ) {
+            stopFailed = true;
+          }
+        }
+
+        if (stopFailed) {
+          summary.errors++;
+          continue;
+        }
+
+        // Step 3: Revalidate state after docker stop and immediately before docker rm
+        const isPostActive = await checkCandidateActiveOrInFlight(
+          client,
+          decision.projectId,
+          decision.deploymentId
+        );
+        if (isPostActive) {
+          summary.skipped++;
+          recordReason("race_abort_active");
+          continue;
+        }
+
+        // Step 4: Remove container
         const rmResult = await run(
           dockerBinary,
           ["container", "rm", "--force", container.name],
@@ -384,6 +491,14 @@ export async function sweepUnactivatedContainers(
         }
       } catch {
         summary.errors++;
+      } finally {
+        if (coordLockAcquired) {
+          await releaseSessionAdvisoryLock(
+            client,
+            ADVISORY_LOCK_NAMESPACES.PROJECT_ACTIVE_RELEASE,
+            decision.projectId
+          ).catch(() => undefined);
+        }
       }
     }
   } finally {
